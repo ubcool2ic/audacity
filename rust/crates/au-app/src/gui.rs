@@ -19,6 +19,14 @@ use std::path::PathBuf;
 
 /// Runs the app, optionally opening a project (`.aup3` / `.aurs`) or importing an audio file at start.
 pub fn run_with(open: Option<PathBuf>) -> eframe::Result<()> {
+    run_with_files(open.into_iter().collect())
+}
+
+/// Starts the GUI and opens/imports each command-line file in order.
+pub fn run_with_files(files: Vec<PathBuf>) -> eframe::Result<()> {
+    let mut files = files.into_iter();
+    let open = files.next();
+    let rest: Vec<PathBuf> = files.collect();
     eframe::run_native(
         "Audacity-RS",
         eframe::NativeOptions::default(),
@@ -42,6 +50,9 @@ pub fn run_with(open: Option<PathBuf>) -> eframe::Result<()> {
                 } else {
                     app.import_path(path);
                 }
+            }
+            for path in rest {
+                app.open_path(path);
             }
             Ok(Box::new(app))
         }),
@@ -1000,6 +1011,15 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 }
             }
             self.open_aup3(path, au_project::aup3::DocSource::Saved);
+            return;
+        }
+        // Like Audacity, anything that is not a project file is imported as audio.
+        let is_project = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("aurs") || e.eq_ignore_ascii_case("aup3"));
+        if !is_project {
+            self.import_path(path);
             return;
         }
         match au_project::load_project(&path) {

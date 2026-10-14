@@ -81,7 +81,7 @@ fn main() {
             0
         }
         Some(f) if !f.starts_with('-') && std::path::Path::new(f).exists() => {
-            run_gui_with(Some(f.into()))
+            run_gui_with_files(args.iter().filter(|a| std::path::Path::new(a).exists()).map(Into::into).collect())
         }
         _ => run_gui(),
     };
@@ -156,7 +156,24 @@ fn run_gui_with(open: Option<std::path::PathBuf>) -> i32 {
     }
 }
 
+#[cfg(feature = "gui")]
+fn run_gui_with_files(files: Vec<std::path::PathBuf>) -> i32 {
+    match gui::run_with_files(files) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("error: {e}");
+            1
+        }
+    }
+}
+
 #[cfg(not(feature = "gui"))]
+fn run_gui_with_files(_files: Vec<std::path::PathBuf>) -> i32 {
+    run_gui()
+}
+
+#[cfg(not(feature = "gui"))]
+#[allow(dead_code)]
 fn run_gui_with(_open: Option<std::path::PathBuf>) -> i32 {
     run_gui()
 }
