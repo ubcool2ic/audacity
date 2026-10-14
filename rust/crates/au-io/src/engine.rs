@@ -96,6 +96,11 @@ pub struct Mixer {
     track_accumulators: Vec<MeterAccumulator>,
     master_meter: MeterReading,
     clip_count: u64,
+    track_fx: Vec<Option<au_effects::stack::EffectStack>>,
+    master_fx: Option<au_effects::stack::EffectStack>,
+    scratch: Vec<Vec<f32>>,
+    mix_scratch: Vec<Vec<f32>>,
+    positions: Vec<f64>,
 }
 
 impl Mixer {
@@ -117,7 +122,103 @@ impl Mixer {
             track_accumulators: vec![MeterAccumulator::default(); track_count],
             master_meter: MeterReading::default(),
             clip_count: 0,
+            track_fx: (0..track_count).map(|_| None).collect(),
+            master_fx: None,
+            scratch: Vec::new(),
+            mix_scratch: Vec::new(),
+            positions: Vec::new(),
         }
+    }
+
+    /// Installs (or clears) a track's realtime effect stack. The stack is reset
+    /// for the track's sample rate and channel count.
+    pub fn set_track_effects(&mut self, index: usize, stack: Option<au_effects::stack::EffectStack>) {
+        if let (Some(slot), Some(track)) = (self.track_fx.get_mut(index), self.tracks.get(index)) {
+            *slot = stack.map(|mut s| { s.reset(track.audio.sample_rate, track.audio.n_channels().max(1)); s });
+        }
+    }
+
+    /// Installs (or clears) the master realtime effect stack (processes the stereo/mono mix).
+    pub fn set_master_effects(&mut self, stack: Option<au_effects::stack::EffectStack>) {
+        let rate = self.tracks.first().map(|t| t.audio.sample_rate).unwrap_or(44_100);
+        self.master_fx = stack.map(|mut s| { s.reset(rate, 2); s });
+    }
+
+    fn has_effects(&self) -> bool {
+        self.master_fx.is_some() || self.track_fx.iter().any(|s| s.is_some())
+    }
+
+    /// Block path used when realtime effects are installed: each track is read
+    /// into a scratch block, run through its stack (pre-fader, like Audacity),
+    /// then gain/pan-mixed; the master stack processes the mix.
+    fn process_with_effects(&mut self, out: &mut [f32], out_channels: usize) -> bool {
+        let frames = out.len() / out_channels;
+        self.positions.clear();
+        for _ in 0..frames {
+            self.normalize_loop_position();
+            if !self.is_playable() { break; }
+            self.positions.push(self.position);
+            self.position += self.speed;
+        }
+        let n = self.positions.len();
+        if self.mix_scratch.len() != 2 { self.mix_scratch = vec![Vec::new(), Vec::new()]; }
+        for m in &mut self.mix_scratch { m.clear(); m.resize(n, 0.0); }
+        let any_solo = self.tracks.iter().any(|track| track.params.solo);
+        for index in 0..self.tracks.len() {
+            let track = &self.tracks[index];
+            let params = track.params;
+            let audible = !params.mute && (!any_solo || params.solo);
+            let ch = track.audio.n_channels();
+            let mut acc = MeterAccumulator::default();
+            if audible && ch > 0 {
+                if self.scratch.len() < ch { self.scratch.resize(ch, Vec::new()); }
+                for c in 0..ch {
+                    let buf = &mut self.scratch[c];
+                    buf.clear();
+                    buf.extend(self.positions.iter().map(|&p| interpolated_sample(track, c, p - track.offset as f64)));
+                }
+                if let Some(Some(stack)) = self.track_fx.get_mut(index) {
+                    stack.process_block(&mut self.scratch[..ch]);
+                }
+                let track = &self.tracks[index];
+                for f in 0..n {
+                    let (l, r) = if ch == 1 {
+                        let sample = self.scratch[0][f] * params.gain;
+                        let angle = (params.pan.clamp(-1.0, 1.0) + 1.0) * (std::f32::consts::PI * 0.25);
+                        (sample * angle.cos() * std::f32::consts::SQRT_2, sample * angle.sin() * std::f32::consts::SQRT_2)
+                    } else {
+                        let pan = params.pan.clamp(-1.0, 1.0);
+                        let (mut l, mut r) = (self.scratch[0][f] * params.gain, self.scratch[1][f] * params.gain);
+                        if pan < 0.0 { r *= 1.0 + pan } else if pan > 0.0 { l *= 1.0 - pan }
+                        (l, r)
+                    };
+                    let _ = track;
+                    acc.add(l, r);
+                    self.mix_scratch[0][f] += l;
+                    self.mix_scratch[1][f] += r;
+                }
+            }
+            self.track_meters[index] = acc.reading(frames);
+        }
+        for m in &mut self.mix_scratch { for v in m.iter_mut() { *v *= self.master_gain; } }
+        if let Some(stack) = self.master_fx.as_mut() { stack.process_block(&mut self.mix_scratch); }
+        let mut master = MeterAccumulator::default();
+        for f in 0..n {
+            let (rl, rr) = (self.mix_scratch[0][f], self.mix_scratch[1][f]);
+            if out_channels == 1 {
+                let (mono, clipped) = clamp_output_sample((rl + rr) * 0.5);
+                self.clip_count = self.clip_count.saturating_add(u64::from(clipped));
+                out[f] = mono; master.add(mono, mono);
+            } else {
+                let (l, cl) = clamp_output_sample(rl);
+                let (r, cr) = clamp_output_sample(rr);
+                self.clip_count = self.clip_count.saturating_add(u64::from(cl)).saturating_add(u64::from(cr));
+                out[f * out_channels] = l; out[f * out_channels + 1] = r;
+                master.add(l, r);
+            }
+        }
+        self.master_meter = master.reading(frames);
+        self.is_playable()
     }
 
     /// Sets the timeline position in frames.
@@ -193,6 +294,9 @@ impl Mixer {
             return self.is_playable();
         }
 
+        if self.has_effects() {
+            return self.process_with_effects(out, out_channels);
+        }
         let frames = out.len() / out_channels;
         let mut master_accumulator = MeterAccumulator::default();
         let any_solo = self.tracks.iter().any(|track| track.params.solo);
@@ -418,6 +522,31 @@ pub fn render_offline(
         sample_rate,
         channels,
     }
+}
+
+/// Offline render (export / mixdown) with realtime effect stacks applied
+/// non-destructively: each track is rendered through its stack with latency
+/// compensation, then mixed, then the master stack processes the mix.
+pub fn render_offline_with_effects(
+    tracks: Vec<MixTrack>,
+    track_fx: Vec<Option<au_effects::stack::EffectStack>>,
+    master_fx: Option<au_effects::stack::EffectStack>,
+    master_gain: f32,
+    out_channels: usize,
+    block: usize,
+) -> AudioBuffer {
+    let tracks: Vec<MixTrack> = tracks.into_iter().zip(track_fx.into_iter().chain(std::iter::repeat_with(|| None)))
+        .map(|(mut t, fx)| {
+            if let Some(mut stack) = fx {
+                let mut audio = (*t.audio).clone();
+                stack.render(&mut audio);
+                t.audio = Arc::new(audio);
+            }
+            t
+        }).collect();
+    let mut out = render_offline(tracks, master_gain, out_channels, block);
+    if let Some(mut stack) = master_fx { stack.render(&mut out); }
+    out
 }
 
 /// Atomically shared master meters and playback position.

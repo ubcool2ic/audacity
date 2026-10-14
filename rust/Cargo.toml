@@ -14,3 +14,5 @@ repository = "https://github.com/ubcool2ic/audacity"
 debug = 0
 [profile.dev.package."*"]
 opt-level = 1
+[profile.dev.package.au-effects]
+opt-level = 2

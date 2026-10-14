@@ -49,6 +49,52 @@ CREATE TABLE IF NOT EXISTS autosave(  id                   INTEGER PRIMARY KEY, 
 CREATE TABLE IF NOT EXISTS sampleblocks(  blockid              INTEGER PRIMARY KEY AUTOINCREMENT,  sampleformat         INTEGER,  summin               REAL,  summax               REAL,  sumrms               REAL,  summary256           BLOB,  summary64k           BLOB,  samples              BLOB);
 ";
 
+/// One realtime effect as Audacity stores it (`<effect>` element).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct RealtimeEffect {
+    /// Plugin id, e.g. `Effect_Audacity_Audacity_Echo_Built-in Effect: Echo`.
+    pub id: String,
+    /// Whether the effect is enabled.
+    pub active: bool,
+    /// `(name, value)` parameter strings.
+    pub params: Vec<(String, String)>,
+}
+
+/// A realtime effect list (`<effects active=...>`), per track or master.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct RealtimeEffectList {
+    /// List-level bypass flag.
+    pub active: bool,
+    /// Effects in processing order.
+    pub effects: Vec<RealtimeEffect>,
+}
+
+fn effects_from_xml(n: &XmlNode) -> RealtimeEffectList {
+    RealtimeEffectList {
+        active: n.get("active").and_then(V::as_bool).unwrap_or(true),
+        effects: n.children_named("effect").map(|e| RealtimeEffect {
+            id: e.str("id").unwrap_or("").to_string(),
+            active: e.get("active").and_then(V::as_bool).unwrap_or(true),
+            params: e.children_named("parameters").flat_map(|ps| ps.children_named("parameter"))
+                .map(|p| (p.str("name").unwrap_or("").to_string(), p.str("value").unwrap_or("").to_string())).collect(),
+        }).collect(),
+    }
+}
+
+fn effects_to_xml(l: &RealtimeEffectList) -> XmlNode {
+    let mut n = XmlNode::new("effects").attr("active", V::Bool(l.active));
+    for e in &l.effects {
+        let mut en = XmlNode::new("effect").attr("active", V::Bool(e.active)).attr("id", V::Str(e.id.clone()));
+        let mut ps = XmlNode::new("parameters");
+        for (k, v) in &e.params {
+            ps.children.push(XmlNode::new("parameter").attr("name", V::Str(k.clone())).attr("value", V::Str(v.clone())));
+        }
+        en.children.push(ps);
+        n.children.push(en);
+    }
+    n
+}
+
 /// Data kept in an `.aup3` file that has no home in [`ProjectState`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct Aup3Extras {
@@ -62,6 +108,10 @@ pub struct Aup3Extras {
     pub audacity_version: String,
     /// `PRAGMA user_version` of the file that was read.
     pub user_version: u32,
+    /// Realtime effect list per wave track (index matches `ProjectState::tracks`; empty list = none).
+    pub track_effects: Vec<RealtimeEffectList>,
+    /// Master (project) realtime effect list.
+    pub master_effects: RealtimeEffectList,
 }
 
 impl Default for Aup3Extras {
@@ -72,6 +122,8 @@ impl Default for Aup3Extras {
             track_selected: Vec::new(),
             audacity_version: "3.7.3".into(),
             user_version: VERSION_3_0,
+            track_effects: Vec::new(),
+            master_effects: RealtimeEffectList::default(),
         }
     }
 }
@@ -345,6 +397,7 @@ fn from_xml(root: &XmlNode, c: &Connection) -> Result<Aup3Project> {
                     solo: n.get("solo").and_then(V::as_bool).unwrap_or(false),
                 });
                 extras.track_formats.push(fmt);
+                extras.track_effects.push(n.children_named("effects").next().map(effects_from_xml).unwrap_or_default());
                 extras
                     .track_selected
                     .push(n.get("isSelected").and_then(V::as_bool).unwrap_or(false));
@@ -362,7 +415,8 @@ fn from_xml(root: &XmlNode, c: &Connection) -> Result<Aup3Project> {
                 lt.labels.sort_by(|a, b| a.start.total_cmp(&b.start));
                 labels.push(lt);
             }
-            _ => {} // tags, effects, timetrack, notetrack: not modelled yet
+            "effects" => extras.master_effects = effects_from_xml(n),
+            _ => {} // tags, timetrack, notetrack: not modelled yet
         }
     }
     Ok(Aup3Project {
@@ -415,6 +469,9 @@ fn build_xml(c: &Connection, p: &Aup3Project) -> Result<XmlNode> {
         .attr("h", d(0.0, 10))
         .attr("zoom", d(86.1328125, 10));
     root.children.push(XmlNode::new("tags"));
+    if !p.extras.master_effects.effects.is_empty() {
+        root.children.push(effects_to_xml(&p.extras.master_effects));
+    }
     for (ti, t) in st.tracks.iter().enumerate() {
         let fmt = p.extras.track_formats.get(ti).copied().unwrap_or(SampleFormat::Float);
         let sel = p.extras.track_selected.get(ti).copied().unwrap_or(false);
@@ -435,6 +492,11 @@ fn build_xml(c: &Connection, p: &Aup3Project) -> Result<XmlNode> {
                 .attr("gain", d(t.gain as f64, -1))
                 .attr("pan", d(t.pan as f64, -1))
                 .attr("sampleformat", V::Long(fmt.code() as i32));
+            if ch == 0 {
+                if let Some(l) = p.extras.track_effects.get(ti).filter(|l| !l.effects.is_empty()) {
+                    wt.children.push(effects_to_xml(l));
+                }
+            }
             for clip in &t.clips.clips {
                 let offset = clip.start as f64 / trate;
                 let end = offset + clip.len() as f64 / trate;

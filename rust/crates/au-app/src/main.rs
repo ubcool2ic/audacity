@@ -11,9 +11,12 @@ use au_core::{AudioBuffer, Editor, ProjectState, Selection, Track};
 use au_effects::{Amplify, Effect, FadeIn, FadeOut, Normalize, Reverse};
 use std::path::Path;
 
+pub mod fx_bridge;
 pub mod transport;
 #[cfg(feature = "gui")]
 mod gui;
+#[cfg(feature = "gui")]
+mod fx_ui;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

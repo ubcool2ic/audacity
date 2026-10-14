@@ -59,3 +59,33 @@ Both compiled and passed their own tests first time; no Sol escalation. Hand-wri
 **Stage 4 total: $0.0091**
 
 **Running total: $0.0757**
+
+## Stages 5–6 — effects, generators, analyzers (openai/gpt-6-luna, no Sol escalation)
+
+| file | USD |
+|---|---|
+| fx/autoduck.rs | 0.0035 |
+| fx/analyzers.rs | 0.0056 |
+| fx/loudness.rs | 0.0057 |
+| fx/eq.rs | 0.0081 |
+| fx/dynamics.rs | 0.0086 |
+| fx/repair.rs | 0.0027 |
+| fx/silence.rs | 0.0040 |
+| fx/analyzers.rs | 0.0053 |
+| fx/generators.rs | 0.0051 |
+| fx/reverb.rs | 0.0057 |
+| fx/loudness.rs | 0.0056 |
+| fx/noisered.rs | 0.0059 |
+| fx/dynamics.rs | 0.0077 |
+| fx/stretch.rs | 0.0087 |
+| fx/filters.rs | 0.0101 |
+| fx/simple.rs | 0.0101 |
+| fx/eq.rs | 0.0100 |
+| fx/modulation.rs | 0.0115 |
+| fx/modulation.rs | 0.0128 |
+
+Includes $0.0035 for Auto Duck. Repeated rows are regenerations after 402/compile failures.
+
+**Stages 5–6 total: $0.1366**
+
+**Running total: $0.2123**

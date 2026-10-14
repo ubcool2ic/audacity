@@ -5,7 +5,7 @@ use au_core::{
     timeline::{LabelTrack, SnapMode, Snapper, WaveClips, ZoomInfo},
     AudioBuffer, Editor, Selection, Track,
 };
-use au_effects::{Amplify, FadeIn, FadeOut, Normalize, Reverse};
+use au_effects::{EffectKind, Normalize};
 use au_io::{
     device::{InputKind, Player, Recorder},
     dsp::Dither,
@@ -154,6 +154,10 @@ struct AudacityApp {
     selection_start_text: String,
     selection_end_text: String,
     selection_length_text: String,
+    fx_dialog: Option<crate::fx_ui::EffectDialog>,
+    rt_window: bool,
+    rt_target: crate::fx_ui::RtTarget,
+    rt_editing: Option<usize>,
 }
 
 struct LabelEdit {
@@ -217,6 +221,10 @@ impl Default for AudacityApp {
             selection_start_text: "00:00:00.000".to_owned(),
             selection_end_text: "00:00:00.000".to_owned(),
             selection_length_text: "00:00:00.000".to_owned(),
+            fx_dialog: None,
+            rt_window: false,
+            rt_target: crate::fx_ui::RtTarget::Master,
+            rt_editing: None,
         }
     }
 }
@@ -512,7 +520,9 @@ impl AudacityApp {
             self.status = "Selected track not found".to_owned();
             return;
         };
-        let buffer = track.render();
+        let _ = track;
+        // Realtime effects are non-destructive: they are rendered into the export only.
+        let Some(buffer) = crate::fx_bridge::render_track(self.editor.state(), &self.aup3_extras, index) else { return; };
         let filter = if flac { "FLAC audio" } else { "WAV audio" };
         let extension = if flac { "flac" } else { "wav" };
         if let Some(path) = rfd::FileDialog::new()
@@ -566,8 +576,11 @@ impl AudacityApp {
             None
         };
         let tracks = crate::transport::mix_tracks(state);
-        match Player::start(
+        let (track_fx, master_fx) = crate::fx_bridge::stacks_for(&self.aup3_extras, tracks.len());
+        match Player::start_with_effects(
             tracks,
+            track_fx,
+            master_fx,
             rate,
             self.master_gain,
             start,
@@ -813,6 +826,86 @@ impl AudacityApp {
         self.report(result);
     }
 
+    fn effect_windows(&mut self, ctx: &egui::Context) {
+        let names: Vec<String> = self.editor.state().tracks.iter().map(|t| t.name.clone()).collect();
+        if let Some(mut dlg) = self.fx_dialog.take() {
+            let action = dlg.show(ctx, &names);
+            let sel = self.selected_track.map(|i| self.selection_for_track(i));
+            let aux = dlg.aux_track.and_then(|i| self.editor.state().tracks.get(i)).map(|t| t.render());
+            let mut keep = true;
+            match action {
+                crate::fx_ui::DialogAction::None => {}
+                crate::fx_ui::DialogAction::Close => keep = false,
+                _ if sel.is_none() => dlg.report = "Select a track (and a time range) first".into(),
+                crate::fx_ui::DialogAction::GetProfile => {
+                    let sel = sel.unwrap().normalized();
+                    let t = &self.editor.state().tracks[sel.track];
+                    match t.clips.render_range(sel.start, sel.end).map_err(|e| e.to_string()).and_then(|b| dlg.effect.learn_profile(&b).map_err(|e| e.to_string())) {
+                        Ok(()) => { dlg.has_profile = true; dlg.report = "Noise profile captured. Now select the audio to clean and press Apply.".into(); }
+                        Err(e) => dlg.report = e,
+                    }
+                }
+                crate::fx_ui::DialogAction::Preview => {
+                    match crate::fx_bridge::preview(self.editor.state(), sel.unwrap(), dlg.effect.as_mut(), 6.0) {
+                        Ok(buf) => {
+                            self.player = None;
+                            let rate = buf.sample_rate;
+                            let mt = au_io::engine::MixTrack { audio: std::sync::Arc::new(buf), offset: 0, params: Default::default() };
+                            match Player::start(vec![mt], rate, self.master_gain, 0, 1.0, None) {
+                                Ok(p) => { self.player = Some(p); self.status = "Previewing".into(); }
+                                Err(e) => dlg.report = format!("Preview playback failed: {e:?}"),
+                            }
+                        }
+                        Err(e) => dlg.report = e,
+                    }
+                }
+                crate::fx_ui::DialogAction::Apply => {
+                    match crate::fx_bridge::apply_builtin(&mut self.editor, sel.unwrap(), dlg.effect.as_mut(), aux.as_ref()) {
+                        Ok(out) => {
+                            dlg.report = out.report;
+                            if !out.labels.is_empty() { dlg.report.push_str(&format!("\n{} labels added", out.labels.len())); }
+                            self.status = format!("Applied {}", dlg.effect.name());
+                            if dlg.effect.kind() != EffectKind::Analyze { keep = false; }
+                        }
+                        Err(e) => dlg.report = e,
+                    }
+                }
+            }
+            if keep { self.fx_dialog = Some(dlg); }
+        }
+        if self.rt_window {
+            let mut open = true;
+            let n = self.editor.state().tracks.len();
+            self.aup3_extras.track_effects.resize_with(n, Default::default);
+            let mut changed = false;
+            egui::Window::new("Realtime Effects").open(&mut open).show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.rt_target, crate::fx_ui::RtTarget::Master, "Master");
+                    for (i, name) in names.iter().enumerate() {
+                        ui.selectable_value(&mut self.rt_target, crate::fx_ui::RtTarget::Track(i), name);
+                    }
+                });
+                ui.separator();
+                let list = match self.rt_target {
+                    crate::fx_ui::RtTarget::Master => &mut self.aup3_extras.master_effects,
+                    crate::fx_ui::RtTarget::Track(i) if i < n => &mut self.aup3_extras.track_effects[i],
+                    _ => &mut self.aup3_extras.master_effects,
+                };
+                changed = crate::fx_ui::realtime_panel(ui, list, &mut self.rt_editing);
+                ui.label("Effects here are non-destructive: heard on playback, rendered on export, saved in .aup3.");
+            });
+            if changed && self.player.is_some() {
+                // Restart playback so the engine picks up the new stack.
+                let pos = self.player.as_ref().map(|p| p.position()).unwrap_or(0);
+                self.player = None;
+                self.play();
+                if let Some(p) = self.player.as_mut() { p.handle.send(EngineCommand::Seek(pos)); }
+            }
+            self.rt_window = open;
+        }
+    }
+
+    #[allow(dead_code)]
     fn apply_effect(&mut self, description: &'static str, effect: impl FnOnce(&mut AudioBuffer)) {
         let Some(index) = self.selected_track else {
             self.status = "Select a track first".to_owned();
@@ -2418,6 +2511,7 @@ impl eframe::App for AudacityApp {
         self.ensure_track_mix();
         self.maybe_autosave();
         self.recovery_dialog(ctx);
+        self.effect_windows(ctx);
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
@@ -2549,38 +2643,25 @@ impl eframe::App for AudacityApp {
                         self.editor.set_sync_lock(sync_lock);
                     }
                 });
-                ui.menu_button("Effect", |ui| {
-                    if ui.button("Amplify +3 dB").clicked() {
-                        ui.close_menu();
-                        self.apply_effect("Amplify +3 dB", |buffer| {
-                            Amplify::new(3.0).process(buffer);
+                for (menu, kind) in [("Generate", EffectKind::Generate), ("Effect", EffectKind::Process), ("Analyze", EffectKind::Analyze)] {
+                    ui.menu_button(menu, |ui| {
+                        if kind == EffectKind::Process && ui.button("Realtime Effects…").clicked() {
+                            ui.close_menu();
+                            self.rt_window = true;
+                        }
+                        egui::ScrollArea::vertical().max_height(500.0).show(ui, |ui| {
+                            let mut items: Vec<(String, &'static str)> = au_effects::registry::all().iter()
+                                .filter(|e| e.kind() == kind).map(|e| (e.name().to_string(), e.id())).collect();
+                            items.sort();
+                            for (name, id) in items {
+                                if ui.button(format!("{name}…")).clicked() {
+                                    ui.close_menu();
+                                    self.fx_dialog = crate::fx_ui::EffectDialog::open(id);
+                                }
+                            }
                         });
-                    }
-                    if ui.button("Amplify -3 dB").clicked() {
-                        ui.close_menu();
-                        self.apply_effect("Amplify -3 dB", |buffer| {
-                            Amplify::new(-3.0).process(buffer);
-                        });
-                    }
-                    if ui.button("Normalize -1 dB").clicked() {
-                        ui.close_menu();
-                        self.apply_effect("Normalize", |buffer| {
-                            Normalize::new(-1.0, false).process(buffer);
-                        });
-                    }
-                    if ui.button("Fade In").clicked() {
-                        ui.close_menu();
-                        self.apply_effect("Fade In", |buffer| FadeIn.process(buffer));
-                    }
-                    if ui.button("Fade Out").clicked() {
-                        ui.close_menu();
-                        self.apply_effect("Fade Out", |buffer| FadeOut.process(buffer));
-                    }
-                    if ui.button("Reverse").clicked() {
-                        ui.close_menu();
-                        self.apply_effect("Reverse", |buffer| Reverse.process(buffer));
-                    }
-                });
+                    });
+                }
                 self.toolbar(ui);
             });
 

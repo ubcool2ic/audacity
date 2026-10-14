@@ -332,6 +332,7 @@ dependencies = [
  "au-project",
  "eframe",
  "rfd",
+ "tempfile",
 ]
 
 [[package]]
@@ -346,6 +347,8 @@ name = "au-effects"
 version = "0.1.0"
 dependencies = [
  "au-core",
+ "rustfft",
+ "tempfile",
 ]
 
 [[package]]
@@ -353,6 +356,7 @@ name = "au-io"
 version = "0.1.0"
 dependencies = [
  "au-core",
+ "au-effects",
  "cpal",
  "flacenc",
  "hound",

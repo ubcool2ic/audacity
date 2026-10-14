@@ -241,6 +241,21 @@ pub mod device {
             speed: f64,
             loop_range: Option<(usize, usize)>,
         ) -> Result<Player, IoError> {
+            Self::start_with_effects(tracks, Vec::new(), None, project_rate, master_gain, start, speed, loop_range)
+        }
+
+        /// Like [`Player::start`], with realtime effect stacks per track and on the master bus.
+        #[allow(clippy::too_many_arguments)]
+        pub fn start_with_effects(
+            tracks: Vec<crate::engine::MixTrack>,
+            track_fx: Vec<Option<au_effects::stack::EffectStack>>,
+            master_fx: Option<au_effects::stack::EffectStack>,
+            project_rate: u32,
+            master_gain: f32,
+            start: usize,
+            speed: f64,
+            loop_range: Option<(usize, usize)>,
+        ) -> Result<Player, IoError> {
             let host = cpal::default_host();
             let device = host
                 .default_output_device()
@@ -267,6 +282,8 @@ pub mod device {
                 })
                 .collect();
             let mut mixer = crate::engine::Mixer::new(tracks, master_gain);
+            for (i, fx) in track_fx.into_iter().enumerate() { mixer.set_track_effects(i, fx); }
+            mixer.set_master_effects(master_fx);
             mixer.set_position(conv(start));
             mixer.set_speed(speed);
             mixer.set_loop(loop_range.map(|(a, b)| (conv(a), conv(b))));

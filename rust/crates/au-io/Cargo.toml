@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 au-core = { path = "../au-core" }
+au-effects = { path = "../au-effects" }
 thiserror = "1"
 symphonia = { version = "0.5", features = ["wav","flac","mp3","vorbis","ogg","pcm"] }
 hound = "3.5"

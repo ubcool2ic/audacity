@@ -22,3 +22,6 @@ gui = ["dep:eframe", "dep:rfd"]
 [[bin]]
 name = "audacity-rs"
 path = "src/main.rs"
+
+[dev-dependencies]
+tempfile = "3"

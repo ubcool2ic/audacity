@@ -8,3 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 au-core = { path = "../au-core" }
+rustfft = "6"
+
+[dev-dependencies]
+tempfile = "3"
