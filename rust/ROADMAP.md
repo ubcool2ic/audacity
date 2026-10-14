@@ -246,21 +246,27 @@ This roadmap describes intended scope, not a claim that planned features are imp
 
 ## Feature parity checklist
 
-| Feature | Audacity area | Stage | Status |
+| Feature | Audacity area | Stage | Status (2026-10-14) |
 |---|---|---:|---|
 | Core tracks, selection, undo, cut/copy/paste/delete/silence | Editing | 1 | Done |
-| WAV/FLAC export; initial WAV/FLAC/MP3/Ogg import | Import/export | 1 | Done, testing incomplete |
-| Basic effects and native plugin API | Effects/plugins | 1 | Done |
 | `.aurs` project save/load | Projects | 1 | Done |
-| `.aup3` read/write and recovery | Projects | 4 | Planned |
-| Clips, labels, envelopes, sync-lock | Timeline | 2 | Done (GUI not verified on a display) |
-| Mixer, recording features, resampling, dither | Audio engine | 3 | Done (no real-device test yet) |
-| Built-in effects parity and realtime stacks | Effects | 5 | Planned |
-| Generators and analyzers | Analyze/generate | 6 | Planned |
-| CLAP/VST3/LV2/LADSPA hosting | Plugins | 7 | Scanner stubs only |
-| Complete codecs, metadata, raw and MIDI import | Import/export | 8 | Planned |
-| Spectral tools, macros, scripting, Nyquist | Analysis/automation | 9 | Planned |
-| Full UI, accessibility, cloud, packaging | Application | 10 | Planned |
+| `.aup3` read/write, recovery, tags, selLow/selHigh | Projects | 4/8/9 | Done |
+| Clips, labels, envelopes, sync-lock | Timeline | 2 | Done |
+| Mixer, recording, resampling, dither | Audio engine | 3 | Done (no real-device test yet) |
+| Built-in effects + realtime stacks | Effects | 5 | Done; 74/74 bit-exact vs 3.7.3 (float WAV no longer clamped) |
+| Generators and analyzers | Analyze/generate | 6 | Done |
+| CLAP/VST3/LV2/LADSPA hosting | Plugins | 7/8B | Done (BizyBot) |
+| Codecs (WAV/AIFF/FLAC/MP3/Ogg/Opus/WavPack/FFmpeg), metadata, Export Multiple, MIDI | Import/export | 8 | Done; 27/27 bit-identical exports |
+| Nyquist (Audacity's libnyquist, .ny parser, sandboxed worker) | Automation | 9 | Done; 19/19 bit-exact |
+| Spectrogram (Frequencies bit-exact, EAC ≤4e-7), spectral selection | Analysis | 9 | Done; Reassignment has no reference check |
+| mod-script-pipe + scripting commands, macros (.txt byte-identical) | Automation | 9 | Done; macro *application* not yet compared against Audacity (BizyBot) |
+| Toolbars, themes, AccessKit, UI automation | Application | 10 | Done (BizyBot) |
+| Preferences model (3.7.3 keys/defaults, audacity.cfg I/O) | Preferences | 10 | Model done (`au-core::prefs`); Preferences dialog and applying every key in core/IO/effects still open |
+| Localization (gettext .po/.mo, runtime switch) | Localization | 10 | Catalogs done (`au-core::i18n`, tested on Audacity's de/pl .po); UI strings not yet routed through `tr()`, catalogs not packaged |
+| Keyboard shortcut compatibility, audio.com | Application | 10 | Open |
+| Packaging .deb/AppImage/.msi/.dmg | Packaging | 10 | Done (BizyBot); CI workflow not enabled (push needs `workflow` scope); package should ship au-nyquist-engine |
+| Performance: waveform caches, progress dialog, import/export as pool jobs | Perf | — | Done |
+
 
 ## Stage 2 status (2026-10-14)
 
