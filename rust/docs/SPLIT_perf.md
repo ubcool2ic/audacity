@@ -9,6 +9,8 @@ Status: BizyBot owns this stage (au-runtime). Remaining open items from ROADMAP:
 - Import decode (multi-file import) as au-runtime jobs with progress + cancel.
 
 ## BizyBot (runtime, GUI hardening)
-- Waveform drawing via `waveform_summary` caches on the pool.
-- Crash dialog and recovery reopen exercised under Xvfb.
-- Progress dialog widget / cancel UI shared by all long jobs.
+- [x] Waveform drawing via `waveform_summary` caches on the pool.
+- [x] Crash dialog and recovery reopen exercised under Xvfb.
+- [x] Progress dialog widget / cancel UI shared by all long jobs.
+
+BizyBot notes: `ProgressCenter` lives in `au-app/src/gui/progress.rs`. Register a job with `self.progress.register(title, message, &handle, can_stop)` and call `finish(ticket)` when it completes. Export/import call sites can use it.

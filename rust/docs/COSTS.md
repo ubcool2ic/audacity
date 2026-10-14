@@ -222,3 +222,6 @@ Luna 6 calls, $0.0557. Sol: none. **Batch total: $0.0557**
 Hand edits: borrow fixes; UnQuoteMsgid extra-string handling; XLisp path set before nyx_init; gettext SUBRs registered via xlbindfunctions (Audacity RegisterFunctions); choice controls bound as indices; Internat::ToString number formatting; *TRACK* clip lists / PEAK/RMS order; spectrogram window extra sample + persistent scratch buffer + literal ComputeSpectrum (EAC) port; float WAV export no longer clamps.
 
 **Running total (ubcool2ic): $1.9210**
+
+## BizyBot — Performance & reliability: waveform cache, progress dialog, crash/recovery Xvfb (2026-10-14)
+openai/gpt-6-luna only (no Sol): waveform cache (the second answer block was dropped by my extraction script and re-requested), draw-loop replacement, ProgressCenter, diagnostic pipe hooks, Xvfb crash/recovery/progress tests. Total ≈ $0.016.

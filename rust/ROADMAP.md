@@ -215,6 +215,19 @@ This roadmap describes intended scope, not a claim that planned features are imp
   - The Windows pipe has not been built or tested.
   - The waveform_summary cache work is part of Perf.
 
+**BizyBot Performance & reliability status (2026-10-14), per docs/SPLIT_perf.md:**
+- Waveform drawing:
+  - Uses `waveform_summary` min/max caches at 256 and 64K samples per entry. They are computed on an au-runtime pool (LRU, stale jobs cancelled), and stretched clips are rendered once instead of every frame (`au-app/src/gui/waveform_cache.rs`).
+  - Tracks are no longer cloned every frame.
+  - A 20-minute stereo track at Fit zoom went from about 749 ms to 3.3 ms per frame (release build, headless).
+- Shared progress dialog (`gui/progress.rs`): Audacity ProgressDialog semantics (shows after 500 ms, Elapsed/Remaining time, Cancel/Stop), with a headless AccessKit click test.
+- Xvfb: `tests/crash_recovery_gui.rs` covers:
+  - crash, report written, autosave flushed;
+  - relaunch, crash dialog, automatic reopen with recovery prompt, Recover;
+  - dismissed reports staying dismissed;
+  - progress cancel and completion.
+  These use test-only pipe hooks behind `AU_ALLOW_TEST_HOOKS=1`.
+
 ### Stage 10 — UI parity and polish
 
 **Scope**
