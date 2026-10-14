@@ -46,8 +46,59 @@ pub enum PluginError {
     Unknown(String),
 }
 
+/// Native window a plugin editor is embedded into.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditorParent {
+    /// X11 window id (Linux/BSD; VST3 `X11EmbedWindowID`, CLAP `x11`).
+    X11(u64),
+    /// Win32 `HWND`.
+    Win32(usize),
+    /// Cocoa `NSView*`.
+    Cocoa(usize),
+    /// Let the plugin open its own top-level window (CLAP floating GUIs only).
+    Floating,
+}
+
 pub trait PluginInstance: Send {
     fn descriptor(&self) -> &PluginDescriptor;
+
+    /// Processing latency in samples, valid after `activate`.
+    fn latency_samples(&self) -> u32 {
+        0
+    }
+
+    /// Plugin state as Audacity `<parameter name= value=>` pairs for `.aup3`
+    /// realtime-effect storage (e.g. VST3 `ProcessorState`/`ControllerState`/`Parameters`).
+    fn save_state(&mut self) -> Result<Vec<(String, String)>, PluginError> {
+        Ok(self
+            .descriptor()
+            .params
+            .iter()
+            .filter_map(|p| self.get_param(p.id).map(|v| (p.id.to_string(), v.to_string())))
+            .collect())
+    }
+
+    /// Restores state written by [`PluginInstance::save_state`].
+    fn load_state(&mut self, state: &[(String, String)]) -> Result<(), PluginError> {
+        for (k, v) in state {
+            if let (Ok(id), Ok(v)) = (k.parse::<u32>(), v.parse::<f32>()) {
+                self.set_param(id, v)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether the plugin has its own editor GUI.
+    fn has_editor(&self) -> bool {
+        false
+    }
+
+    /// Opens the plugin editor inside `parent`; returns its size in pixels.
+    fn open_editor(&mut self, _parent: EditorParent) -> Result<(u32, u32), PluginError> {
+        Err(PluginError::Unknown("plugin has no editor".into()))
+    }
+
+    fn close_editor(&mut self) {}
 
     fn set_param(&mut self, id: u32, v: f32) -> Result<(), PluginError>;
 
@@ -371,6 +422,11 @@ pub struct PluginRegistry {
 }
 
 impl PluginRegistry {
+    /// A registry over exactly these hosts (first host per format wins).
+    pub fn with_hosts(hosts: Vec<Box<dyn PluginHost>>) -> Self {
+        Self { hosts, plugins: Vec::new() }
+    }
+
     pub fn with_default_hosts() -> Self {
         Self {
             hosts: vec![

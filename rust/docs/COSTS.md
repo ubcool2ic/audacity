@@ -144,3 +144,7 @@ Stage 6: Luna 7 calls, $0.0614. Sol 1 call, $0.2132. **Stage 6 total: $0.2746**
 
 ## BizyBot — Performance & reliability (2026-10-14)
 - au-runtime crate, crash hook/dialog, tests: written by hand, no OpenRouter calls. Spend: $0.00
+
+## BizyBot — Stage 7 CLAP/VST3 hosting (2026-10-14)
+`openai/gpt-6-luna` only (no Sol escalation needed): 11 calls — lib+state 1, clap.rs 2 (first was a skeleton, retried at high effort) + 1 compile-fix pass, vst3.rs 2 + 1 compile-fix pass, sandbox.rs 1, tests 1, two small logic/test fixes. Hand edits: import paths, Option/Result mismatches, `Symbol<*const clap_plugin_entry>`, test fixture paths/segfault line.
+**Spend: $0.0588** (per-call `usage.cost`). Earlier Performance & reliability stage: $0.00 (hand-written before the Luna requirement).

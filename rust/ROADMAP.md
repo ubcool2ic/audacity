@@ -299,3 +299,13 @@ New crate `crates/au-runtime` (no changes to `au-effects`).
 - [x] Tests: parallel vs serial bit-identity (mix, summaries, spectrogram, map), stress (2,000 jobs with injected panics, cancellation, queue bound), injected fatal panic in a child process → report + autosave → `aup3::recover` restores the unsaved edit
 - [ ] Not yet wired: existing call sites (effect apply, export, import, waveform drawing) still run serially; they should move onto `Runtime` jobs with progress bars
 - [ ] Crash dialog and recovery reopen not yet exercised under Xvfb
+
+## Stage 7 status — CLAP + VST3 (2026-10-14)
+See `docs/PLUGIN_HOSTING.md`. New crate `crates/au-plugin-host` (code generated with OpenRouter `openai/gpt-6-luna`).
+- [x] CLAP + VST3 instantiation, parameter enumeration and automation, audio processing, latency reporting
+- [x] State save/restore as Audacity `.aup3` realtime-effect parameters (VST3 `ProcessorState`/`ControllerState`/`Parameters`, CLAP `State`/`Parameters`), round-tripped through a saved `.aup3`
+- [x] Out-of-process sandboxed scanning (`au-plugin-scan`, `au-runtime` jobs + panic isolation); crashing plugin reported, app survives
+- [x] Real plugins verified: Surge XT Effects (CLAP), Steinberg AGain + ADelay (VST3, SDK 3.8.1)
+- [x] VST3 SDK licence verified (MIT since 3.8, GPL-compatible) — documented
+- [~] Plugin editors: API implemented (X11 embed for both, CLAP floating, VST3 IRunLoop); not yet working under headless Xvfb (AGain segfaults in `attached`, JUCE BadAtom) — needs a real desktop / WM and an out-of-process editor host
+- [ ] au-app wiring (effect menu, realtime stacks using `registry()`), LV2/LADSPA (other worker), Nyquist (Stage 9)

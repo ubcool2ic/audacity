@@ -1,0 +1,21 @@
+[package]
+name = "au-plugin-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "CLAP and VST3 plugin hosting for the Audacity Rust port (LV2/LADSPA modules to follow)"
+
+[dependencies]
+au-core = { path = "../au-core" }
+au-plugin-api = { path = "../au-plugin-api" }
+au-project = { path = "../au-project" }
+au-runtime = { path = "../au-runtime" }
+clap-sys = "0.5"
+vst3 = "0.3"
+libloading = "0.8"
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile = "3"
