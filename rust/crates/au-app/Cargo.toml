@@ -14,6 +14,7 @@ au-plugin-api = { path = "../au-plugin-api" }
 au-project = { path = "../au-project" }
 au-runtime = { path = "../au-runtime" }
 rustfft = "6"
+png = "0.18"
 au-plugin-host = { path = "../au-plugin-host" }
 au-scriptpipe = { path = "../au-scriptpipe" }
 eframe = { version = "0.29", optional = true, default-features = false, features = ["glow","default_fonts","x11","wayland"] }

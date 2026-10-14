@@ -152,6 +152,12 @@ struct AudacityApp {
     autosave_at: std::time::Instant,
     tool: Tool,
     zoom: ZoomInfo,
+    /// Active colour theme.
+    theme: crate::theme::Theme,
+    /// Custom theme loaded from components or a cache.
+    custom_theme: Option<crate::theme::Theme>,
+    /// Whether the theme has been applied to the egui context.
+    theme_applied: bool,
     /// Toolbar docking layout (persisted to toolbars.cfg).
     toolbars: toolbars::ToolbarLayout,
     /// The selected drawing mode for each track.
@@ -254,6 +260,9 @@ impl Default for AudacityApp {
             spectrogram_settings: crate::spectrogram_view::ViewSettings::default(),
             spectral_selection: None,
             toolbars: toolbars::ToolbarLayout::load(),
+            theme: crate::theme::load_saved(),
+            custom_theme: None,
+            theme_applied: false,
             zoom: ZoomInfo {
                 h_offset: 0.0,
                 pixels_per_sec: 100.0,
@@ -1838,6 +1847,14 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             .filter(|_| self.selected_track == Some(index))
             .map(Player::position);
         let drag_preview = self.drag;
+        // Track-panel colours from the active Audacity theme (clr* ids).
+        let theme_colour = |name: &str| crate::theme::c32(self.theme.colour(name));
+        let clr_background = theme_colour("TrackBackground");
+        let clr_clip = theme_colour("Unselected");
+        let clr_clip_header = theme_colour("ClipAffordanceUnselectedBrush");
+        let clr_sample = theme_colour("Sample");
+        let [sr, sg, sb, _] = self.theme.colour("Selected");
+        let clr_selection = egui::Color32::from_rgba_unmultiplied(sr, sg, sb, 110);
 
         let (rect, response) =
             ui.allocate_exact_size(egui::vec2(width, 116.0), egui::Sense::click_and_drag());
@@ -1856,7 +1873,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             rate = track.sample_rate().max(1);
             frames = track.len();
             let channels = track.clips.n_channels.max(1);
-            painter.rect_filled(rect, 3.0, egui::Color32::from_gray(34));
+            painter.rect_filled(rect, 3.0, clr_background);
             painter.text(
                 rect.left_top() + egui::vec2(8.0, 5.0),
                 egui::Align2::LEFT_TOP,
@@ -1885,7 +1902,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                         egui::pos2(right.max(left + 1.0), body.bottom()),
                     ),
                     0.0,
-                    egui::Color32::from_rgba_unmultiplied(60, 130, 230, 48),
+                    clr_selection,
                 );
             }
 
@@ -1909,7 +1926,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 clip_bounds.push((clip.start, clip.end()));
 
                 if clip_rect.intersects(rect) {
-                    painter.rect_filled(clip_rect, 4.0, egui::Color32::from_rgb(43, 72, 59));
+                    painter.rect_filled(clip_rect, 4.0, clr_clip);
                     painter.rect_filled(
                         egui::Rect::from_min_max(
                             clip_rect.left_top(),
@@ -1919,7 +1936,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                             ),
                         ),
                         4.0,
-                        egui::Color32::from_rgb(55, 91, 70),
+                        clr_clip_header,
                     );
                     let speed_text = if (clip.stretch_ratio - 1.0).abs() > f64::EPSILON {
                         format!("  ({:.0}%)", clip.stretch_ratio * 100.0)
@@ -1988,7 +2005,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                                     ],
                                     egui::Stroke::new(
                                         1.0,
-                                        egui::Color32::from_rgb(100, 207, 145),
+                                        clr_sample,
                                     ),
                                 );
                             }
@@ -3280,6 +3297,10 @@ impl eframe::App for AudacityApp {
 
 impl AudacityApp {
     fn update_frame(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.theme_applied {
+            crate::theme::apply(&self.theme, ctx);
+            self.theme_applied = true;
+        }
 
 if self.script_pipe_enabled && self.script_pipe.is_none() && !self.script_pipe_failed {
     match crate::script_bridge::ScriptPipe::start(ctx) {
@@ -3413,6 +3434,11 @@ if ui.button("FFmpeg status…").clicked() {
                 });
                 ui.menu_button("View", |ui| {
                     self.toolbars_menu(ui);
+                    ui.menu_button("Theme", |ui| {
+                        if let Some(message) = crate::theme::theme_menu(ui, &mut self.theme, &mut self.custom_theme) {
+                            self.status = message;
+                        }
+                    });
 
 let response = ui
     .checkbox(&mut self.script_pipe_enabled, "mod-script-pipe")
