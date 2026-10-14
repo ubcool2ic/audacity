@@ -3,6 +3,8 @@
 
 //! Core audio data types and editing operations.
 
+pub mod prefs;
+pub mod i18n;
 pub mod selected_region;
 pub mod notes;
 pub mod tags;

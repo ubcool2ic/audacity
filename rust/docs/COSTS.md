@@ -225,3 +225,15 @@ Hand edits: borrow fixes; UnQuoteMsgid extra-string handling; XLisp path set bef
 
 ## BizyBot — Performance & reliability: waveform cache, progress dialog, crash/recovery Xvfb (2026-10-14)
 openai/gpt-6-luna only (no Sol): waveform cache (the second answer block was dropped by my extraction script and re-requested), draw-loop replacement, ProgressCenter, diagnostic pipe hooks, Xvfb crash/recovery/progress tests. Total ≈ $0.016.
+## Stage 10 batch 1 (ubcool2ic): preferences model + gettext catalogs
+
+| Output | Model | USD |
+|---|---|---|
+| au-core/src/prefs.rs (3.7.3 preference keys/defaults, audacity.cfg wxFileConfig I/O) | openai/gpt-6-luna | 0.0098 |
+| au-core/src/i18n.rs (.po/.mo catalogs, Plural-Forms, runtime language switch) | openai/gpt-6-luna | 0.0081 |
+
+Luna 2 calls, $0.0179. Sol: none. **Batch total: $0.0179**
+
+Hand edits: i18n also looks for `<lang>/LC_MESSAGES/audacity.po`.
+
+**Running total (ubcool2ic): $1.9389**
