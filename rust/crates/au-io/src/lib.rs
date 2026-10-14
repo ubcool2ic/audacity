@@ -164,7 +164,7 @@ pub fn export_wav_dithered(
     if float {
         for sample in buffer.interleaved() {
             writer
-                .write_sample(sample.clamp(-1.0, 1.0))
+                .write_sample(sample) // float WAV is unclamped, like Audacity (libsndfile float)
                 .map_err(|error| IoError::Encode(error.to_string()))?;
         }
     } else {

@@ -277,3 +277,4 @@ CMakeUserPresets.json
 
 .claude/settings.local.json
 _deps/
+rust/tools/specref/spec_ref

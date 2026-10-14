@@ -27,6 +27,8 @@ mod spectrogram_view;
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 mod theme;
 #[cfg(feature = "gui")]
+mod spectrogram_calc;
+#[cfg(feature = "gui")]
 mod fx_ui;
 #[cfg(feature = "gui")]
 mod analyze_ui;

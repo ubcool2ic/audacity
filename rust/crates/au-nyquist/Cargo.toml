@@ -1,0 +1,19 @@
+[package]
+name = "au-nyquist"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+au-core = { path = "../au-core" }
+au-plugin-host = { path = "../au-plugin-host" }
+libloading = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "au-nyquist-engine"
+path = "src/bin/au-nyquist-engine.rs"

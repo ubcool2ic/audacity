@@ -205,3 +205,20 @@ Hand edits: trivial compile fixes (FLAC vorbiscomment helper, WavPack writer ids
 
 ## BizyBot — Stage 10 toolbars / themes / AccessKit / layout tests / UI automation / packaging (2026-10-14)
 openai/gpt-6-luna: script_pipe_gui temp-dir fix, toolbars, themes, AccessKit, layout tests (2 Luna attempts, then 1 Sol escalation for the dialog-check fix), toolbar wrapping, pipe edit commands, UI automation suite, packaging. Luna ≈ $0.0359, Sol $0.0279. **Total ≈ $0.064.**
+
+## Stage 9 (ubcool2ic half) — batch 1: Nyquist engine, spectrogram, selection, script/macros
+
+| Item | Model | Cost (USD) |
+|---|---|---|
+| au-nyquist/src/ny.rs (.ny parser, NyquistBase::Parse port) | openai/gpt-6-luna | 0.0096 |
+| au-nyquist/src/engine.rs (nyx_* FFI over Audacity's lib-nyquist-effects.so) | openai/gpt-6-luna | 0.0141 |
+| au-app/src/spectrogram_calc.rs (SpectrumCache/SpectrogramSettings port) | openai/gpt-6-luna | 0.0122 |
+| au-core/src/selected_region.rs (SelectedRegion f0/f1) | openai/gpt-6-luna | 0.0048 |
+| au-script/src/cmd.rs (scripting command layer) | openai/gpt-6-luna | 0.0094 |
+| au-script/src/macros.rs (MacroCommands port) | openai/gpt-6-luna | 0.0056 |
+
+Luna 6 calls, $0.0557. Sol: none. **Batch total: $0.0557**
+
+Hand edits: borrow fixes; UnQuoteMsgid extra-string handling; XLisp path set before nyx_init; gettext SUBRs registered via xlbindfunctions (Audacity RegisterFunctions); choice controls bound as indices; Internat::ToString number formatting; *TRACK* clip lists / PEAK/RMS order; spectrogram window extra sample + persistent scratch buffer + literal ComputeSpectrum (EAC) port; float WAV export no longer clamps.
+
+**Running total (ubcool2ic): $1.9210**

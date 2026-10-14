@@ -1,0 +1,20 @@
+{"case": "Low-pass", "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "High-pass", "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "Notch", "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "Shelf", "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "Tremolo", "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "Delay", "len_aud": [2, 127890], "len_rust": [2, 127890], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "NoiseGate", "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "ClipFix", "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "StudioFadeOut", "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "AdjustableFade", "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "LegacyLimiter", "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "RissetDrum", "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "Pluck", "len_aud": [2, 44100], "len_rust": [2, 44100], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "LabelSounds", "aud": 2, "rust": 2, "pass_": true, "detail": "[(0, 0.8, 'Sound 01'), (1.2, 2, 'Sound 02')] | [(0.0, 0.8, 'Sound 01'), (1.2, 2.0, 'Sound 02')]"}
+{"case": "BeatFinder", "aud": 4, "rust": 4, "pass_": true, "detail": "[(0.267, 0.267, 'B'), (0.767, 0.767, 'B'), (1.267, 1.267, 'B'), (1.767, 1.767, 'B')] | [(0.267, 0.267, 'B'), (0.767, 0.767, 'B'), (1.267, 1.267, 'B'), (1.767, 1.767, 'B')]"}
+{"case": "SpectralDelete", "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "SpectralMulti", "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "SpectralPEQ", "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+{"case": "SpectralShelves", "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -240.0, "peak_diff_db": -240.0, "pass_": true}
+PASS 19/19

@@ -189,6 +189,7 @@ pub fn colormap(value01: f32) -> egui::Color32 {
 /// This is intentionally an interim implementation. The Audacity-compatible
 /// window, zero-padding, frequency-scale, and gain calculations are being
 /// ported separately and can replace this function through [`ColumnFn`].
+#[allow(dead_code)]
 pub fn interim_columns(
     mono: &[f32],
     sample_rate: u32,
@@ -283,7 +284,7 @@ impl SpectrogramCache {
             entries: Vec::new(),
             pending: Vec::new(),
             sources: Vec::new(),
-            column_fn: interim_columns,
+            column_fn: crate::spectrogram_calc::audacity_columns,
         }
     }
 
@@ -883,7 +884,10 @@ fn columns_to_image(
                 1.0 - y as f32 / (height - 1) as f32
             };
             let frequency = unit_to_freq(unit, settings, nyquist);
-            let bin = (frequency * settings.window_size.max(2) as f32
+            // FFT length follows the column (zero padding makes it larger
+            // than the window).
+            let fft_len = column.map_or(settings.window_size, |values| values.len() * 2);
+            let bin = (frequency * fft_len.max(2) as f32
                 / sample_rate.max(1) as f32)
                 .round() as usize;
             let db = column

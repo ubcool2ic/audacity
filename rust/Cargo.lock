@@ -531,6 +531,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "au-nyquist"
+version = "0.1.0"
+dependencies = [
+ "au-core",
+ "au-plugin-host",
+ "libloading",
+ "tempfile",
+]
+
+[[package]]
 name = "au-plugin-api"
 version = "0.1.0"
 dependencies = [
@@ -572,6 +582,14 @@ dependencies = [
  "au-project",
  "crossbeam-channel",
  "rayon",
+ "tempfile",
+]
+
+[[package]]
+name = "au-script"
+version = "0.1.0"
+dependencies = [
+ "au-core",
  "tempfile",
 ]
 
