@@ -151,9 +151,9 @@ fn write_param(params: &[ParamDef], key: &str, value: f64, values: &mut [f64]) -
 }
 
 impl BuiltinEffect for Compressor {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Compressor"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         COMPRESSOR_PARAMS.to_vec()
@@ -225,9 +225,9 @@ impl BuiltinEffect for Compressor {
 }
 
 impl BuiltinEffect for Limiter {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Limiter"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         LIMITER_PARAMS.to_vec()
@@ -295,9 +295,9 @@ impl BuiltinEffect for Limiter {
 }
 
 impl BuiltinEffect for NoiseGate {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "NoiseGate"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         NOISE_GATE_PARAMS.to_vec()

@@ -9,11 +9,16 @@ use au_effects::stack::StackSlot;
 use au_plugin_api::{PluginDescriptor, PluginFormat, PluginHost, PluginInstance};
 use au_project::aup3::RealtimeEffect;
 
+/// Interns strings required by `ParamDef`, whose keys and labels are `'static`.
+///
+/// Plugin ids and names are stored as owned strings; they do not use this interner.
 fn intern(s: &str) -> &'static str {
     static INTERNED: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
 
     let table = INTERNED.get_or_init(|| Mutex::new(HashSet::new()));
-    let mut table = table.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut table = table
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     if let Some(value) = table.get(s) {
         return value;
@@ -24,6 +29,7 @@ fn intern(s: &str) -> &'static str {
     value
 }
 
+/// Returns whether `id` identifies a supported hosted plugin.
 pub fn is_plugin_id(id: &str) -> bool {
     matches!(
         au_plugin_host::state::parse_effect_id(id),
@@ -31,9 +37,10 @@ pub fn is_plugin_id(id: &str) -> bool {
     )
 }
 
+/// A hosted VST3 or CLAP plugin exposed as a built-in effect.
 pub struct PluginEffect {
-    id: &'static str,
-    name: &'static str,
+    id: String,
+    name: String,
     params: Vec<ParamDef>,
     ids: Vec<u32>,
     inner: Mutex<Box<dyn PluginInstance>>,
@@ -43,11 +50,14 @@ pub struct PluginEffect {
 }
 
 impl PluginEffect {
+    /// Creates a bridge around an instantiated plugin.
     pub fn new(inst: Box<dyn PluginInstance>) -> Self {
         let descriptor = inst.descriptor().clone();
         let mut params = Vec::with_capacity(descriptor.params.len());
         let mut ids = Vec::with_capacity(descriptor.params.len());
 
+        // ParamDef keys and labels must be &'static str, so only these strings
+        // are interned; the plugin id and display name remain owned strings.
         for param in &descriptor.params {
             let key = intern(&format!("p{}", param.id));
             let label = intern(&param.name);
@@ -62,8 +72,8 @@ impl PluginEffect {
         }
 
         Self {
-            id: intern(&descriptor.id),
-            name: intern(&descriptor.name),
+            id: descriptor.id,
+            name: descriptor.name,
             params,
             ids,
             inner: Mutex::new(inst),
@@ -73,6 +83,7 @@ impl PluginEffect {
         }
     }
 
+    /// Saves the plugin's serialized state.
     pub fn state(&self) -> Vec<(String, String)> {
         self.inner
             .lock()
@@ -81,6 +92,7 @@ impl PluginEffect {
             .unwrap_or_default()
     }
 
+    /// Loads serialized plugin state, returning whether loading succeeded.
     pub fn load(&self, state: &[(String, String)]) -> bool {
         self.inner
             .lock()
@@ -89,6 +101,7 @@ impl PluginEffect {
             .is_ok()
     }
 
+    /// Returns the plugin descriptor.
     pub fn descriptor(&self) -> PluginDescriptor {
         self.inner
             .lock()
@@ -99,12 +112,12 @@ impl PluginEffect {
 }
 
 impl BuiltinEffect for PluginEffect {
-    fn id(&self) -> &'static str {
-        self.id
+    fn id(&self) -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Owned(self.id.clone())
     }
 
-    fn name(&self) -> &'static str {
-        self.name
+    fn name(&self) -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Owned(self.name.clone())
     }
 
     fn params(&self) -> Vec<ParamDef> {
@@ -246,17 +259,28 @@ impl BuiltinEffect for PluginEffect {
         }
     }
 
-    fn get_text(&self, key: &str) -> Option<String> {
-        self.state()
+    fn get_text(&mut self, key: &str) -> Option<String> {
+        let inner = self
+            .inner
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        inner
+            .save_state()
+            .ok()?
             .into_iter()
             .find_map(|(state_key, value)| (state_key == key).then_some(value))
     }
 
     fn set_text(&mut self, key: &str, value: &str) -> bool {
-        self.load(&[(key.to_owned(), value.to_owned())])
+        let inner = self
+            .inner
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        inner.load_state(&[(key.to_owned(), value.to_owned())]).is_ok()
     }
 }
 
+/// Restores a saved realtime plugin as a stack slot.
 pub fn slot_from_saved(e: &RealtimeEffect) -> Option<StackSlot> {
     if !is_plugin_id(&e.id) {
         return None;
@@ -271,11 +295,13 @@ pub fn slot_from_saved(e: &RealtimeEffect) -> Option<StackSlot> {
     })
 }
 
+/// Serializes a hosted plugin effect into a realtime-effect record.
 pub fn saved_from_effect(
-    effect: &dyn BuiltinEffect,
+    effect: &mut dyn BuiltinEffect,
     active: bool,
 ) -> Option<RealtimeEffect> {
-    if !is_plugin_id(effect.id()) {
+    let id = effect.plugin_id();
+    if !is_plugin_id(&id) {
         return None;
     }
 
@@ -289,21 +315,21 @@ pub fn saved_from_effect(
         })
         .collect();
 
-    Some(RealtimeEffect {
-        id: effect.id().to_owned(),
-        active,
-        params,
-    })
+    Some(RealtimeEffect { id, active, params })
 }
 
+/// Asynchronous catalog of available hosted plugins.
 pub struct PluginCatalog {
+    /// Discovered VST3 and CLAP plugin descriptors.
     pub plugins: Vec<PluginDescriptor>,
     rt: au_runtime::Runtime,
     job: Option<au_runtime::JobHandle<Vec<PluginDescriptor>>>,
+    /// The most recent scanning error, if any.
     pub last_error: Option<String>,
 }
 
 impl PluginCatalog {
+    /// Creates an empty catalog.
     pub fn new() -> Self {
         Self {
             plugins: Vec::new(),
@@ -313,6 +339,7 @@ impl PluginCatalog {
         }
     }
 
+    /// Starts scanning for plugins if a scan is not already running.
     pub fn start_scan(&mut self) {
         let _ = self.poll();
         if self.job.is_some() {
@@ -336,6 +363,7 @@ impl PluginCatalog {
         }));
     }
 
+    /// Collects the scan result if it is ready, returning whether one was collected.
     pub fn poll(&mut self) -> bool {
         let result = match self.job.as_mut() {
             Some(job) => job.try_result(),
@@ -361,14 +389,17 @@ impl PluginCatalog {
         true
     }
 
+    /// Returns whether a scan is currently running.
     pub fn is_scanning(&self) -> bool {
         self.job.is_some()
     }
 
+    /// Finds a plugin by its descriptor id.
     pub fn find(&self, id: &str) -> Option<&PluginDescriptor> {
         self.plugins.iter().find(|descriptor| descriptor.id == id)
     }
 
+    /// Instantiates a catalog plugin by descriptor id.
     pub fn instantiate(&self, id: &str) -> Result<PluginEffect, String> {
         let descriptor = self
             .find(id)
@@ -408,9 +439,7 @@ mod tests {
 
     #[test]
     fn recognizes_plugin_ids() {
-        assert!(is_plugin_id(
-            "Effect_VST3_V_N_/a/b.vst3;ABC"
-        ));
+        assert!(is_plugin_id("Effect_VST3_V_N_/a/b.vst3;ABC"));
         assert!(!is_plugin_id("builtin.gain"));
     }
 
@@ -457,10 +486,7 @@ mod tests {
         };
 
         let mut stack = au_effects::stack::EffectStack::new();
-        stack.slots.push(StackSlot {
-            active: true,
-            effect: Box::new(effect),
-        });
+        assert!(stack.push_effect(Box::new(effect)));
         let _ = stack.render(&mut buffer);
 
         let peak = buffer.channels[0]
@@ -469,7 +495,7 @@ mod tests {
             .fold(0.0_f32, f32::max);
         assert!((peak - 0.4).abs() < 0.01);
 
-        let saved = saved_from_effect(stack.slots[0].effect.as_ref(), true).unwrap();
+        let saved = saved_from_effect(stack.slots[0].effect.as_mut(), true).unwrap();
         let restored = slot_from_saved(&saved).unwrap();
         let restored_gain = restored.effect.get(gain_key).unwrap();
         assert!((restored_gain - 0.5).abs() < 0.01);

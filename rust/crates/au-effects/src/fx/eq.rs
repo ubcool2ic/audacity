@@ -472,9 +472,9 @@ impl FilterCurveEq {
 }
 
 impl BuiltinEffect for FilterCurveEq {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Filter Curve EQ"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         self.numeric_params()
@@ -587,9 +587,9 @@ impl GraphicEq {
 }
 
 impl BuiltinEffect for GraphicEq {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Graphic EQ"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         let mut parameters = Vec::with_capacity(32);

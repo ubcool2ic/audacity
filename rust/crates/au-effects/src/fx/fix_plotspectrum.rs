@@ -377,20 +377,6 @@ fn window_values(which: usize, size: usize) -> Vec<f32> {
     window
 }
 
-fn cubic_interpolate(y0: f32, y1: f32, y2: f32, y3: f32, x: f32) -> f32 {
-    let a = (y0 as f64 / -6.0 + y1 as f64 / 2.0 - y2 as f64 / 2.0 + y3 as f64 / 6.0)
-        as f32;
-    let b = (y0 as f64 - 5.0 * y1 as f64 / 2.0 + 2.0 * y2 as f64 - y3 as f64 / 2.0)
-        as f32;
-    let c = (-11.0 * y0 as f64 / 6.0 + 3.0 * y1 as f64 - 3.0 * y2 as f64 / 2.0
-        + y3 as f64 / 3.0) as f32;
-    let d = y0;
-
-    let xx = x * x;
-    let xxx = xx * x;
-    a * xxx + b * xx + c * x + d
-}
-
 fn cubic_maximize(y0: f32, y1: f32, y2: f32, y3: f32) -> (f32, f32) {
     let a = (y0 as f64 / -6.0 + y1 as f64 / 2.0 - y2 as f64 / 2.0 + y3 as f64 / 6.0)
         as f32;
@@ -753,13 +739,13 @@ impl FixPlotSpectrum {
 }
 
 impl BuiltinEffect for FixPlotSpectrum {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "PlotSpectrum"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Plot Spectrum"
-    }
+    }) }
 
     fn kind(&self) -> EffectKind {
         EffectKind::Analyze

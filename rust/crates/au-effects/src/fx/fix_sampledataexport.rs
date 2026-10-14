@@ -627,13 +627,13 @@ Daulton (<a href=\n\
 }
 
 impl BuiltinEffect for SampleDataExport {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "SampleDataExport"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Sample Data Export"
-    }
+    }) }
 
     fn kind(&self) -> EffectKind {
         EffectKind::Analyze
@@ -733,7 +733,7 @@ impl BuiltinEffect for SampleDataExport {
         vec!["FILENAME", "OPTEXT"]
     }
 
-    fn get_text(&self, key: &str) -> Option<String> {
+    fn get_text(&mut self, key: &str) -> Option<String> {
         match key {
             "FILENAME" => Some(self.filename.clone()),
             "OPTEXT" => Some(self.optext.clone()),

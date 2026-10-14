@@ -362,13 +362,13 @@ impl Default for ChangeSpeed {
 }
 
 impl BuiltinEffect for ChangeSpeed {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "ChangeSpeed"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Change Speed"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![ParamDef::float(
@@ -433,13 +433,13 @@ impl Default for ChangePitch {
 }
 
 impl BuiltinEffect for ChangePitch {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "ChangePitch"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Change Pitch"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -504,13 +504,13 @@ impl Default for ChangeTempo {
 }
 
 impl BuiltinEffect for ChangeTempo {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "ChangeTempo"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Change Tempo"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -597,7 +597,7 @@ mod tests {
     #[test]
     fn processing_is_repeatable() {
         for mut first in all() {
-            let mut second: Box<dyn BuiltinEffect> = match first.id() {
+            let mut second: Box<dyn BuiltinEffect> = match &*first.id() {
                 "ChangeSpeed" => Box::new(ChangeSpeed::default()),
                 "ChangePitch" => Box::new(ChangePitch::default()),
                 _ => Box::new(ChangeTempo::default()),

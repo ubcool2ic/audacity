@@ -166,7 +166,7 @@ impl PlotSpectrum {
 }
 
 impl BuiltinEffect for PlotSpectrum {
-    fn id(&self) -> &'static str { "PlotSpectrum" }
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed("PlotSpectrum") }
     fn kind(&self) -> EffectKind { EffectKind::Analyze }
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -212,7 +212,7 @@ impl Contrast {
 }
 
 impl BuiltinEffect for Contrast {
-    fn id(&self) -> &'static str { "Contrast" }
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed("Contrast") }
     fn kind(&self) -> EffectKind { EffectKind::Analyze }
     fn params(&self) -> Vec<ParamDef> { vec![] }
     fn get(&self, _: &str) -> Option<f64> { None }
@@ -241,7 +241,7 @@ impl Default for FindClipping {
     fn default() -> Self { Self { duty_cycle_start: 3, duty_cycle_end: 3 } }
 }
 impl BuiltinEffect for FindClipping {
-    fn id(&self) -> &'static str { "FindClipping" }
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed("FindClipping") }
     fn kind(&self) -> EffectKind { EffectKind::Analyze }
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -290,7 +290,7 @@ pub struct BeatFinder {
 }
 impl Default for BeatFinder { fn default() -> Self { Self { threshold_percentage: 65 } } }
 impl BuiltinEffect for BeatFinder {
-    fn id(&self) -> &'static str { "BeatFinder" }
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed("BeatFinder") }
     fn kind(&self) -> EffectKind { EffectKind::Analyze }
     fn params(&self) -> Vec<ParamDef> {
         vec![ParamDef::int("THRESVAL", "Threshold Percentage", 5.0, 100.0, 65.0)]
@@ -353,7 +353,7 @@ impl Default for LabelSounds {
     }
 }
 impl BuiltinEffect for LabelSounds {
-    fn id(&self) -> &'static str { "LabelSounds" }
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed("LabelSounds") }
     fn kind(&self) -> EffectKind { EffectKind::Analyze }
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -445,7 +445,7 @@ impl Default for SampleDataExport {
     fn default() -> Self { Self { number: 100, units: 0, fileformat: 0, header: 0, channel_layout: 0 } }
 }
 impl BuiltinEffect for SampleDataExport {
-    fn id(&self) -> &'static str { "SampleDataExport" }
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed("SampleDataExport") }
     fn kind(&self) -> EffectKind { EffectKind::Analyze }
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -522,7 +522,7 @@ impl BuiltinEffect for SampleDataExport {
 #[derive(Clone, Debug, Default)]
 pub struct Rms;
 impl BuiltinEffect for Rms {
-    fn id(&self) -> &'static str { "RMS" }
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed("RMS") }
     fn kind(&self) -> EffectKind { EffectKind::Analyze }
     fn params(&self) -> Vec<ParamDef> { vec![] }
     fn get(&self, _: &str) -> Option<f64> { None }

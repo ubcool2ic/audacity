@@ -125,7 +125,7 @@ impl Default for Tone {
     }
 }
 impl BuiltinEffect for Tone {
-    fn id(&self) -> &'static str { "Tone" }
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed("Tone") }
     fn kind(&self) -> EffectKind { EffectKind::Generate }
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -179,7 +179,7 @@ impl Default for Chirp {
     }
 }
 impl BuiltinEffect for Chirp {
-    fn id(&self) -> &'static str { "Chirp" }
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed("Chirp") }
     fn kind(&self) -> EffectKind { EffectKind::Generate }
     fn params(&self) -> Vec<ParamDef> { vec![
         ParamDef::float("StartFreq", "Start frequency", 1.0, f64::MAX, 440.0),
@@ -221,7 +221,7 @@ impl Default for Noise {
     fn default()->Self{Self{noise_type:0,amplitude:0.8,seed:1,duration:30.0}}
 }
 impl BuiltinEffect for Noise {
-    fn id(&self)->&'static str{"Noise"}
+    fn id(&self)->std::borrow::Cow<'static, str>{std::borrow::Cow::Borrowed("Noise")}
     fn kind(&self)->EffectKind{EffectKind::Generate}
     fn params(&self)->Vec<ParamDef>{vec![
         ParamDef::choice("Type","Noise type",&["White","Pink","Brownian"],0),
@@ -346,13 +346,13 @@ pub fn dtmf_render(seq: &str, duty: f64, amplitude: f64, fs: f64, n: usize, bloc
 }
 impl Default for Dtmf { fn default()->Self{Self{sequence:"audacity".into(),duty_cycle:55.0,amplitude:0.8,duration:30.0}} }
 impl BuiltinEffect for Dtmf {
-    fn id(&self)->&'static str{"DTMF Tones"}
+    fn id(&self)->std::borrow::Cow<'static, str>{std::borrow::Cow::Borrowed("DTMF Tones")}
     fn kind(&self)->EffectKind{EffectKind::Generate}
     fn params(&self)->Vec<ParamDef>{vec![ParamDef::float("Duty Cycle","Duty cycle (%)",0.0,100.0,55.0),ParamDef::float("Amplitude","Amplitude",0.001,1.0,0.8),ParamDef::float("Duration","Duration",0.0,3600.0,30.0)]}
     fn get(&self,k:&str)->Option<f64>{match k{"Duty Cycle"=>Some(self.duty_cycle),"Amplitude"=>Some(self.amplitude),"Duration"=>Some(self.duration),_=>None}}
     fn set(&mut self,k:&str,v:f64)->bool{match k{"Duty Cycle"=>self.duty_cycle=v,"Amplitude"=>self.amplitude=v,"Duration"=>self.duration=v,_=>return false}true}
     fn text_keys(&self)->Vec<&'static str>{vec!["Sequence"]}
-    fn get_text(&self,k:&str)->Option<String>{(k=="Sequence").then(||self.sequence.clone())}
+    fn get_text(&mut self,k:&str)->Option<String>{(k=="Sequence").then(||self.sequence.clone())}
     fn set_text(&mut self,k:&str,v:&str)->bool{k=="Sequence"&&self.set_sequence(v)}
     fn process(&mut self,b:&mut AudioBuffer,_:&mut EffectContext)->Result<(),EffectError>{
         if self.sequence.is_empty(){return Err(EffectError::Invalid("DTMF sequence empty.".into()));}
@@ -370,7 +370,7 @@ pub struct Silence {
 }
 impl Default for Silence{fn default()->Self{Self{duration:30.0}}}
 impl BuiltinEffect for Silence{
-    fn id(&self)->&'static str{"Silence"} fn kind(&self)->EffectKind{EffectKind::Generate}
+    fn id(&self)->std::borrow::Cow<'static, str>{std::borrow::Cow::Borrowed("Silence")} fn kind(&self)->EffectKind{EffectKind::Generate}
     fn params(&self)->Vec<ParamDef>{vec![ParamDef::float("Duration","Duration",0.0,3600.0,30.0)]}
     fn get(&self,k:&str)->Option<f64>{if k=="Duration"{Some(self.duration)}else{None}}
     fn set(&mut self,k:&str,v:f64)->bool{if k=="Duration"{self.duration=v;true}else{false}}
@@ -394,7 +394,7 @@ pub struct RhythmTrack {
 }
 impl Default for RhythmTrack{fn default()->Self{Self{tempo:120.0,timesig:4,swing:0.0,bars:16,click_track_dur:0.0,offset:0.0,click_type:0,high:84,low:80,duration:30.0}}}
 impl BuiltinEffect for RhythmTrack{
-    fn id(&self)->&'static str{"RhythmTrack"} fn kind(&self)->EffectKind{EffectKind::Generate}
+    fn id(&self)->std::borrow::Cow<'static, str>{std::borrow::Cow::Borrowed("RhythmTrack")} fn kind(&self)->EffectKind{EffectKind::Generate}
     fn params(&self)->Vec<ParamDef>{vec![ParamDef::float("TEMPO","Tempo",30.0,300.0,120.0),ParamDef::int("TIMESIG","Beats per bar",1.0,20.0,4.0),ParamDef::float("SWING","Swing",-1.0,1.0,0.0),ParamDef::int("BARS","Number of bars",0.0,1000.0,16.0),ParamDef::float("CLICK-TRACK-DUR","Rhythm track duration",0.0,3600.0,0.0),ParamDef::float("OFFSET","Start time offset",0.0,3600.0,0.0),ParamDef::choice("CLICK-TYPE","Beat sound",&["Metronome","Ping (short)","Ping (long)","Cowbell","Resonant noise","Noise click","Drip (short)","Drip (long)"],0),ParamDef::int("HIGH","Strong beat MIDI pitch",18.0,116.0,84.0),ParamDef::int("LOW","Weak beat MIDI pitch",18.0,116.0,80.0),ParamDef::float("Duration","Duration",0.0,3600.0,30.0)]}
     fn get(&self,k:&str)->Option<f64>{match k{"TEMPO"=>Some(self.tempo),"TIMESIG"=>Some(self.timesig as f64),"SWING"=>Some(self.swing),"BARS"=>Some(self.bars as f64),"CLICK-TRACK-DUR"=>Some(self.click_track_dur),"OFFSET"=>Some(self.offset),"CLICK-TYPE"=>Some(self.click_type as f64),"HIGH"=>Some(self.high as f64),"LOW"=>Some(self.low as f64),"Duration"=>Some(self.duration),_=>None}}
     fn set(&mut self,k:&str,v:f64)->bool{match k{"TEMPO"=>self.tempo=v,"TIMESIG"=>self.timesig=v as usize,"SWING"=>self.swing=v,"BARS"=>self.bars=v as usize,"CLICK-TRACK-DUR"=>self.click_track_dur=v,"OFFSET"=>self.offset=v,"CLICK-TYPE"=>self.click_type=v as usize,"HIGH"=>self.high=v as usize,"LOW"=>self.low=v as usize,"Duration"=>self.duration=v,_=>return false}true}
@@ -413,7 +413,7 @@ pub struct Pluck {
 }
 impl Default for Pluck{fn default()->Self{Self{pitch:60,fade:0,dur:1.0}}}
 impl BuiltinEffect for Pluck{
-    fn id(&self)->&'static str{"Pluck"} fn kind(&self)->EffectKind{EffectKind::Generate}
+    fn id(&self)->std::borrow::Cow<'static, str>{std::borrow::Cow::Borrowed("Pluck")} fn kind(&self)->EffectKind{EffectKind::Generate}
     fn params(&self)->Vec<ParamDef>{vec![ParamDef::int("PITCH","Pluck MIDI pitch",1.0,120.0,60.0),ParamDef::choice("FADE","Fade-out type",&["Abrupt","Gradual"],0),ParamDef::float("DUR","Duration",0.0,60.0,1.0),ParamDef::float("Duration","Duration",0.0,60.0,1.0)]}
     fn get(&self,k:&str)->Option<f64>{match k{"PITCH"=>Some(self.pitch as f64),"FADE"=>Some(self.fade as f64),"DUR"|"Duration"=>Some(self.dur),_=>None}}
     fn set(&mut self,k:&str,v:f64)->bool{match k{"PITCH"=>self.pitch=v as usize,"FADE"=>self.fade=v as usize,"DUR"|"Duration"=>self.dur=v,_=>return false}true}
@@ -439,7 +439,7 @@ pub struct RissetDrum {
 }
 impl Default for RissetDrum{fn default()->Self{Self{freq:100.0,decay:2.0,cf:500.0,bw:400.0,noise:25.0,gain:0.8}}}
 impl BuiltinEffect for RissetDrum{
-    fn id(&self)->&'static str{"RissetDrum"} fn kind(&self)->EffectKind{EffectKind::Generate}
+    fn id(&self)->std::borrow::Cow<'static, str>{std::borrow::Cow::Borrowed("RissetDrum")} fn kind(&self)->EffectKind{EffectKind::Generate}
     fn params(&self)->Vec<ParamDef>{vec![ParamDef::float("FREQ","Frequency",50.0,2000.0,100.0),ParamDef::float("DECAY","Decay",0.1,60.0,2.0),ParamDef::float("CF","Center frequency",100.0,5000.0,500.0),ParamDef::float("BW","Width",10.0,1000.0,400.0),ParamDef::float("NOISE","Noise amount",0.0,100.0,25.0),ParamDef::float("GAIN","Amplitude",0.0,1.0,0.8),ParamDef::float("Duration","Duration",0.0,3600.0,30.0)]}
     fn get(&self,k:&str)->Option<f64>{match k{"FREQ"=>Some(self.freq),"DECAY"=>Some(self.decay),"CF"=>Some(self.cf),"BW"=>Some(self.bw),"NOISE"=>Some(self.noise),"GAIN"=>Some(self.gain),"Duration"=>Some(30.0),_=>None}}
     fn set(&mut self,k:&str,v:f64)->bool{match k{"FREQ"=>self.freq=v,"DECAY"=>self.decay=v,"CF"=>self.cf=v,"BW"=>self.bw=v,"NOISE"=>self.noise=v,"GAIN"=>self.gain=v,"Duration"=>{},_=>return false}true}

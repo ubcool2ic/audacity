@@ -20,7 +20,7 @@ fn registry_ids_unique_and_creatable() {
     let n = ids.len();
     ids.dedup();
     assert_eq!(ids.len(), n, "duplicate ids");
-    for id in ids { assert_eq!(registry::create(id).unwrap().id(), id); }
+    for id in ids { assert_eq!(registry::create(&id).unwrap().id(), id); }
     // Audacity scripting ids resolve too
     for alias in ["ChangeSpeedAndPitch", "DtmfTones", "FilterCurve", "GraphicEq", "MeasureRms"] {
         assert!(registry::create(alias).is_some(), "{alias}");
@@ -30,7 +30,8 @@ fn registry_ids_unique_and_creatable() {
 #[test]
 fn every_builtin_handles_edge_inputs_without_panic() {
     for mut e in registry::all() {
-        let id = e.id();
+        let id = e.id().into_owned();
+        let id = id.as_str();
         let aux = sine(2000);
         for n in [0usize, 1, 7, 3000] {
             for extreme in [false, true] {
@@ -61,7 +62,7 @@ fn stack_desc_round_trip_preserves_order_and_values() {
     st.slots[1].active = false;
     st.move_slot(3, 0);
     let (active, desc) = st.describe();
-    let (back, missing) = EffectStack::from_desc(active, &desc);
+    let (mut back, missing) = EffectStack::from_desc(active, &desc);
     assert!(missing.is_empty());
     assert_eq!(back.describe(), (active, desc.clone()));
     let order: Vec<_> = back.slots.iter().map(|s| s.effect.id()).collect();
@@ -104,7 +105,7 @@ fn presets_factory_and_user_round_trip() {
         for p in factory_presets(id) {
             let mut e = registry::create(id).unwrap();
             p.apply(e.as_mut());
-            let cap = Preset::capture(&p.name, e.as_ref());
+            let cap = Preset::capture(&p.name, e.as_mut());
             for (k, v) in &p.params {
                 if let Some(def) = e.params().into_iter().find(|d| d.key.eq_ignore_ascii_case(k)) {
                     let got = cap.params.iter().find(|(ck, _)| ck == def.key).unwrap();
@@ -117,15 +118,15 @@ fn presets_factory_and_user_round_trip() {
     let mut e = registry::create("Phaser").unwrap();
     set_param(e.as_mut(), "Stages", 6.0);
     set_param(e.as_mut(), "Freq", 1.25);
-    let p = Preset::capture("My \"wide\" phaser", e.as_ref());
+    let p = Preset::capture("My \"wide\" phaser", e.as_mut());
     save_user_preset(dir.path(), "Phaser", &p).unwrap();
-    save_user_preset(dir.path(), "Phaser", &Preset::capture("A first", e.as_ref())).unwrap();
+    save_user_preset(dir.path(), "Phaser", &Preset::capture("A first", e.as_mut())).unwrap();
     let list = load_user_presets(dir.path(), "Phaser");
     assert_eq!(list.len(), 2);
     assert_eq!(list[0].name, "A first");
     let mut f = registry::create("Phaser").unwrap();
     list[1].apply(f.as_mut());
-    assert_eq!(get_params(f.as_ref()), get_params(e.as_ref()));
+    assert_eq!(get_params(f.as_ref()), get_params(e.as_mut()));
     delete_user_preset(dir.path(), "Phaser", "A first").unwrap();
     assert_eq!(load_user_presets(dir.path(), "Phaser").len(), 1);
 }

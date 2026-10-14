@@ -14,51 +14,32 @@ use au_project::aup3::{Aup3Extras, RealtimeEffect, RealtimeEffectList};
 /// Converts a saved list to a live stack. Unknown effects and plugins that fail
 /// to load are skipped, while the remaining slots retain their original order.
 pub fn stack_from_list(l: &RealtimeEffectList) -> EffectStack {
-    let builtins: Vec<SlotDesc> = l
+    let descs: Vec<SlotDesc> = l
         .effects
         .iter()
-        .filter(|e| !crate::plugin_bridge::is_plugin_id(&e.id))
-        .map(|e| SlotDesc {
-            plugin_id: e.id.clone(),
-            active: e.active,
-            params: e.params.clone(),
-        })
+        .map(|e| SlotDesc { plugin_id: e.id.clone(), active: e.active, params: e.params.clone() })
         .collect();
-
-    let mut stack = EffectStack::from_desc(l.active, &builtins).0;
-    let mut builtin_slots = std::mem::take(&mut stack.slots).into_iter();
-    let mut slots = Vec::with_capacity(l.effects.len());
-
-    for e in &l.effects {
-        if crate::plugin_bridge::is_plugin_id(&e.id) {
-            if let Some(slot) = crate::plugin_bridge::slot_from_saved(e) {
-                slots.push(slot);
-            }
-        } else if let Some(slot) = builtin_slots.next() {
-            slots.push(slot);
-        }
-    }
-
-    stack.slots = slots;
-    stack
+    // Hosted plugins (VST3/CLAP) come from the plugin factory; built-ins from the registry.
+    let mut factory = |d: &SlotDesc| {
+        let e = RealtimeEffect { id: d.plugin_id.clone(), active: d.active, params: d.params.clone() };
+        crate::plugin_bridge::slot_from_saved(&e).map(|slot| slot.effect)
+    };
+    EffectStack::from_desc_with(l.active, &descs, &mut factory).0
 }
 
 /// Converts a live stack to the saved form.
-pub fn list_from_stack(s: &EffectStack) -> RealtimeEffectList {
+pub fn list_from_stack(s: &mut EffectStack) -> RealtimeEffectList {
     let (active, described) = s.describe();
     let effects = s
         .slots
-        .iter()
+        .iter_mut()
         .zip(described)
         .filter_map(|(slot, desc)| {
-            if crate::plugin_bridge::is_plugin_id(slot.effect.id()) {
-                crate::plugin_bridge::saved_from_effect(slot.effect.as_ref(), slot.active)
+            if crate::plugin_bridge::is_plugin_id(&desc.plugin_id) {
+                // Plugins save their opaque state blobs (as Audacity does), not parameter values.
+                crate::plugin_bridge::saved_from_effect(slot.effect.as_mut(), slot.active)
             } else {
-                Some(RealtimeEffect {
-                    id: desc.plugin_id,
-                    active: desc.active,
-                    params: desc.params,
-                })
+                Some(RealtimeEffect { id: desc.plugin_id, active: desc.active, params: desc.params })
             }
         })
         .collect();
@@ -113,14 +94,14 @@ pub fn apply_builtin(editor: &mut Editor, sel: Selection, effect: &mut dyn Built
         out.report = ctx.report;
         out.labels = ctx.labels.into_iter().map(|l| OutLabel { t0: l.t0 + t0, t1: l.t1 + t0, text: l.text }).collect();
         if !out.labels.is_empty() {
-            let lt = editor.add_label_track(effect.name());
+            let lt = editor.add_label_track(&effect.name());
             for l in &out.labels { editor.add_label(lt, l.t0, l.t1, &l.text).map_err(|e| e.to_string())?; }
         }
         return Ok(out);
     }
     let mut err = None;
     let mut report = String::new();
-    editor.apply(sel, effect.name(), |buf| {
+    editor.apply(sel, &effect.name(), |buf| {
         let mut ctx = EffectContext { aux, t0, ..Default::default() };
         // Runs on the shared au-runtime pool with panic isolation: a buggy effect reports an error instead of crashing.
         if let Err(e) = au_effects::offline::process_isolated(&mut *effect, buf, &mut ctx) { err = Some(e.to_string()); }
@@ -158,14 +139,14 @@ mod tests {
         let mut st = EffectStack::new();
         assert!(st.push("Echo"));
         au_effects::stack::params_from_strings(st.slots[0].effect.as_mut(), &[("Delay".into(), "0.1".into()), ("Decay".into(), "0.5".into())]);
-        list_from_stack(&st)
+        list_from_stack(&mut st)
     }
 
     #[test]
     fn list_round_trips_through_stack() {
         let l = echo_list();
         assert_eq!(l.effects[0].id, "Effect_Audacity_Audacity_Echo_Built-in Effect: Echo");
-        assert_eq!(list_from_stack(&stack_from_list(&l)), l);
+        assert_eq!(list_from_stack(&mut stack_from_list(&l)), l);
     }
 
     #[test]
@@ -176,7 +157,7 @@ mod tests {
         extras.track_effects = vec![echo_list()];
         let mut master = EffectStack::new(); master.push("Amplify"); master.push("Reverb");
         master.slots[1].active = false;
-        extras.master_effects = list_from_stack(&master);
+        extras.master_effects = list_from_stack(&mut master);
         au_project::aup3::save(&p, &au_project::aup3::Aup3Project { state: state(), extras: extras.clone() }).unwrap();
         let back = au_project::aup3::load(&p).unwrap();
         assert_eq!(back.extras.track_effects, extras.track_effects);

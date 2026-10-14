@@ -30,13 +30,13 @@ impl Default for FindClipping {
 }
 
 impl BuiltinEffect for FindClipping {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "FindClipping"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Find Clipping"
-    }
+    }) }
 
     fn kind(&self) -> EffectKind {
         EffectKind::Analyze

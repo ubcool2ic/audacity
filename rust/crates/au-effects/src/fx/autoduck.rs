@@ -76,9 +76,9 @@ impl AutoDuck {
 }
 
 impl BuiltinEffect for AutoDuck {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "AutoDuck"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         Self::definitions()
@@ -362,9 +362,9 @@ impl LegacyCompressor {
 }
 
 impl BuiltinEffect for LegacyCompressor {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "LegacyCompressor"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         Self::definitions()

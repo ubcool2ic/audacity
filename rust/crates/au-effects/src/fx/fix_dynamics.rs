@@ -48,9 +48,9 @@ impl Default for Compressor {
 }
 
 impl BuiltinEffect for Compressor {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Compressor"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -154,9 +154,9 @@ impl Default for Limiter {
 }
 
 impl BuiltinEffect for Limiter {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Limiter"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![

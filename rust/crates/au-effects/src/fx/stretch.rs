@@ -24,13 +24,13 @@ impl Default for ChangeSpeed {
 }
 
 impl BuiltinEffect for ChangeSpeed {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "ChangeSpeed"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Change Speed and Pitch"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![ParamDef::float(
@@ -90,13 +90,13 @@ impl Default for ChangeTempo {
 }
 
 impl BuiltinEffect for ChangeTempo {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "ChangeTempo"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Change Tempo"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -160,13 +160,13 @@ impl Default for ChangePitch {
 }
 
 impl BuiltinEffect for ChangePitch {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "ChangePitch"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Change Pitch"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -236,9 +236,9 @@ impl Default for Paulstretch {
 }
 
 impl BuiltinEffect for Paulstretch {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Paulstretch"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -332,13 +332,13 @@ impl Default for SlidingStretch {
 }
 
 impl BuiltinEffect for SlidingStretch {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "SlidingStretch"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Sliding stretch"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![

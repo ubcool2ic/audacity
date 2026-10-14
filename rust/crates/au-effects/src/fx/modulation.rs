@@ -32,9 +32,9 @@ impl Default for Echo {
 }
 
 impl BuiltinEffect for Echo {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Echo"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -149,9 +149,9 @@ impl Default for Phaser {
 }
 
 impl BuiltinEffect for Phaser {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Phaser"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -307,9 +307,9 @@ impl Default for Wahwah {
 }
 
 impl BuiltinEffect for Wahwah {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Wahwah"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -833,9 +833,9 @@ impl Default for Distortion {
 }
 
 impl BuiltinEffect for Distortion {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Distortion"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -951,9 +951,9 @@ impl Default for Tremolo {
 }
 
 impl BuiltinEffect for Tremolo {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Tremolo"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -1109,9 +1109,9 @@ impl Default for Delay {
 }
 
 impl BuiltinEffect for Delay {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Delay"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![

@@ -88,6 +88,7 @@ struct LADSPA_Descriptor {
 #[derive(Clone)]
 struct PortMeta {
     descriptor: c_int,
+    #[allow(dead_code)] // port name kept for diagnostics/Debug
     name: String,
     hint: LADSPA_PortRangeHint,
 }
@@ -457,14 +458,14 @@ fn create_unit(
             && port.descriptor & LADSPA_PORT_INPUT != 0
         {
             // SAFETY: the audio buffer is allocated and remains at a stable address.
-            let pointer = unsafe { audio_inputs[input_ordinal].as_mut_ptr() };
+            let pointer = audio_inputs[input_ordinal].as_mut_ptr();
             input_ordinal += 1;
             pointer
         } else if port.descriptor & LADSPA_PORT_AUDIO != 0
             && port.descriptor & LADSPA_PORT_OUTPUT != 0
         {
             // SAFETY: the audio buffer is allocated and remains at a stable address.
-            let pointer = unsafe { audio_outputs[output_ordinal].as_mut_ptr() };
+            let pointer = audio_outputs[output_ordinal].as_mut_ptr();
             output_ordinal += 1;
             pointer
         } else {

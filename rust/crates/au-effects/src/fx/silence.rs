@@ -41,9 +41,9 @@ impl Default for TruncateSilence {
 }
 
 impl BuiltinEffect for TruncateSilence {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "TruncateSilence"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -206,9 +206,9 @@ fn strength() -> f64 {
 }
 
 impl BuiltinEffect for VocalReduction {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "VocalReduction"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -361,9 +361,9 @@ impl Default for Vocoder {
 }
 
 impl BuiltinEffect for Vocoder {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Vocoder"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![

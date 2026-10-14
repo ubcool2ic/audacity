@@ -2,7 +2,6 @@
 // Part of the Audacity Rust port. Derived from Audacity (c) Audacity Team, GPLv3.
 //! Runtime-loaded LV2 plugin host backed by Lilv.
 
-use au_core::AudioBuffer;
 use au_plugin_api::{
     ParamInfo, PluginDescriptor, PluginError, PluginFormat, PluginHost, PluginInstance,
 };
@@ -35,7 +34,6 @@ const URI_INTEGER: &str = "http://lv2plug.in/ns/lv2core#integer";
 const URI_TOGGLED: &str = "http://lv2plug.in/ns/lv2core#toggled";
 const URI_LOGARITHMIC: &str = "http://lv2plug.in/ns/ext/port-props#logarithmic";
 const URI_REPORTS_LATENCY: &str = "http://lv2plug.in/ns/lv2core#reportsLatency";
-const URI_LATENCY: &str = "http://lv2plug.in/ns/lv2core#latency";
 
 const URI_FEATURE_URID_MAP: &[u8] = b"http://lv2plug.in/ns/ext/urid#map\0";
 const URI_FEATURE_URID_UNMAP: &[u8] = b"http://lv2plug.in/ns/ext/urid#unmap\0";
@@ -633,7 +631,9 @@ struct PortMeta {
     integer: bool,
     toggled: bool,
     _logarithmic: bool,
+    #[allow(dead_code)] // parsed port properties, kept for future UI
     optional: bool,
+    #[allow(dead_code)]
     reports_latency: bool,
 }
 
@@ -982,6 +982,7 @@ struct RuntimeInstance {
     input_buffers: Vec<Vec<f32>>,
     output_buffers: Vec<Vec<f32>>,
     control_values: Vec<f32>,
+    #[allow(dead_code)] // owns the memory connected to atom/opaque ports; must outlive run()
     opaque_buffers: Vec<Vec<u8>>,
     active: bool,
 }
@@ -1640,6 +1641,7 @@ impl PluginInstance for Lv2Instance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use au_core::AudioBuffer;
 
     fn amp_descriptor(host: &Lv2Host) -> Option<PluginDescriptor> {
         host.scan(&host.default_search_paths())

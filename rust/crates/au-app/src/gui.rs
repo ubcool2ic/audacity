@@ -1093,7 +1093,7 @@ impl AudacityApp {
                 }
             }
 
-            if keep && crate::plugin_bridge::is_plugin_id(dlg.effect.id()) {
+            if keep && crate::plugin_bridge::is_plugin_id(&dlg.effect.id()) {
                 let id = dlg.effect.id().to_string();
 
                 if self
@@ -3057,17 +3057,17 @@ impl AudacityApp {
                             self.rt_window = true;
                         }
                         egui::ScrollArea::vertical().max_height(500.0).show(ui, |ui| {
-                            let mut items: Vec<(String, &'static str)> = au_effects::registry::all().iter()
-                                .filter(|e| e.kind() == kind).map(|e| (e.name().to_string(), e.id())).collect();
+                            let mut items: Vec<(String, String)> = au_effects::registry::all().iter()
+                                .filter(|e| e.kind() == kind).map(|e| (e.name().to_string(), e.id().into_owned())).collect();
                             items.sort();
                             for (name, id) in items {
                                 if ui.button(format!("{name}…")).clicked() {
                                     ui.close_menu();
-                                    match id {
+                                    match id.as_str() {
                                         "PlotSpectrum" => self.open_spectrum(),
                                         "Contrast" => self.contrast_win = Some(crate::analyze_ui::ContrastWindow::new()),
                                         "NoiseReduction" => {
-                                            self.fx_dialog = crate::fx_ui::EffectDialog::open(id);
+                                            self.fx_dialog = crate::fx_ui::EffectDialog::open(&id);
                                             let key = self.input_device_key();
                                             if let (Some(d), Some(fx)) = (self.fx_dialog.as_mut(), self.room_noise.offline_effect(&key)) {
                                                 d.effect = Box::new(fx);
@@ -3075,7 +3075,7 @@ impl AudacityApp {
                                                 d.report = "Using the captured room noise profile. Use Get Noise Profile to replace it.".into();
                                             }
                                         }
-                                        _ => self.fx_dialog = crate::fx_ui::EffectDialog::open(id),
+                                        _ => self.fx_dialog = crate::fx_ui::EffectDialog::open(&id),
                                     }
                                 }
                             }

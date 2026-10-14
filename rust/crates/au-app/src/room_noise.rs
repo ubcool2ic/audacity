@@ -5,7 +5,6 @@ use std::fs;
 use std::path::PathBuf;
 
 use au_core::AudioBuffer;
-use au_effects::core::{BuiltinEffect, EffectContext};
 use au_effects::fx::fix_noisereduction::{
     NoiseProfile, NoiseReduction, StreamingNoiseReducer,
 };
@@ -467,6 +466,7 @@ impl Default for RoomNoise {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use au_effects::core::{BuiltinEffect, EffectContext};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static TEST_DIR_ID: AtomicUsize = AtomicUsize::new(0);

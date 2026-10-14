@@ -301,13 +301,13 @@ Data gathered\n\
 }
 
 impl BuiltinEffect for Contrast {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Contrast"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Contrast"
-    }
+    }) }
 
     fn kind(&self) -> EffectKind {
         EffectKind::Analyze

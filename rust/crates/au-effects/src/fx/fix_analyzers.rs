@@ -26,13 +26,13 @@ impl Default for BeatFinder {
 }
 
 impl BuiltinEffect for BeatFinder {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "BeatFinder"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Beat Finder"
-    }
+    }) }
 
     fn kind(&self) -> EffectKind {
         EffectKind::Analyze
@@ -146,13 +146,13 @@ impl Default for LabelSounds {
 }
 
 impl BuiltinEffect for LabelSounds {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "LabelSounds"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Label Sounds"
-    }
+    }) }
 
     fn kind(&self) -> EffectKind {
         EffectKind::Analyze
@@ -205,7 +205,7 @@ impl BuiltinEffect for LabelSounds {
         vec!["TEXT"]
     }
 
-    fn get_text(&self, key: &str) -> Option<String> {
+    fn get_text(&mut self, key: &str) -> Option<String> {
         (key == "TEXT").then(|| self.text.clone())
     }
 

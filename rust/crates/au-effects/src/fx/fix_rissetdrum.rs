@@ -35,13 +35,13 @@ impl Default for RissetDrum {
 }
 
 impl BuiltinEffect for RissetDrum {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "RissetDrum"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Risset Drum"
-    }
+    }) }
 
     fn kind(&self) -> EffectKind {
         EffectKind::Generate

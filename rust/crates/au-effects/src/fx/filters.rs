@@ -484,9 +484,9 @@ impl Default for BassAndTreble {
 }
 
 impl BuiltinEffect for BassAndTreble {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "BassAndTreble"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -618,9 +618,9 @@ impl ClassicFilters {
 }
 
 impl BuiltinEffect for ClassicFilters {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "ClassicFilters"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -794,9 +794,9 @@ impl Default for HighPassFilter {
 }
 
 impl BuiltinEffect for HighPassFilter {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "High-passFilter"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -876,9 +876,9 @@ impl Default for LowPassFilter {
 }
 
 impl BuiltinEffect for LowPassFilter {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Low-passFilter"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -955,9 +955,9 @@ impl Default for NotchFilter {
 }
 
 impl BuiltinEffect for NotchFilter {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "NotchFilter"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -1084,9 +1084,9 @@ impl ShelfFilter {
 }
 
 impl BuiltinEffect for ShelfFilter {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "ShelfFilter"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![

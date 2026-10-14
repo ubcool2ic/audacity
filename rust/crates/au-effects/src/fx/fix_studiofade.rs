@@ -197,13 +197,13 @@ impl StudioFadeOut {
 }
 
 impl BuiltinEffect for StudioFadeOut {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "StudioFadeOut"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Studio Fade Out"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         Vec::new()

@@ -139,9 +139,9 @@ impl Distortion {
 }
 
 impl BuiltinEffect for Distortion {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Distortion"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![

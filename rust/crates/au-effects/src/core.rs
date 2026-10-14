@@ -113,9 +113,15 @@ impl std::error::Error for EffectError {}
 /// presets, macros and `.aup3` realtime-effect state can round-trip them.
 pub trait BuiltinEffect: Send {
     /// Audacity command id (e.g. "Echo", "Normalize", "Tone").
-    fn id(&self) -> &'static str;
+    fn id(&self) -> std::borrow::Cow<'static, str>;
     /// Display name.
-    fn name(&self) -> &'static str { self.id() }
+    fn name(&self) -> std::borrow::Cow<'static, str> { self.id() }
+    /// Audacity plugin id used in `.aup3` realtime-effect lists. Ids that already are
+    /// plugin ids (start with `Effect_`, e.g. hosted VST3/CLAP) pass through unchanged.
+    fn plugin_id(&self) -> String {
+        let id = self.id();
+        if id.starts_with("Effect_") { id.into_owned() } else { crate::stack::plugin_id(&id) }
+    }
     /// Kind of effect.
     fn kind(&self) -> EffectKind { EffectKind::Process }
     /// Parameter definitions.
@@ -143,7 +149,7 @@ pub trait BuiltinEffect: Send {
     /// Keys of string-valued parameters (e.g. DTMF `Sequence`, Label Sounds `TEXT`).
     fn text_keys(&self) -> Vec<&'static str> { Vec::new() }
     /// Reads a string parameter.
-    fn get_text(&self, _key: &str) -> Option<String> { None }
+    fn get_text(&mut self, _key: &str) -> Option<String> { None }
     /// Writes a string parameter. Returns false for unknown keys.
     fn set_text(&mut self, _key: &str, _value: &str) -> bool { false }
 }

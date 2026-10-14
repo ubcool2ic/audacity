@@ -65,9 +65,9 @@ impl Default for Amplify {
 }
 
 impl BuiltinEffect for Amplify {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Amplify"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -143,9 +143,9 @@ impl Default for Normalize {
 }
 
 impl BuiltinEffect for Normalize {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Normalize"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -234,9 +234,9 @@ impl BuiltinEffect for Normalize {
 pub struct Invert;
 
 impl BuiltinEffect for Invert {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Invert"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         Vec::new()
@@ -277,9 +277,9 @@ impl BuiltinEffect for Invert {
 pub struct Reverse;
 
 impl BuiltinEffect for Reverse {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Reverse"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         Vec::new()
@@ -310,9 +310,9 @@ impl BuiltinEffect for Reverse {
 pub struct FadeIn;
 
 impl BuiltinEffect for FadeIn {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "FadeIn"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         Vec::new()
@@ -349,9 +349,9 @@ impl BuiltinEffect for FadeIn {
 pub struct FadeOut;
 
 impl BuiltinEffect for FadeOut {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "FadeOut"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         Vec::new()
@@ -397,9 +397,9 @@ impl Default for Repeat {
 }
 
 impl BuiltinEffect for Repeat {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Repeat"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![ParamDef::int(
@@ -451,9 +451,9 @@ impl BuiltinEffect for Repeat {
 pub struct StereoToMono;
 
 impl BuiltinEffect for StereoToMono {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "StereoToMono"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         Vec::new()
@@ -631,9 +631,9 @@ impl AdjustableFade {
 }
 
 impl BuiltinEffect for AdjustableFade {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "AdjustableFade"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -698,9 +698,9 @@ impl BuiltinEffect for AdjustableFade {
 pub struct StudioFadeOut;
 
 impl BuiltinEffect for StudioFadeOut {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "StudioFadeOut"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         Vec::new()
@@ -834,9 +834,9 @@ impl ClipFix {
 }
 
 impl BuiltinEffect for ClipFix {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "ClipFix"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -907,9 +907,9 @@ impl BuiltinEffect for ClipFix {
 pub struct CrossfadeClips;
 
 impl BuiltinEffect for CrossfadeClips {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "CrossfadeClips"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         Vec::new()
@@ -1034,9 +1034,9 @@ impl Default for CrossfadeTracks {
 }
 
 impl BuiltinEffect for CrossfadeTracks {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "CrossfadeTracks"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -1210,7 +1210,7 @@ mod tests {
     #[test]
     fn all_effects_run_and_clamp_parameters() {
         for effect in all() {
-            let needs_aux = matches!(effect.id(), "CrossfadeClips" | "CrossfadeTracks");
+            let needs_aux = matches!(&*effect.id(), "CrossfadeClips" | "CrossfadeTracks");
             exercise_effect(effect, needs_aux);
         }
     }

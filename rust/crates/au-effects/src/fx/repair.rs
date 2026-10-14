@@ -176,7 +176,7 @@ fn interpolate_audio(buffer: &mut [f32], first: usize, count: usize) {
 }
 
 impl BuiltinEffect for Repair {
-    fn id(&self) -> &'static str { "Repair" }
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed("Repair") }
 
     fn params(&self) -> Vec<ParamDef> { vec![] }
 
@@ -264,7 +264,7 @@ impl ClickRemoval {
 }
 
 impl BuiltinEffect for ClickRemoval {
-    fn id(&self) -> &'static str { "ClickRemoval" }
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed("ClickRemoval") }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![

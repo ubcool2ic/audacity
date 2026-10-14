@@ -190,9 +190,9 @@ impl Delay {
 }
 
 impl BuiltinEffect for Delay {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Delay"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![

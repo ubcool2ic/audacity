@@ -337,13 +337,13 @@ impl NoiseReduction {
 }
 
 impl BuiltinEffect for NoiseReduction {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "NoiseReduction"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Noise Reduction"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -628,7 +628,6 @@ impl StreamChannel {
     }
 
     fn process_window(&mut self) {
-        let bins = self.size / 2 + 1;
         for i in 0..self.size {
             self.fft_buffer[i] = self.input[i] * self.input_window[i];
         }

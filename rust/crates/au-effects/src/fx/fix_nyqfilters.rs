@@ -244,9 +244,9 @@ impl Default for HighPassFilter {
 }
 
 impl BuiltinEffect for HighPassFilter {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "High-passFilter"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -344,9 +344,9 @@ impl Default for LowPassFilter {
 }
 
 impl BuiltinEffect for LowPassFilter {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Low-passFilter"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -444,9 +444,9 @@ impl Default for NotchFilter {
 }
 
 impl BuiltinEffect for NotchFilter {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "NotchFilter"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
@@ -573,7 +573,7 @@ mod tests {
     #[test]
     fn processing_is_repeatable() {
         for mut first in all() {
-            let mut second: Box<dyn BuiltinEffect> = match first.id() {
+            let mut second: Box<dyn BuiltinEffect> = match &*first.id() {
                 "High-passFilter" => Box::new(HighPassFilter::default()),
                 "Low-passFilter" => Box::new(LowPassFilter::default()),
                 _ => Box::new(NotchFilter::default()),

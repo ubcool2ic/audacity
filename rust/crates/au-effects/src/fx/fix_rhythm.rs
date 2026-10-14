@@ -665,13 +665,13 @@ fn add_at(output: &mut [f32], start: usize, click: &[f32]) {
 }
 
 impl BuiltinEffect for RhythmTrack {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "RhythmTrack"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Rhythm Track"
-    }
+    }) }
 
     fn kind(&self) -> EffectKind {
         EffectKind::Generate

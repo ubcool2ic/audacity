@@ -46,7 +46,11 @@ pub fn all() -> Vec<Box<dyn BuiltinEffect>> {
 
 /// Ids of all built-ins of a kind.
 pub fn ids(kind: EffectKind) -> Vec<&'static str> {
-    all().iter().filter(|e| e.kind() == kind).map(|e| e.id()).collect()
+    all().iter().filter(|e| e.kind() == kind).filter_map(|e| match e.id() {
+        // Built-ins have static ids; owned ids only come from hosted plugins.
+        std::borrow::Cow::Borrowed(s) => Some(s),
+        std::borrow::Cow::Owned(_) => None,
+    }).collect()
 }
 
 /// Creates a built-in by Audacity id (case-insensitive, spaces/hyphens ignored).
@@ -57,5 +61,5 @@ pub fn create(id: &str) -> Option<Box<dyn BuiltinEffect>> {
         "graphiceq" => "graphiceq", "measurerms" => "rms", _ => "",
     }.to_string();
     let want = norm(id);
-    all().into_iter().find(|e| { let (a, b) = (norm(e.id()), norm(e.name())); a == want || b == want || (!alias.is_empty() && (a == alias || b == alias)) })
+    all().into_iter().find(|e| { let (a, b) = (norm(&e.id()), norm(&e.name())); a == want || b == want || (!alias.is_empty() && (a == alias || b == alias)) })
 }

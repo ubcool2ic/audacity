@@ -34,13 +34,13 @@ impl Default for FixLoudness {
 }
 
 impl BuiltinEffect for FixLoudness {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "LoudnessNormalization"
-    }
+    }) }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Loudness Normalization"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![

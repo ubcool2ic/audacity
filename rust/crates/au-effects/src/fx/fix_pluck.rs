@@ -25,9 +25,9 @@ impl Default for Pluck {
 }
 
 impl BuiltinEffect for Pluck {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Pluck"
-    }
+    }) }
 
     fn kind(&self) -> EffectKind {
         EffectKind::Generate

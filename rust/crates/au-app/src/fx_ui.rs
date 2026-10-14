@@ -46,7 +46,7 @@ impl EffectDialog {
 
     /// Whether the effect needs a second track.
     pub fn needs_aux(&self) -> bool {
-        matches!(self.effect.id(), "AutoDuck" | "CrossfadeTracks" | "CrossfadeClips" | "Contrast" | "Vocoder")
+        matches!(&*self.effect.id(), "AutoDuck" | "CrossfadeTracks" | "CrossfadeClips" | "Contrast" | "Vocoder")
     }
 
     /// Draws the dialog. `track_names` lists project tracks for the aux picker.
@@ -87,7 +87,8 @@ impl EffectDialog {
     }
 
     fn presets_row(&mut self, ui: &mut egui::Ui) {
-        let id = self.effect.id();
+        let id_cow = self.effect.id();
+        let id: &str = &id_cow;
         let dir = stack::user_preset_dir();
         ui.horizontal(|ui| {
             ui.menu_button("Presets & settings", |ui| {
@@ -112,7 +113,7 @@ impl EffectDialog {
             });
             ui.text_edit_singleline(&mut self.preset_name).on_hover_text("Preset name");
             if ui.button("Save Preset").clicked() && !self.preset_name.trim().is_empty() {
-                let p = Preset::capture(self.preset_name.trim(), self.effect.as_ref());
+                let p = Preset::capture(self.preset_name.trim(), self.effect.as_mut());
                 self.report = match stack::save_user_preset(&dir, id, &p) { Ok(()) => format!("Saved preset '{}'", p.name), Err(e) => format!("Preset save failed: {e}") };
             }
         });
@@ -215,11 +216,11 @@ pub fn realtime_panel(
 
     ui.menu_button("Add effect…", |ui| {
         for e in registry::all().into_iter().filter(|e| e.supports_realtime()) {
-            if ui.button(e.name()).clicked() {
+            if ui.button(e.name().as_ref()).clicked() {
                 let mut st = au_effects::stack::EffectStack::new();
-                st.push(e.id());
+                st.push(&e.id());
                 list.effects
-                    .extend(crate::fx_bridge::list_from_stack(&st).effects);
+                    .extend(crate::fx_bridge::list_from_stack(&mut st).effects);
                 changed = true;
                 ui.close_menu();
             }
@@ -236,10 +237,10 @@ pub fn realtime_panel(
             };
             if ui.button(format!("{} ({format})", d.name)).clicked() {
                 if let Ok(eff) = plugins.instantiate(&d.id) {
-                    if let Some(saved) =
-                        crate::plugin_bridge::saved_from_effect(&eff, true)
-                    {
-                        list.effects.push(saved);
+                    let mut st = au_effects::stack::EffectStack::new();
+                    if st.push_effect(Box::new(eff)) {
+                        list.effects
+                            .extend(crate::fx_bridge::list_from_stack(&mut st).effects);
                         changed = true;
                     }
                 }
@@ -255,7 +256,7 @@ pub fn realtime_panel(
                 if let Some(mut slot) = crate::plugin_bridge::slot_from_saved(saved) {
                     if param_grid(ui, slot.effect.as_mut()) {
                         if let Some(updated) = crate::plugin_bridge::saved_from_effect(
-                            slot.effect.as_ref(),
+                            slot.effect.as_mut(),
                             slot.active,
                         ) {
                             saved.params = updated.params;
@@ -268,7 +269,7 @@ pub fn realtime_panel(
                 if let Some(mut e) = registry::create(&sym) {
                     stack::params_from_strings(e.as_mut(), &saved.params);
                     if param_grid(ui, e.as_mut()) {
-                        saved.params = stack::params_to_strings(e.as_ref());
+                        saved.params = stack::params_to_strings(e.as_mut());
                         changed = true;
                     }
                 }

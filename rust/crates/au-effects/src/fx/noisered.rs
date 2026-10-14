@@ -214,9 +214,9 @@ impl NoiseReduction {
 impl BuiltinEffect for NoiseReduction {
     fn learn_profile(&mut self, noise: &AudioBuffer) -> Result<(), EffectError> { self.get_profile(noise) }
 
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "NoiseReduction"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![

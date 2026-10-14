@@ -96,7 +96,7 @@ fn map_render_error(error: JobError) -> OfflineError {
 /// that way are rendered serially using instances supplied by `make`.
 pub fn render_buffers(
     exec: Exec,
-    template: &dyn BuiltinEffect,
+    template: &mut dyn BuiltinEffect,
     make: Option<&(dyn Fn() -> Box<dyn BuiltinEffect> + Sync)>,
     buffers: Vec<AudioBuffer>,
     aux: Option<&AudioBuffer>,
@@ -107,14 +107,14 @@ pub fn render_buffers(
 
     let id = template.id();
     let can_copy_settings =
-        id != "NoiseReduction" && crate::registry::create(id).is_some();
+        id != "NoiseReduction" && crate::registry::create(&id).is_some();
 
     if can_copy_settings {
         let preset = crate::stack::Preset::capture("", template);
         let result = runtime().pool().install(|| {
             map_items(exec, &buffers, cancel, progress, |input| {
                 render_one(input, aux, || {
-                    let mut effect = crate::registry::create(id).ok_or_else(|| {
+                    let mut effect = crate::registry::create(&id).ok_or_else(|| {
                         JobError::Failed(format!("effect {id} is not registered"))
                     })?;
                     preset.apply(effect.as_mut());
@@ -271,11 +271,11 @@ mod tests {
             let mut template =
                 crate::registry::create(id).unwrap_or_else(|| panic!("missing effect {id}"));
             set_non_default_params(template.as_mut());
-            let preset = Preset::capture("", template.as_ref());
+            let preset = Preset::capture("", template.as_mut());
 
             let parallel = render_buffers(
                 Exec::Parallel,
-                template.as_ref(),
+                template.as_mut(),
                 None,
                 make_buffers(8),
                 None,
@@ -289,7 +289,7 @@ mod tests {
 
             let serial = render_buffers(
                 Exec::Serial,
-                template.as_ref(),
+                template.as_mut(),
                 None,
                 make_buffers(8),
                 None,
@@ -309,11 +309,11 @@ mod tests {
 
     #[test]
     fn parallel_reverb_stress_is_repeatable() {
-        let template = crate::registry::create("Reverb").expect("Reverb should be registered");
+        let mut template = crate::registry::create("Reverb").expect("Reverb should be registered");
 
         let first = render_buffers(
             Exec::Parallel,
-            template.as_ref(),
+            template.as_mut(),
             None,
             make_buffers(64),
             None,
@@ -327,7 +327,7 @@ mod tests {
 
         let second = render_buffers(
             Exec::Parallel,
-            template.as_ref(),
+            template.as_mut(),
             None,
             make_buffers(64),
             None,
@@ -345,9 +345,9 @@ mod tests {
     struct PanickingEffect;
 
     impl BuiltinEffect for PanickingEffect {
-        fn id(&self) -> &'static str {
+        fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
             "NoiseReduction"
-        }
+        }) }
 
         fn params(&self) -> Vec<crate::core::ParamDef> {
             Vec::new()
@@ -372,11 +372,11 @@ mod tests {
 
     #[test]
     fn panics_are_isolated_and_do_not_poison_later_work() {
-        let template = PanickingEffect;
+        let mut template = PanickingEffect;
         let factory = || Box::new(PanickingEffect) as Box<dyn BuiltinEffect>;
         let result = render_buffers(
             Exec::Parallel,
-            &template,
+            &mut template,
             Some(&factory),
             vec![make_buffer(0, 256)],
             None,
@@ -393,10 +393,10 @@ mod tests {
             Err(OfflineError::Panicked(_))
         ));
 
-        let normal = crate::registry::create("Echo").expect("Echo should be registered");
+        let mut normal = crate::registry::create("Echo").expect("Echo should be registered");
         assert!(render_buffers(
             Exec::Parallel,
-            normal.as_ref(),
+            normal.as_mut(),
             None,
             vec![make_buffer(2, 256)],
             None,
@@ -408,13 +408,13 @@ mod tests {
 
     #[test]
     fn cancelled_render_returns_cancelled() {
-        let template = crate::registry::create("Echo").expect("Echo should be registered");
+        let mut template = crate::registry::create("Echo").expect("Echo should be registered");
         let cancel = CancelToken::new();
         cancel.cancel();
 
         let result = render_buffers(
             Exec::Parallel,
-            template.as_ref(),
+            template.as_mut(),
             None,
             vec![make_buffer(0, 128)],
             None,

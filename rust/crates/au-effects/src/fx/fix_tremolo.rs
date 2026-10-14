@@ -33,9 +33,9 @@ impl Default for Tremolo {
 }
 
 impl BuiltinEffect for Tremolo {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> std::borrow::Cow<'static, str> { std::borrow::Cow::Borrowed({
         "Tremolo"
-    }
+    }) }
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
