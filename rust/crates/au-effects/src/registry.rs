@@ -7,12 +7,18 @@ use crate::fx;
 pub fn all() -> Vec<Box<dyn BuiltinEffect>> {
     // Exact Audacity 3.7.3 re-ports come first; later duplicates (older ports) are dropped.
     let mut v: Vec<Box<dyn BuiltinEffect>> = Vec::new();
+    v.extend(fx::fix_analyzers::all());
+    v.extend(fx::fix_delay::all());
     v.extend(fx::fix_distortion::all());
-    v.extend(fx::fix_nyqfilters::all());
     v.extend(fx::fix_dynamics::all());
-    v.extend(fx::fix_speedpitch::all());
-    v.extend(fx::fix_paulstretch::all());
     v.extend(fx::fix_loudness::all());
+    v.extend(fx::fix_nyqfilters::all());
+    v.extend(fx::fix_paulstretch::all());
+    v.extend(fx::fix_pluck::all());
+    v.extend(fx::fix_rhythm::all());
+    v.extend(fx::fix_studiofade::all());
+    v.extend(fx::fix_tremolo::all());
+    v.extend(fx::fix_speedpitch::all());
     v.extend(fx::fix_findclipping::all());
     v.extend(fx::simple::all());
     v.extend(fx::filters::all());
