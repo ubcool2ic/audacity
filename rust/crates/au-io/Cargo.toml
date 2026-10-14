@@ -19,6 +19,12 @@ rtrb = "0.3"
 flacenc = "0.4"
 cpal = { version = "0.15", optional = true }
 
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
 [features]
 default = ["device"]
 device = ["cpal"]

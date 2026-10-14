@@ -375,6 +375,7 @@ version = "0.1.0"
 dependencies = [
  "au-core",
  "au-effects",
+ "cc",
  "cpal",
  "flacenc",
  "hound",
@@ -383,6 +384,7 @@ dependencies = [
  "rtrb",
  "rubato",
  "symphonia",
+ "tempfile",
  "thiserror 1.0.69",
 ]
 

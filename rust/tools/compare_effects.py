@@ -152,13 +152,17 @@ def make_inputs():
 PIPE_TO = f"/tmp/audacity_script_pipe.to.{os.getuid()}"; PIPE_FROM = f"/tmp/audacity_script_pipe.from.{os.getuid()}"
 class Aud:
     def __enter__(self):
-        subprocess.run("pkill -x audacity; sleep 2; rm -f /tmp/audacity_script_pipe.*", shell=True)
+        # The pipe paths are per-uid, so only one scripted Audacity can run at a time.
+        # Serialize with other agents/tests via a lock file and only ever kill our own process.
+        import fcntl
+        self.lock = open("/tmp/audacity_script_pipe.lock", "w"); fcntl.flock(self.lock, fcntl.LOCK_EX)
+        for pth in (PIPE_TO, PIPE_FROM):  # stale pipes from a crashed run of ours (lock held => no live owner)
+            if os.path.exists(pth) and not subprocess.run(["fuser", pth], capture_output=True).stdout.strip(): os.remove(pth)
         cfg = os.path.expanduser("~/.config/audacity/audacity.cfg"); s = open(cfg).read()
         s = re.sub(r"\[ActiveProjects\]\n(?:[^\[\n][^\n]*\n)*", "", s)
         s = re.sub(r"DefaultProjectSampleFormatChoice=.*", "DefaultProjectSampleFormatChoice=Format32BitFloat", s)
         open(cfg, "w").write(s)
-        subprocess.run("rm -rf /var/tmp/audacity-$(id -un)/*", shell=True)
-        subprocess.Popen("cd /tmp && exec xvfb-run -a -s '-screen 0 1280x1024x24' audacity >/tmp/aud.log 2>&1", shell=True)
+        self.proc = subprocess.Popen("cd /tmp && exec xvfb-run -a -s '-screen 0 1280x1024x24' audacity >/tmp/aud.log 2>&1", shell=True, start_new_session=True)
         for _ in range(90):
             if os.path.exists(PIPE_TO): break
             time.sleep(1)
@@ -180,7 +184,17 @@ class Aud:
         if "BatchCommand finished: OK" not in r: print("   audacity:", c, "->", r.strip()[-200:])
         return r
     def __exit__(self, *a):
-        subprocess.run("pkill -x audacity; sleep 2; rm -f /tmp/audacity_script_pipe.*", shell=True)
+        import signal, fcntl
+        try: os.killpg(self.proc.pid, signal.SIGTERM)  # our xvfb-run + audacity only
+        except ProcessLookupError: pass
+        try: self.proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            try: os.killpg(self.proc.pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+        time.sleep(1)
+        for pth in (PIPE_TO, PIPE_FROM):
+            if os.path.exists(pth): os.remove(pth)
+        fcntl.flock(self.lock, fcntl.LOCK_UN); self.lock.close()
 
 def labels_from(info):
     m = re.search(r"\[.*\]", info, re.S)

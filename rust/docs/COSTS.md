@@ -182,3 +182,23 @@ openai/gpt-6-luna only (no Sol): sandbox.rs (+1 wasted call from a shell-quoting
 
 ## BizyBot — Stage 9 script pipe / Nyquist host / spectrogram view (2026-10-14)
 openai/gpt-6-luna only (no Sol): au-scriptpipe + fix pass, app bridge, Nyquist sandbox host, plugin manager, spectrogram view, app pipe commands, Xvfb spectrogram test. Total ≈ $0.040.
+
+## Stage 8 part A + au-effects API change (2026-10-14)
+| file | model | cost $ |
+|---|---|---|
+| au-io export/mp3.rs + csrc/export_mp3.cpp | openai/gpt-6-luna | 0.0090 |
+| au-io export/ogg_opus.rs + csrc/export_ogg_opus.cpp | openai/gpt-6-luna | 0.0090 |
+| au-io export/intfmt.rs + csrc/export_intfmt.cpp (PCM/FLAC/WavPack + Dither) | openai/gpt-6-luna | 0.0132 |
+| intfmt WavPack fix (2nd pass after comparison) | openai/gpt-6-luna | 0.0124 |
+| au-core/src/tags.rs | openai/gpt-6-luna | 0.0050 |
+| au-app/src/export_ui.rs (Metadata Editor, Export Multiple) | openai/gpt-6-luna | 0.0073 |
+| au-app/src/export_glue.rs (format options, mixdown, parallel Export Multiple) | openai/gpt-6-luna | 0.0080 |
+| au-app/src/main.rs (batch CLI on au-runtime) | openai/gpt-6-luna | 0.0082 |
+| au-effects/src/stack.rs (API change) | openai/gpt-6-luna | 0.0040 |
+| au-app/src/plugin_bridge.rs (API change) | openai/gpt-6-luna | 0.0049 |
+
+Luna 10 calls, $0.0810 (API change part: $0.0089). Sol: none. **Total: $0.0810**
+
+Hand edits: trivial compile fixes (FLAC vorbiscomment helper, WavPack writer ids, two corrupted literals in generated Rust, egui borrow, includes), the glibc rand() seeding in the dither port, the mechanical `id()`→`Cow` signature migration across effect files (script), gui.rs menu wiring.
+
+**Running total (ubcool2ic): $1.8653**

@@ -348,7 +348,7 @@ See `docs/PLUGIN_HOSTING.md`. New crate `crates/au-plugin-host` (code generated 
 - [x] Real plugins verified: Surge XT Effects (CLAP), Steinberg AGain + ADelay (VST3, SDK 3.8.1)
 - [x] VST3 SDK licence verified (MIT since 3.8, GPL-compatible) — documented
 - [x] Plugin editors: out-of-process host `au-plugin-editor` (crash-isolated; AGain + Surge XT verified under Xvfb+openbox, crash reported as signal 11 and app unaffected). Separate top-level window, not embedded in egui yet
-- [x] au-app wiring (Stage 8). [ ] LV2/LADSPA (other worker), Nyquist (Stage 9)
+- [x] au-app wiring (Stage 8). [x] LV2/LADSPA hosting (`ladspa.rs`/`lv2.rs`, d9b67e2) + out-of-process scanning (fee20b8). Nyquist: Stage 9
 
 ## Noise Reduction and room noise profile (2026-10-14)
 - **Noise Reduction** (`fx/fix_noisereduction.rs`) is a literal port of `NoiseReductionBase` 3.7.3, covering SpectrumTransformer, the RealFFTf port, statistics, Classify, gain smoothing and Reduce/Isolate/Residue.
@@ -368,7 +368,7 @@ See `docs/PLUGIN_HOSTING.md`. New crate `crates/au-plugin-host` (code generated 
 - [x] PluginRegistry wired into au-app (`plugin_bridge.rs`): background scan at startup, plugins in the Effect menu, addable to realtime stacks via `EffectStack.slots` (public API) and saved/restored in `RealtimeEffectList`.
 - [x] Out-of-process plugin editor ("Open editor" in the effect dialog), param/state sync back to the dialog.
 - [x] Audacity 3.7.3 (official AppImage) reads our VST3 state from .aup3: AGain gain 0.5 → exported peak 0.4001 (input 0.8). See `tools/aup3-verify/`.
-- [ ] au-effects API changes requested (dynamic ids, push_effect/factory hook) — see PLUGIN_HOSTING.md.
+- [x] au-effects API changes (Cow ids, plugin_id passthrough, push_effect/from_desc_with, get_text(&mut)) — c88c890.
 - [ ] Embed editor inside the egui window; avoid Mutex on RT path; CLAP fd polling uses poll() instead of per-tick callbacks.
 
 ## Stage 8B status — FFmpeg, MIDI/note tracks, sandboxed LADSPA/LV2 (2026-10-14)
@@ -376,3 +376,17 @@ See `docs/PLUGIN_HOSTING.md`. New crate `crates/au-plugin-host` (code generated 
 - [x] Note tracks (`au-core/src/notes.rs`) modelled on NoteTrack: Allegro text serializer/parser following portsmf; `.aup3` `<notetrack … data="…">` exactly like Audacity 3.7.3 (verified both ways with the official 3.7.3 AppImage, fixtures in `tests/fixtures/aup3/notetrack_*`), native .aurs table; MIDI import/export (`au-io/src/midi.rs`, midly); piano-roll display, mute/solo/velocity, built-in synth playback via the mixer.
 - [x] LADSPA (per .so) and LV2 (per search directory) scanning out of process through `au-plugin-scan`; crash containment tests.
 - [ ] FFmpeg majors other than 7.x (struct offsets are per major), FFmpeg export options dialog, MIDI out device, note editing, per-note-track Allegro tempo maps beyond the first tempo on export.
+
+## Stage 8 part A status — export codecs, metadata, Export Multiple (2026-10-14)
+Exporters link the same system libraries Audacity 3.7.3's export modules use (LAME, libvorbis/libogg, libopus, libwavpack, libsndfile, libFLAC, libid3tag) through C++ shims in `au-io/csrc` that follow Audacity's export processors line by line; `au-io/src/export/` (`mp3.rs`, `ogg_opus.rs`, `intfmt.rs`, `export_any`).
+- [x] MP3: Preset (Insane/Extreme/Standard/Medium), VBR 0–9, ABR, CBR; joint/stereo; ID3v2 via libid3tag as Audacity
+- [x] Ogg Vorbis (quality 0–10), Opus (bitrate list, VBR/CVBR/CBR, complexity, frame duration, application, cutoff; 48 kHz family rates)
+- [x] WavPack (Low/Normal/High/Very High, 16/24/32-bit float, hybrid + .wvc, APEv2 tags)
+- [x] WAV/AIFF and other libsndfile headers/encodings, RIFF INFO + ID3 chunk as Audacity
+- [x] FLAC dither: yes (Shaped HQ dither via the mixer, exact port of Dither.cpp + glibc rand()). 32-bit FLAC: not offered by Audacity 3.7.3 (16/24 only) — not added
+- [x] Audacity-exact dither (Shaped/Triangle/Rectangle) — bit-identical to a fresh Audacity process
+- [x] Tags model (`au-core/src/tags.rs`, Tags.cpp semantics, ID3v1 genres, templates); `.aup3` `<tags><tag name value/>` read/write — Audacity reads ours (verified in the comparison: tags come from our .aup3)
+- [x] Metadata Editor dialog, Export Audio dialog (all format options), Export Multiple (labels/tracks, Audacity naming rules, numbering, prefix, include-before-first-label, non-overwrite renaming) encoding files in parallel on au-runtime (`au-app/src/export_ui.rs`, `export_glue.rs`)
+- [x] CLI `process` batch form (`process <files|dirs> --out-dir D [--format wav|flac] [--jobs N] effects…`) on au-runtime; output byte-identical to single-file runs
+- [x] Comparison vs Audacity 3.7.3 Export2 (`tools/compare_exports.py`, `docs/export-compare-3.7.3.txt`): **27/27** — decoded audio bit-identical (−240 dB) and tags equal field by field for MP3 ×8, Ogg ×3, Opus ×4, WavPack ×4, FLAC ×3, WAV ×3, AIFF ×2. Files differ in bytes only by tag order (Audacity iterates an unordered_map)
+- Notes/gaps: AIFF reference is Audacity's WAV export at the same depth because 3.7.3's scripted Export2 cannot write AIFF on Linux (typed-PCM editor drops the header option); Export Multiple naming compared against ExportAudioDialog.cpp logic by unit tests, not by running Audacity's dialog; MP3/Opus comparisons used default channel mode only

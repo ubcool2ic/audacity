@@ -171,6 +171,9 @@ struct AudacityApp {
     track_mix: Vec<TrackParams>,
     mixer_visible: bool,
     export_options_window: bool,
+    export_audio_dialog: Option<crate::export_glue::ExportAudioDialog>,
+    export_multi_dialog: Option<crate::export_ui::ExportMultipleDialog>,
+    metadata_editor: Option<crate::export_ui::MetadataEditor>,
     export_bits: u16,
     export_dither: Dither,
     selection_start_text: String,
@@ -266,6 +269,9 @@ impl Default for AudacityApp {
             track_mix: Vec::new(),
             mixer_visible: false,
             export_options_window: false,
+            export_audio_dialog: None,
+            export_multi_dialog: None,
+            metadata_editor: None,
             export_bits: 16,
             export_dither: Dither::Triangle,
             selection_start_text: "00:00:00.000".to_owned(),
@@ -871,6 +877,42 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 Ok(()) => "Audio exported".to_owned(),
                 Err(error) => format!("Export failed: {error:?}"),
             };
+        }
+    }
+
+    /// Export Audio / Export Multiple / Metadata Editor windows (Stage 8).
+    fn show_export_dialogs(&mut self, ctx: &egui::Context) {
+        if let Some(ed) = self.metadata_editor.as_mut() {
+            if let Some(result) = ed.show(ctx) {
+                if let Some(tags) = result {
+                    self.aup3_extras.tags = tags;
+                    self.status = "Metadata updated".to_owned();
+                }
+                self.metadata_editor = None;
+            }
+        }
+        if let Some(dlg) = self.export_audio_dialog.as_mut() {
+            if let Some((path, fmt, tags, selection_only)) = dlg.show(ctx) {
+                self.export_audio_dialog = None;
+                let rate = self.project_rate().max(1) as f64;
+                let (t0, t1) = match self.selection_project_frames().filter(|_| selection_only) {
+                    Some((a, b)) if b > a => (a as f64 / rate, b as f64 / rate),
+                    _ => (0.0, self.editor.state().tracks.iter()
+                        .map(|t| t.len() as f64 / t.sample_rate().max(1) as f64)
+                        .fold(0.0, f64::max)),
+                };
+                self.aup3_extras.tags = tags.clone();
+                let r = crate::export_glue::export_range(&path, self.editor.state(), &self.aup3_extras, t0, t1, None, &fmt, &tags);
+                self.status = match r { Ok(()) => format!("Exported {}", path.display()), Err(e) => format!("Export failed: {e}") };
+            }
+        }
+        if let Some(dlg) = self.export_multi_dialog.as_mut() {
+            if let Some(req) = dlg.show(ctx) {
+                self.export_multi_dialog = None;
+                let fmt = crate::export_glue::FormatChooser::from_name(&req.format).format;
+                let r = crate::export_glue::export_multiple(self.editor.state(), &self.aup3_extras, &req, &fmt);
+                self.status = match r { Ok(files) => format!("Exported {} files", files.len()), Err(e) => format!("Export Multiple failed: {e}") };
+            }
         }
     }
 
@@ -2979,6 +3021,8 @@ if self.ffmpeg_window {
             }
         }
 
+        self.show_export_dialogs(ctx);
+
         if self.export_options_window {
             let mut open = self.export_options_window;
             egui::Window::new("Export options")
@@ -3406,6 +3450,18 @@ if ui.button("FFmpeg status…").clicked() {
     ui.close_menu();
     self.ffmpeg_window = true;
 }
+                    if ui.button("Export Audio…").clicked() {
+                        ui.close_menu();
+                        self.export_audio_dialog = Some(crate::export_glue::ExportAudioDialog::new(self.aup3_extras.tags.clone()));
+                    }
+                    if ui.button("Export Multiple…").clicked() {
+                        ui.close_menu();
+                        self.export_multi_dialog = Some(crate::export_ui::ExportMultipleDialog::new(self.aup3_extras.tags.clone()));
+                    }
+                    if ui.button("Metadata Editor…").clicked() {
+                        ui.close_menu();
+                        self.metadata_editor = Some(crate::export_ui::MetadataEditor::new(self.aup3_extras.tags.clone()));
+                    }
                     if ui.button("Export options…").clicked() {
                         ui.close_menu();
                         self.export_options_window = true;

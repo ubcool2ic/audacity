@@ -112,6 +112,8 @@ pub struct Aup3Extras {
     pub track_effects: Vec<RealtimeEffectList>,
     /// Master (project) realtime effect list.
     pub master_effects: RealtimeEffectList,
+    /// Project metadata (`<tags>` element, Audacity's Metadata Editor).
+    pub tags: au_core::tags::Tags,
 }
 
 impl Default for Aup3Extras {
@@ -124,6 +126,7 @@ impl Default for Aup3Extras {
             user_version: VERSION_3_0,
             track_effects: Vec::new(),
             master_effects: RealtimeEffectList::default(),
+            tags: au_core::tags::Tags::new(),
         }
     }
 }
@@ -441,7 +444,14 @@ fn from_xml(root: &XmlNode, c: &Connection) -> Result<Aup3Project> {
     note_tracks.push(nt);
 }
             "effects" => extras.master_effects = effects_from_xml(n),
-            _ => {} // tags, timetrack, notetrack: not modelled yet
+            "tags" => {
+                for t in n.children_named("tag") {
+                    if let (Some(k), Some(v)) = (t.str("name"), t.str("value")) {
+                        extras.tags.set(k, v);
+                    }
+                }
+            }
+            _ => {} // timetrack, notetrack: not modelled yet
         }
     }
     Ok(Aup3Project {
@@ -494,7 +504,11 @@ fn build_xml(c: &Connection, p: &Aup3Project) -> Result<XmlNode> {
         .attr("vpos", V::Int(0))
         .attr("h", d(0.0, 10))
         .attr("zoom", d(86.1328125, 10));
-    root.children.push(XmlNode::new("tags"));
+    let mut tags = XmlNode::new("tags");
+    for (k, v) in p.extras.tags.entries() {
+        tags.children.push(XmlNode::new("tag").attr("name", V::Str(k)).attr("value", V::Str(v)));
+    }
+    root.children.push(tags);
     if !p.extras.master_effects.effects.is_empty() {
         root.children.push(effects_to_xml(&p.extras.master_effects));
     }

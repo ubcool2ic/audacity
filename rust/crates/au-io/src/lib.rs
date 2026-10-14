@@ -9,6 +9,7 @@ pub mod dsp;
 pub mod ffmpeg;
 pub mod midi;
 pub mod engine;
+pub mod export;
 pub mod record;
 
 #[derive(Debug, Error)]

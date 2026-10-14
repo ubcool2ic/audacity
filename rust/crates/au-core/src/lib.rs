@@ -4,6 +4,7 @@
 //! Core audio data types and editing operations.
 
 pub mod notes;
+pub mod tags;
 pub mod timeline;
 
 /// A single audio sample.
