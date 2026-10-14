@@ -344,6 +344,7 @@ dependencies = [
  "au-plugin-host",
  "au-project",
  "au-runtime",
+ "au-scriptpipe",
  "eframe",
  "rfd",
  "tempfile",
@@ -427,6 +428,15 @@ dependencies = [
  "crossbeam-channel",
  "rayon",
  "tempfile",
+]
+
+[[package]]
+name = "au-scriptpipe"
+version = "0.1.0"
+dependencies = [
+ "au-runtime",
+ "libc",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

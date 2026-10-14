@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/au-ai","crates/au-core","crates/au-io","crates/au-effects","crates/au-plugin-api","crates/au-project","crates/au-app","crates/au-runtime","crates/au-plugin-host"]
+members = ["crates/au-ai","crates/au-core","crates/au-io","crates/au-effects","crates/au-plugin-api","crates/au-project","crates/au-app","crates/au-runtime","crates/au-plugin-host","crates/au-scriptpipe"]
 
 [workspace.package]
 version = "0.1.0"

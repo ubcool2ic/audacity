@@ -169,6 +169,13 @@ struct AudacityApp {
     selection_end_text: String,
     selection_length_text: String,
     fx_dialog: Option<crate::fx_ui::EffectDialog>,
+
+/// Active mod-script-pipe server, when enabled.
+script_pipe: Option<crate::script_bridge::ScriptPipe>,
+/// Whether the mod-script-pipe server should be enabled.
+script_pipe_enabled: bool,
+/// Prevents repeated server-start attempts after a startup failure.
+script_pipe_failed: bool,
 /// Whether the FFmpeg status window is open.
 ffmpeg_window: bool,
 /// Detected FFmpeg availability and version or missing-library explanation.
@@ -251,6 +258,12 @@ impl Default for AudacityApp {
             selection_end_text: "00:00:00.000".to_owned(),
             selection_length_text: "00:00:00.000".to_owned(),
             fx_dialog: None,
+
+script_pipe: None,
+script_pipe_enabled: std::env::var("AU_SCRIPT_PIPE")
+    .map(|value| value == "1")
+    .unwrap_or(false),
+script_pipe_failed: false,
 ffmpeg_window: false,
 ffmpeg_status: au_io::ffmpeg::status(),
             plugins: {
@@ -3159,6 +3172,25 @@ impl eframe::App for AudacityApp {
 
 impl AudacityApp {
     fn update_frame(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+
+if self.script_pipe_enabled && self.script_pipe.is_none() && !self.script_pipe_failed {
+    match crate::script_bridge::ScriptPipe::start(ctx) {
+        Ok(pipe) => self.script_pipe = Some(pipe),
+        Err(error) => {
+            self.status = format!("mod-script-pipe could not start: {error}");
+            self.script_pipe_failed = true;
+        }
+    }
+}
+if !self.script_pipe_enabled {
+    self.script_pipe = None;
+}
+if let Some(pipe) = self.script_pipe.as_mut() {
+    for request in pipe.drain(32) {
+        let response = crate::script_bridge::execute(self.editor.state(), request.command());
+        request.respond(&response);
+    }
+}
         self.handle_shortcuts(ctx);
 
         let dt = ctx.input(|input| input.unstable_dt).max(0.0);
@@ -3257,6 +3289,15 @@ if ui.button("FFmpeg status…").clicked() {
                     }
                 });
                 ui.menu_button("View", |ui| {
+
+let response = ui
+    .checkbox(&mut self.script_pipe_enabled, "mod-script-pipe")
+    .on_hover_text(
+        "Enable the mod-script-pipe server at /tmp/audacity_script_pipe.to.<uid> and /tmp/audacity_script_pipe.from.<uid>",
+    );
+if response.changed() && self.script_pipe_enabled {
+    self.script_pipe_failed = false;
+}
                     if ui
                         .selectable_label(self.mixer_visible, "Mixer")
                         .clicked()

@@ -17,6 +17,8 @@ pub mod transport;
 #[cfg(feature = "gui")]
 mod gui;
 #[cfg(feature = "gui")]
+mod script_bridge;
+#[cfg(feature = "gui")]
 mod fx_ui;
 #[cfg(feature = "gui")]
 mod analyze_ui;
