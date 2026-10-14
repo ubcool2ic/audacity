@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+members = ["crates/au-core","crates/au-io","crates/au-effects","crates/au-plugin-api","crates/au-project","crates/au-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+rust-version = "1.85"
+authors = ["Audacity Rust port contributors", "Audacity Team (original C++ Audacity)"]
+repository = "https://github.com/ubcool2ic/audacity"
+
+[profile.dev]
+debug = 0
+[profile.dev.package."*"]
+opt-level = 1

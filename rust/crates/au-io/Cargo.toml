@@ -1,0 +1,19 @@
+[package]
+name = "au-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+au-core = { path = "../au-core" }
+thiserror = "1"
+symphonia = { version = "0.5", features = ["wav","flac","mp3","vorbis","ogg","pcm"] }
+hound = "3.5"
+flacenc = "0.4"
+cpal = { version = "0.15", optional = true }
+
+[features]
+default = ["device"]
+device = ["cpal"]

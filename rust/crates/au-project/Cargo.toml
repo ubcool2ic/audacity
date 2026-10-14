@@ -1,0 +1,15 @@
+[package]
+name = "au-project"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+au-core = { path = "../au-core" }
+rusqlite = { version = "0.31", features = ["bundled"] }
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"
