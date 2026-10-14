@@ -55,6 +55,9 @@ fn selftest() -> eframe::Result<()> {
     Ok(())
 }
 
+
+mod toolbars;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
     Selection,
@@ -149,6 +152,8 @@ struct AudacityApp {
     autosave_at: std::time::Instant,
     tool: Tool,
     zoom: ZoomInfo,
+    /// Toolbar docking layout (persisted to toolbars.cfg).
+    toolbars: toolbars::ToolbarLayout,
     /// The selected drawing mode for each track.
     track_views: Vec<crate::spectrogram_view::TrackView>,
     /// Spectrogram textures and background computation jobs.
@@ -248,6 +253,7 @@ impl Default for AudacityApp {
             spectrogram_cache: crate::spectrogram_view::SpectrogramCache::new(),
             spectrogram_settings: crate::spectrogram_view::ViewSettings::default(),
             spectral_selection: None,
+            toolbars: toolbars::ToolbarLayout::load(),
             zoom: ZoomInfo {
                 h_offset: 0.0,
                 pixels_per_sec: 100.0,
@@ -640,7 +646,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
 
             Some((format!("Imported {filename}"), ok))
         }
-        "SetTrackVisuals" | "SetTrack:" => {
+        "SetTrackVisuals" | "SetTrack" => {
             let track_text = match params
                 .iter()
                 .find(|(key, _)| key == "Track")
@@ -2754,77 +2760,6 @@ fn draw_note_tracks(&mut self, ui: &mut egui::Ui) {
         }
     }
 
-    fn toolbar(&mut self, ui: &mut egui::Ui) {
-        if ui.button("Open / Import").clicked() {
-            self.import_file();
-        }
-        if ui.button("Open Project").clicked() {
-            self.open_project();
-        }
-        if ui.button("Save Project").clicked() {
-            self.save_project();
-        }
-        if ui.button("Export WAV").clicked() {
-            self.export(false);
-        }
-        if ui.button("Export FLAC").clicked() {
-            self.export(true);
-        }
-        ui.separator();
-        if ui.button("Play").clicked() {
-            self.play();
-        }
-        if ui.button("Pause").clicked() {
-            self.toggle_pause();
-        }
-        if ui.button("Stop").clicked() {
-            self.stop_playback();
-        }
-        if ui.button("Record").clicked() {
-            self.open_record_options();
-        }
-        if self.recorder.is_some() && ui.button("Stop Record").clicked() {
-            self.stop_recording();
-        }
-        if ui.button("Mixer").clicked() {
-            self.mixer_visible = !self.mixer_visible;
-        }
-        ui.separator();
-        if ui.button("Cut").clicked() {
-            if let Some(index) = self.selected_track {
-                let selection = self.selection_for_track(index);
-                self.edit_selection(|editor| editor.cut(selection));
-            }
-        }
-        if ui.button("Copy").clicked() {
-            if let Some(index) = self.selected_track {
-                let selection = self.selection_for_track(index);
-                let result = self.editor.copy(selection);
-                self.report(result);
-            }
-        }
-        if ui.button("Paste").clicked() {
-            if let Some(index) = self.selected_track {
-                let at = self.selection_for_track(index).start;
-                self.edit_selection(|editor| editor.paste(index, at));
-            }
-        }
-        if ui.button("Delete").clicked() {
-            if let Some(index) = self.selected_track {
-                let selection = self.selection_for_track(index);
-                self.edit_selection(|editor| editor.delete(selection));
-            }
-        }
-        if ui.button("Undo").clicked() {
-            let result = self.editor.undo();
-            self.report(result);
-        }
-        if ui.button("Redo").clicked() {
-            let result = self.editor.redo();
-            self.report(result);
-        }
-    }
-
     fn draw_windows(&mut self, ctx: &egui::Context) {
 if self.ffmpeg_window {
     let mut retry_requested = false;
@@ -3477,6 +3412,7 @@ if ui.button("FFmpeg status…").clicked() {
                     }
                 });
                 ui.menu_button("View", |ui| {
+                    self.toolbars_menu(ui);
 
 let response = ui
     .checkbox(&mut self.script_pipe_enabled, "mod-script-pipe")
@@ -3663,76 +3599,9 @@ if response.changed() && self.script_pipe_enabled {
                             });
                     });
                 }
-                self.toolbar(ui);
             });
 
-            ui.horizontal(|ui| {
-                ui.label("Tool:");
-                ui.selectable_value(&mut self.tool, Tool::Selection, "Selection");
-                ui.selectable_value(&mut self.tool, Tool::Envelope, "Envelope");
-                ui.selectable_value(&mut self.tool, Tool::TimeShift, "Time Shift");
-                ui.selectable_value(&mut self.tool, Tool::Draw, "Draw");
-                ui.separator();
-                if ui.button("Zoom In").clicked() {
-                    self.zoom.zoom_in();
-                }
-                if ui.button("Zoom Out").clicked() {
-                    self.zoom.zoom_out();
-                }
-                if ui.button("Fit").clicked() {
-                    self.fit_zoom(1000.0);
-                }
-                ui.separator();
-                egui::ComboBox::from_id_salt("snap-mode")
-                    .selected_text(match self.snapper.mode {
-                        SnapMode::Off => "Snap: Off",
-                        SnapMode::Grid { secs } if (secs - 1.0).abs() < f64::EPSILON => {
-                            "Snap: Grid 1s"
-                        }
-                        SnapMode::Grid { .. } => "Snap: Grid 0.1s",
-                        SnapMode::Samples => "Snap: Samples",
-                        SnapMode::ZeroCrossing => "Snap: Zero crossings",
-                        SnapMode::Labels => "Snap: Labels",
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.snapper.mode, SnapMode::Off, "Off");
-                        ui.selectable_value(
-                            &mut self.snapper.mode,
-                            SnapMode::Grid { secs: 1.0 },
-                            "Grid 1s",
-                        );
-                        ui.selectable_value(
-                            &mut self.snapper.mode,
-                            SnapMode::Grid { secs: 0.1 },
-                            "Grid 0.1s",
-                        );
-                        ui.selectable_value(&mut self.snapper.mode, SnapMode::Samples, "Samples");
-                        ui.selectable_value(
-                            &mut self.snapper.mode,
-                            SnapMode::ZeroCrossing,
-                            "Zero crossings",
-                        );
-                        ui.selectable_value(&mut self.snapper.mode, SnapMode::Labels, "Labels");
-                    });
-                if ui.checkbox(&mut self.sync_lock, "Sync-Lock").changed() {
-                    self.editor.set_sync_lock(self.sync_lock);
-                }
-                ui.separator();
-                ui.checkbox(&mut self.loop_play, "Loop");
-                let mut speed = self.play_speed;
-                let speed_response =
-                    ui.add(egui::Slider::new(&mut speed, 0.1..=3.0).text("Play-at-speed"));
-                if speed_response.changed() {
-                    self.set_play_speed(speed);
-                }
-                if ui.button("Rewind").clicked() {
-                    self.seek_transport(0);
-                }
-                if ui.button("End").clicked() {
-                    let end = au_core::secs_to_frames(self.project_duration(), self.project_rate());
-                    self.seek_transport(end);
-                }
-            });
+            self.toolbar_dock(ui, ctx, true);
 
             ui.horizontal(|ui| {
                 let duration = self.project_duration();
@@ -3870,23 +3739,10 @@ if response.changed() && self.script_pipe_enabled {
                 }
             });
 
-            self.selection_toolbar(ui, ctx);
-
-            ui.horizontal(|ui| {
-                let meters = self
-                    .player
-                    .as_ref()
-                    .map(|player| player.handle.meters.load());
-                let reading = meters.unwrap_or(au_io::engine::MeterReading {
-                    peak: [0.0; 2],
-                    rms: [0.0; 2],
-                });
-                Self::draw_meter_bar(ui, "L", reading.peak[0], reading.rms[0]);
-                Self::draw_meter_bar(ui, "R", reading.peak[1], reading.rms[1]);
-                Self::draw_meter_bar(ui, "REC", self.record_peak, self.record_peak * 0.7);
-            });
+            self.toolbar_dock(ui, ctx, false);
         });
 
+        self.floating_toolbars(ctx);
         self.draw_windows(ctx);
 
         if self.player.is_some() || self.recorder.is_some() {
