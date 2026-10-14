@@ -64,3 +64,39 @@ elif command -v xvfb-run >/dev/null 2>&1; then
         exit "$status"
     fi
 fi
+
+if [[ "$PACKAGE" == *.deb ]]; then
+    ENGINE="$TMP/usr/lib/audacity-rs/au-nyquist-engine"
+    if [[ ! -x "$ENGINE" ]]; then
+        echo "Missing or non-executable Nyquist engine: $ENGINE" >&2
+        exit 1
+    fi
+    if [[ ! -L "$APP" || "$(readlink -- "$APP")" != "../lib/audacity-rs/audacity-rs" ]]; then
+        echo "audacity-rs launcher is not the expected relative symlink" >&2
+        exit 1
+    fi
+    shopt -s nullglob
+    catalogs=("$TMP"/usr/lib/audacity-rs/locale/*/LC_MESSAGES/audacity.{mo,po})
+    if [[ "${#catalogs[@]}" -lt 10 ]]; then
+        echo "Expected at least 10 packaged catalogs; found ${#catalogs[@]}" >&2
+        exit 1
+    fi
+    LANG=de_DE.UTF-8 "$APP" --help
+else
+    EXTRACT_DIR="$TMP/appimage-extract"
+    mkdir -p "$EXTRACT_DIR"
+    (cd "$EXTRACT_DIR" && "$PACKAGE" --appimage-extract >/dev/null)
+    APPDIR="$EXTRACT_DIR/squashfs-root"
+    ENGINE="$APPDIR/usr/bin/au-nyquist-engine"
+    if [[ ! -x "$ENGINE" ]]; then
+        echo "Missing or non-executable Nyquist engine: $ENGINE" >&2
+        exit 1
+    fi
+    shopt -s nullglob
+    catalogs=("$APPDIR"/usr/share/locale/*/LC_MESSAGES/audacity.{mo,po})
+    if [[ "${#catalogs[@]}" -lt 10 ]]; then
+        echo "Expected at least 10 packaged catalogs; found ${#catalogs[@]}" >&2
+        exit 1
+    fi
+    LANG=de_DE.UTF-8 "$APPDIR/usr/bin/audacity-rs" --help
+fi
