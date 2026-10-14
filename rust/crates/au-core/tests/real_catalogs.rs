@@ -4,16 +4,15 @@ static LANG: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[test]
 fn real_po_and_cfg() {
     let _g = LANG.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = std::env::var("AU_TEST_PO_DIR").unwrap_or("/workspace/loc".into());
+    let dir = std::env::var("AU_TEST_PO_DIR").unwrap_or(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../au3/locale").into());
     let de = std::path::Path::new(&dir).join("de.po");
-    if let Ok(t) = std::fs::read_to_string(&de) {
-        let c = i18n::Catalog::parse_po(&t).unwrap();
-        assert!(c.len() > 1000, "{}", c.len());
-        assert_eq!(c.get("&File"), Some("&Datei"));
-        i18n::set_language("de", &[std::path::PathBuf::from(&dir)]).unwrap();
-        assert_eq!(i18n::tr("&Edit"), "&Bearbeiten");
-        i18n::set_language("en", &[]).unwrap();
-    }
+    let t = std::fs::read_to_string(&de).unwrap_or_else(|e| panic!("failed to read {}: {}", de.display(), e));
+    let c = i18n::Catalog::parse_po(&t).unwrap();
+    assert!(c.len() > 1000, "{}", c.len());
+    assert_eq!(c.get("&File"), Some("&Datei"));
+    i18n::set_language("de", &[std::path::PathBuf::from(&dir)]).unwrap();
+    assert_eq!(i18n::tr("&Edit"), "&Bearbeiten");
+    i18n::set_language("en", &[]).unwrap();
     let pl = std::path::Path::new(&dir).join("pl.po");
     if let Ok(t) = std::fs::read_to_string(&pl) {
         let c = i18n::Catalog::parse_po(&t).unwrap();

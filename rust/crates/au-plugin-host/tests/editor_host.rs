@@ -11,9 +11,23 @@ fn setup(path: &Path) -> Option<MutexGuard<'static, ()>> {
     let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     std::env::set_var("AU_PLUGIN_EDITOR", env!("CARGO_BIN_EXE_au-plugin-editor"));
 
-    if std::env::var_os("DISPLAY").is_none() {
+    let Some(display) = std::env::var_os("DISPLAY") else {
         eprintln!("skip: DISPLAY is unset");
         return None;
+    };
+
+    if let Ok(status) = std::process::Command::new("xdpyinfo")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    {
+        if !status.success() {
+            eprintln!(
+                "skip: X display {} is not reachable",
+                display.to_string_lossy()
+            );
+            return None;
+        }
     }
 
     if !path.exists() {
@@ -41,9 +55,22 @@ fn again_descriptor(path: &Path) -> PluginDescriptor {
 }
 
 fn ready(process: &mut EditorProcess, timeout: Duration) -> EditorEvent {
-    process
-        .wait_event(timeout, |event| matches!(event, EditorEvent::Ready { .. }))
-        .expect("editor did not become ready")
+    match process.wait_event(timeout, |event| {
+        matches!(
+            event,
+            EditorEvent::Ready { .. }
+                | EditorEvent::Error(_)
+                | EditorEvent::Crashed { .. }
+                | EditorEvent::Closed
+        )
+    }) {
+        Some(event @ EditorEvent::Ready { .. }) => event,
+        Some(event) => panic!("editor failed before ready: {event:?}"),
+        None => panic!(
+            "editor did not become ready within {timeout:?} (running: {})",
+            process.is_running()
+        ),
+    }
 }
 
 fn state(process: &mut EditorProcess, timeout: Duration) -> Vec<(String, String)> {

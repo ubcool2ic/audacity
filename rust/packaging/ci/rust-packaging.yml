@@ -32,6 +32,7 @@ jobs:
         working-directory: rust
         env:
           AU_PIPE_TEST_PY: ${{ github.workspace }}/au3/scripts/piped-work/pipe_test.py
+          AU_TEST_PO_DIR: ${{ github.workspace }}/au3/locale
         run: xvfb-run -a cargo test --features au-app/gui
       - name: Build Debian package
         run: bash rust/packaging/linux/build-deb.sh

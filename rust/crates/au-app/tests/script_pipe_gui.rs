@@ -118,13 +118,16 @@ fn gui_script_pipe_runs_python_batch() {
         return;
     }
 
-    let Some(script_path) = std::env::var_os("AU_PIPE_TEST_PY").map(PathBuf::from) else {
-        eprintln!("skipping script-pipe GUI test: AU_PIPE_TEST_PY is not set");
-        return;
-    };
+    let script_path: PathBuf = std::env::var_os("AU_PIPE_TEST_PY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../au3/scripts/piped-work/pipe_test.py"
+            ))
+        });
     if !script_path.is_file() {
-        eprintln!("skipping script-pipe GUI test: AU_PIPE_TEST_PY is not an existing file");
-        return;
+        panic!("script-pipe GUI test script is not a file: {}", script_path.display());
     }
 
     let nonce = SystemTime::now()
