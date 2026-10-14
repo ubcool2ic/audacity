@@ -561,6 +561,9 @@ pub struct EffectEntry {
 }
 
 /// Maps our effect ids whose display name differs from Audacity's to the Audacity name.
+/// Publisher/family of effects that only this port provides.
+pub const EXTRA_PUBLISHER: &str = "Audacity-rs Extras";
+
 fn audacity_name<'a>(id: &str, name: &'a str) -> &'a str {
     match id {
         "RMS" => "Measure RMS",
@@ -586,9 +589,11 @@ pub fn entry_for(id: &str, name: &str) -> EffectEntry {
             *is_default,
             *is_bundled,
         ),
+        // Effects Audacity 3.7.3 does not ship get their own publisher and
+        // family so Audacity's own groups stay identical.
         None => (
-            "Audacity".to_owned(),
-            "Audacity".to_owned(),
+            EXTRA_PUBLISHER.to_owned(),
+            EXTRA_PUBLISHER.to_owned(),
             "Process".to_owned(),
             // Effects that Audacity 3.7.3 does not ship are not default/bundled.
             false,
@@ -1292,8 +1297,8 @@ mod tests {
         assert!(find_clipping.is_builtin_audacity);
 
         let unknown = entry_for("Unknown", "Unknown Effect");
-        assert_eq!(unknown.publisher, "Audacity");
-        assert_eq!(unknown.family, "Audacity");
+        assert_eq!(unknown.publisher, EXTRA_PUBLISHER);
+        assert_eq!(unknown.family, EXTRA_PUBLISHER);
         assert_eq!(unknown.effect_type, "Process");
         assert!(!unknown.is_default);
         assert!(!unknown.is_bundled);
