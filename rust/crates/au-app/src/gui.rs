@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 // egui/eframe desktop UI (feature `gui`).
 
-/// Runs the app, optionally opening a project (`.aup3` or `.aurs`) at start.
+/// Runs the app, optionally opening a project (`.aup3` / `.aurs`) or importing an audio file at start.
 pub fn run_with(open: Option<PathBuf>) -> eframe::Result<()> {
     eframe::run_native(
         "Audacity-RS",
@@ -33,7 +33,15 @@ pub fn run_with(open: Option<PathBuf>) -> eframe::Result<()> {
                 })
             });
             if let Some(path) = open {
-                app.open_path(path);
+                // Projects open; anything else (WAV, FLAC, MIDI, …) is imported like File > Import.
+                let is_project = AudacityApp::is_aup3(&path)
+                    || au_project::is_aup3(&path)
+                    || path.extension().is_some_and(|e| e.eq_ignore_ascii_case("aurs"));
+                if is_project {
+                    app.open_path(path);
+                } else {
+                    app.import_path(path);
+                }
             }
             Ok(Box::new(app))
         }),
@@ -60,6 +68,7 @@ mod accessibility;
 #[cfg(test)]
 mod layout_tests;
 mod toolbars;
+mod waveform_cache;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
@@ -155,6 +164,8 @@ struct AudacityApp {
     autosave_at: std::time::Instant,
     tool: Tool,
     zoom: ZoomInfo,
+    /// Waveform min/max summaries computed on the au-runtime pool.
+    waveform_cache: waveform_cache::WaveformCache,
     /// Track with keyboard focus in the track panel.
     focused_track: Option<usize>,
     /// Active colour theme.
@@ -273,6 +284,7 @@ impl Default for AudacityApp {
             custom_theme: None,
             theme_applied: false,
             focused_track: None,
+            waveform_cache: waveform_cache::WaveformCache::new(),
             zoom: ZoomInfo {
                 h_offset: 0.0,
                 pixels_per_sec: 100.0,
@@ -2140,6 +2152,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             .filter(|_| self.selected_track == Some(index))
             .map(Player::position);
         let drag_preview = self.drag;
+        let wave_ctx = ui.ctx().clone();
         // Track-panel colours from the active Audacity theme (clr* ids).
         let theme_colour = |name: &str| crate::theme::c32(self.theme.colour(name));
         let clr_background = theme_colour("TrackBackground");
@@ -2259,14 +2272,16 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                         egui::Color32::WHITE,
                     );
 
-                    let rendered = clip.rendered();
-                    let rendered_len = rendered.len();
-                    if rendered_len > 0 && clip.len() > 0 {
+                    let waveform_cache = &mut self.waveform_cache;
+                    let ctx = &wave_ctx;
+                    let summaries = waveform_cache.get(clip, ctx);
+                    let rendered_len = summaries.as_ref().map_or(0, |summaries| summaries.len);
+                    if clip.len() > 0 {
                         let first_x = clip_rect.left().ceil().max(rect.left()) as i32;
                         let last_x = clip_rect.right().floor().min(rect.right()) as i32;
                         let waveform_top = (body.top() + 19.0).min(body.bottom());
                         let waveform_height = (body.bottom() - waveform_top).max(1.0);
-                        for channel in 0..rendered.n_channels().min(channels) {
+                        for channel in 0..clip.buffer.n_channels().min(channels) {
                             let channel_top =
                                 waveform_top + channel as f32 * waveform_height / channels as f32;
                             let channel_height = waveform_height / channels as f32;
@@ -2279,9 +2294,13 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                                 egui::Stroke::new(1.0, egui::Color32::from_gray(78)),
                             );
 
-                            let Some(samples) = rendered.channels.get(channel) else {
+                            let Some(summaries) = summaries.as_ref() else {
                                 continue;
                             };
+                            if rendered_len == 0 {
+                                continue;
+                            }
+                            let raw = summaries.raw(&clip.buffer, channel);
                             for x in first_x..last_x {
                                 let local_time_start =
                                     zoom.x_to_time((x as f32 - rect.left()) as f64) - clip_start;
@@ -2295,26 +2314,25 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                                     / clip_len_secs.max(f64::EPSILON)
                                     * rendered_len as f64)
                                     .ceil() as usize;
-                                let start = local_start.min(samples.len());
-                                let end = local_end.max(start + 1).min(samples.len());
+                                let start = local_start.min(rendered_len);
+                                let end = local_end
+                                    .max(start.saturating_add(1))
+                                    .min(rendered_len);
                                 if start >= end {
                                     continue;
                                 }
-                                let (low, high) = samples[start..end]
-                                    .iter()
-                                    .fold((1.0_f32, -1.0_f32), |(low, high), &sample| {
-                                        (low.min(sample), high.max(sample))
-                                    });
+                                let Some((low, high)) =
+                                    summaries.min_max(raw, channel, start, end)
+                                else {
+                                    continue;
+                                };
                                 let scale = channel_height * 0.44;
                                 painter.line_segment(
                                     [
                                         egui::pos2(x as f32, center - high * scale),
                                         egui::pos2(x as f32, center - low * scale),
                                     ],
-                                    egui::Stroke::new(
-                                        1.0,
-                                        clr_sample,
-                                    ),
+                                    egui::Stroke::new(1.0, clr_sample),
                                 );
                             }
                         }
@@ -4018,17 +4036,18 @@ if response.changed() && self.script_pipe_enabled {
                         });
                     self.track_views[index] = selected_view;
 
-                    let track = self.editor.state().tracks[index].clone();
                     match selected_view {
                         crate::spectrogram_view::TrackView::Waveform => {
                             self.draw_track(ui, index);
                         }
                         crate::spectrogram_view::TrackView::Spectrogram => {
+                            // Borrow (not clone) the track: cloning copies all of its audio every frame.
+                            let track = &self.editor.state().tracks[index];
                             let changed = crate::spectrogram_view::draw_spectrogram_track(
                                 ui,
                                 &mut self.spectrogram_cache,
                                 index,
-                                &track,
+                                track,
                                 &self.zoom,
                                 &self.spectrogram_settings,
                                 140.0,
@@ -4045,11 +4064,12 @@ if response.changed() && self.script_pipe_enabled {
                         }
                         crate::spectrogram_view::TrackView::Multiview => {
                             self.draw_track(ui, index);
+                            let track = &self.editor.state().tracks[index];
                             let changed = crate::spectrogram_view::draw_spectrogram_track(
                                 ui,
                                 &mut self.spectrogram_cache,
                                 index,
-                                &track,
+                                track,
                                 &self.zoom,
                                 &self.spectrogram_settings,
                                 90.0,
@@ -4096,6 +4116,7 @@ if response.changed() && self.script_pipe_enabled {
 
         self.floating_toolbars(ctx);
         self.draw_windows(ctx);
+        self.waveform_cache.end_frame();
 
         if self.player.is_some() || self.recorder.is_some() {
             ctx.request_repaint();
