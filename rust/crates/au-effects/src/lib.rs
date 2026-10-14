@@ -7,6 +7,7 @@ mod basic;
 pub mod core;
 pub mod factory_presets;
 pub mod fx;
+pub mod offline;
 pub mod registry;
 pub mod stack;
 

@@ -66,7 +66,7 @@ pub fn apply_builtin(editor: &mut Editor, sel: Selection, effect: &mut dyn Built
         let track = &editor.state().tracks[sel.track];
         let mut buf = track.clips.render_range(sel.start, sel.end.max(sel.start)).map_err(|e| e.to_string())?;
         let mut ctx = EffectContext { aux, t0, ..Default::default() };
-        effect.process(&mut buf, &mut ctx).map_err(|e| e.to_string())?;
+        au_effects::offline::process_isolated(effect, &mut buf, &mut ctx).map_err(|e| e.to_string())?;
         out.report = ctx.report;
         out.labels = ctx.labels.into_iter().map(|l| OutLabel { t0: l.t0 + t0, t1: l.t1 + t0, text: l.text }).collect();
         if !out.labels.is_empty() {
@@ -79,7 +79,8 @@ pub fn apply_builtin(editor: &mut Editor, sel: Selection, effect: &mut dyn Built
     let mut report = String::new();
     editor.apply(sel, effect.name(), |buf| {
         let mut ctx = EffectContext { aux, t0, ..Default::default() };
-        if let Err(e) = effect.process(buf, &mut ctx) { err = Some(e.to_string()); }
+        // Runs on the shared au-runtime pool with panic isolation: a buggy effect reports an error instead of crashing.
+        if let Err(e) = au_effects::offline::process_isolated(&mut *effect, buf, &mut ctx) { err = Some(e.to_string()); }
         report = ctx.report;
     }).map_err(|e| e.to_string())?;
     if let Some(e) = err { let _ = editor.undo(); return Err(e); }
@@ -94,7 +95,7 @@ pub fn preview(state: &ProjectState, sel: Selection, effect: &mut dyn BuiltinEff
     let rate = track.sample_rate().max(1);
     let end = sel.end.min(sel.start + (max_secs * rate as f64) as usize).max(sel.start);
     let mut buf = track.clips.render_range(sel.start, end).map_err(|e| e.to_string())?;
-    effect.process(&mut buf, &mut EffectContext::default()).map_err(|e| e.to_string())?;
+    au_effects::offline::process_isolated(effect, &mut buf, &mut EffectContext::default()).map_err(|e| e.to_string())?;
     Ok(buf)
 }
 

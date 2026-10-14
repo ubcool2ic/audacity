@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 au-core = { path = "../au-core" }
+au-runtime = { path = "../au-runtime" }
 rustfft = "6"
 
 [dev-dependencies]
