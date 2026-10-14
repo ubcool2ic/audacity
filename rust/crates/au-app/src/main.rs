@@ -17,6 +17,8 @@ pub mod transport;
 mod gui;
 #[cfg(feature = "gui")]
 mod fx_ui;
+#[cfg(feature = "gui")]
+mod analyze_ui;
 
 /// Crash-report folder (`AUDACITY_RS_CRASH_DIR` overrides the per-OS default).
 pub fn crash_dir() -> std::path::PathBuf {

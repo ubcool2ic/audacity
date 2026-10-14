@@ -130,7 +130,7 @@ impl BuiltinEffect for RissetDrum {
 }
 
 const TABLE_LEN: usize = 2048;
-const SINE_TABLE_SHIFT: u32 = 16;
+const SINE_TABLE_SHIFT: u32 = 20; // sine.h: SINE_TABLE_SHIFT 20, MASK 0x7FFFFFFF
 const SINE_PHASE_MASK: u64 = ((TABLE_LEN as u64) << SINE_TABLE_SHIFT) - 1;
 
 /// Builds Nyquist's fixed sine lookup table, including its guard point.
@@ -197,12 +197,7 @@ fn build_risset_table(sine: &[f32]) -> Vec<f32> {
 }
 
 /// Generates Nyquist's interpolating table oscillator.
-fn generate_table_osc(
-    sample_rate: u32,
-    frames: usize,
-    hz: f64,
-    table: &[f32],
-) -> Vec<f32> {
+fn generate_table_osc(sample_rate: u32, frames: usize, hz: f64, table: &[f32]) -> Vec<f32> {
     let increment = nyquist_hz(hz) * TABLE_LEN as f64 / sample_rate as f64;
     let mut phase = 0.0f64;
     let mut output = Vec::with_capacity(frames);
@@ -265,10 +260,7 @@ fn percussion_envelope(sample_rate: u32, frames: usize, duration: f64) -> Vec<f3
 
     while output.len() < frames {
         let x1 = control[control_index];
-        let x2 = control
-            .get(control_index + 1)
-            .copied()
-            .unwrap_or(x1);
+        let x2 = control.get(control_index + 1).copied().unwrap_or(x1);
         let mut value = (x1 as f64 * (1.0 - phase) + x2 as f64 * phase) as f32;
         let delta = ((x2 - x1) as f64 * phase_increment) as f32;
 
@@ -349,9 +341,7 @@ fn generate_channel(
     let low_note = frequency * 0.10;
 
     let mut drum = generate_table_osc(sample_rate, half_frames, low_note, &drum_table);
-    let mut noise: Vec<f32> = (0..half_frames)
-        .map(|_| random.next_sample())
-        .collect();
+    let mut noise: Vec<f32> = (0..half_frames).map(|_| random.next_sample()).collect();
 
     noise = lowpass2(&noise, sample_rate, bandwidth, 0.58338080);
     noise = lowpass2(&noise, sample_rate, bandwidth, 0.75932572);
@@ -428,8 +418,8 @@ impl GlibcRand {
 
     fn next_u31(&mut self) -> u32 {
         let index = self.index;
-        let value = self.state[(index - 31) % 344]
-            .wrapping_add(self.state[(index - 3) % 344]);
+        let value =
+            self.state[(index - 31) % 344].wrapping_add(self.state[(index - 3) % 344]);
         self.state[index % 344] = value;
         self.index += 1;
         value >> 1

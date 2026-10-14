@@ -165,6 +165,8 @@ struct AudacityApp {
     selection_end_text: String,
     selection_length_text: String,
     fx_dialog: Option<crate::fx_ui::EffectDialog>,
+    spectrum_win: Option<crate::analyze_ui::SpectrumWindow>,
+    contrast_win: Option<crate::analyze_ui::ContrastWindow>,
     rt_window: bool,
     rt_target: crate::fx_ui::RtTarget,
     rt_editing: Option<usize>,
@@ -235,6 +237,8 @@ impl Default for AudacityApp {
             fx_dialog: None,
             rt_window: false,
             rt_target: crate::fx_ui::RtTarget::Master,
+            spectrum_win: None,
+            contrast_win: None,
             rt_editing: None,
         }
     }
@@ -879,7 +883,37 @@ impl AudacityApp {
         self.report(result);
     }
 
+    fn open_spectrum(&mut self) {
+        let Some(track) = self.selected_track else { self.status = "Plot Spectrum: select a track first".into(); return; };
+        let sel = self.selection_for_track(track).normalized();
+        match self.editor.state().tracks[sel.track].clips.render_range(sel.start, sel.end) {
+            Ok(buf) => self.spectrum_win = Some(crate::analyze_ui::SpectrumWindow::new(buf)),
+            Err(e) => self.status = format!("Plot Spectrum: {e}"),
+        }
+    }
+
+    fn analyzer_windows(&mut self, ctx: &egui::Context) {
+        if let Some(w) = self.spectrum_win.as_mut() {
+            if !w.show(ctx) { self.spectrum_win = None; }
+        }
+        if let Some(mut w) = self.contrast_win.take() {
+            let track = self.selected_track;
+            let audio = track.and_then(|i| self.editor.state().tracks.get(i)).map(|t| t.render());
+            let selection = track.and_then(|i| {
+                let s = self.selection.filter(|s| s.track == i)?.normalized();
+                let rate = audio.as_ref()?.sample_rate as f64;
+                Some((s.start as f64 / rate, s.end as f64 / rate))
+            });
+            let mut measure = |t0: f64, t1: f64| match audio.as_ref() {
+                Some(b) => au_effects::fx::fix_contrast::measure(b, t0, t1),
+                None => Err("Please select a track.".to_string()),
+            };
+            if w.show(ctx, &mut measure, selection) { self.contrast_win = Some(w); }
+        }
+    }
+
     fn effect_windows(&mut self, ctx: &egui::Context) {
+        self.analyzer_windows(ctx);
         let names: Vec<String> = self.editor.state().tracks.iter().map(|t| t.name.clone()).collect();
         if let Some(mut dlg) = self.fx_dialog.take() {
             let action = dlg.show(ctx, &names);
@@ -2726,7 +2760,11 @@ impl AudacityApp {
                             for (name, id) in items {
                                 if ui.button(format!("{name}…")).clicked() {
                                     ui.close_menu();
-                                    self.fx_dialog = crate::fx_ui::EffectDialog::open(id);
+                                    match id {
+                                        "PlotSpectrum" => self.open_spectrum(),
+                                        "Contrast" => self.contrast_win = Some(crate::analyze_ui::ContrastWindow::new()),
+                                        _ => self.fx_dialog = crate::fx_ui::EffectDialog::open(id),
+                                    }
                                 }
                             }
                         });
