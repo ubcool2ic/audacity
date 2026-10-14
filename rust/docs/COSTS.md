@@ -155,6 +155,18 @@ Luna 7 calls, $0.0435. Sol 1 call, $0.1975. **Total: $0.2410**
 
 **Running total: $1.7392**
 
+## Offline render on au-runtime pool + LV2/LADSPA hosting (2026-10-14)
+| file | model | cost $ |
+|---|---|---|
+| au-effects/src/offline.rs | openai/gpt-6-luna | 0.0065 |
+| au-plugin-host/src/ladspa.rs | openai/gpt-6-luna | 0.0116 |
+| au-plugin-host/src/lv2.rs | openai/gpt-6-luna | 0.0157 |
+| au-plugin-host/src/lv2.rs (fix: shared in/out buffer) | openai/gpt-6-luna | 0.0113 |
+
+Luna 4 calls, $0.0451. Sol: none. **Total: $0.0451**
+
+**Running total: $1.7843**
+
 ## BizyBot — Performance & reliability (2026-10-14)
 - au-runtime crate, crash hook/dialog, tests: written by hand, no OpenRouter calls. Spend: $0.00
 

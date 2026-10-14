@@ -4,6 +4,8 @@ pub mod state;
 pub mod clap;
 pub mod vst3;
 pub mod sandbox;
+pub mod ladspa;
+pub mod lv2;
 
 pub use clap::ClapHost;
 pub use sandbox::{SandboxedHost, ScanOutcome};
@@ -22,8 +24,8 @@ pub fn registry() -> PluginRegistry {
         Box::new(NativeHost::new()) as Box<dyn PluginHost>,
         Box::new(SandboxedHost::new(Vst3Host::new())),
         Box::new(SandboxedHost::new(ClapHost::new())),
-        Box::new(au_plugin_api::Lv2Host::new()),
-        Box::new(au_plugin_api::LadspaHost::new()),
+        Box::new(lv2::Lv2Host::new()),
+        Box::new(ladspa::LadspaHost::new()),
     ])
 }
 
@@ -68,6 +70,8 @@ pub fn restore_effect(
             let mut instance: Box<dyn PluginInstance> = match format {
                 PluginFormat::Clap => ClapHost::new().instantiate(&descriptor)?,
                 PluginFormat::Vst3 => Vst3Host::new().instantiate(&descriptor)?,
+                PluginFormat::Ladspa => ladspa::LadspaHost::new().instantiate(&descriptor)?,
+                PluginFormat::Lv2 => lv2::Lv2Host::new().instantiate(&descriptor)?,
                 _ => return Err(registry_error),
             };
             instance.load_state(&effect.params)?;

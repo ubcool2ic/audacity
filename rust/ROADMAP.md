@@ -144,6 +144,24 @@ This roadmap describes intended scope, not a claim that planned features are imp
 - Sandbox tests confirm a crashing or timing-out scanner does not crash the application.
 - Native ABI compatibility tests load plugins built against supported API versions; golden processing tests compare known plugin output.
 
+**LV2/LADSPA status (2026-10-14).** `au-plugin-host/src/ladspa.rs` and `lv2.rs` are registered in `au_plugin_host::registry()`; CLAP and VST3 are BizyBot's part.
+- LADSPA:
+  - Scanning uses dlopen and `ladspa_descriptor`.
+  - Parameter defaults and ranges follow Audacity's LadspaEffect: LOW/MIDDLE/HIGH hints, log-aware, sample-rate scaled.
+  - One instance per channel for mono plugins.
+  - Latency comes from a "latency" output port.
+  - State is stored by port index.
+- LV2:
+  - lilv is loaded at runtime with libloading, so there is no link-time dependency.
+  - Host features: urid map/unmap, options (block length and sample rate), boundedBlockLength.
+  - Optional atom/CV ports get dummy buffers. Latency comes from the reportsLatency port.
+  - State is stored by port symbol.
+- Tests use swh `amp_1181.so` and `amp-swh.lv2` (+6.02 dB doubles the signal, state round trip, stereo with a mono plugin, non-plugin .so skipped, missing lilv reported), and skip when the plugins are not installed.
+- Gaps:
+  - LADSPA and LV2 scanning runs in-process. The out-of-process sandbox covers CLAP/VST3 only.
+  - LV2 plugin GUIs (suil) are not hosted.
+  - No golden comparison against Audacity 3.7.3 hosting the same plugins yet.
+
 ### Stage 8 — Import/export completeness
 
 **Scope**
