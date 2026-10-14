@@ -40,16 +40,9 @@ pub fn run_with_files(files: Vec<PathBuf>) -> eframe::Result<()> {
                     p.exists() && au_project::aup3::inspect(p).is_ok_and(|i| i.needs_recovery)
                 })
             });
+            // open_path imports anything that is not a project (8c9ec90).
             if let Some(path) = open {
-                // Projects open; anything else (WAV, FLAC, MIDI, …) is imported like File > Import.
-                let is_project = AudacityApp::is_aup3(&path)
-                    || au_project::is_aup3(&path)
-                    || path.extension().is_some_and(|e| e.eq_ignore_ascii_case("aurs"));
-                if is_project {
-                    app.open_path(path);
-                } else {
-                    app.import_path(path);
-                }
+                app.open_path(path);
             }
             for path in rest {
                 app.open_path(path);
