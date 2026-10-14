@@ -5,7 +5,11 @@ use crate::fx;
 
 /// One default instance of every built-in.
 pub fn all() -> Vec<Box<dyn BuiltinEffect>> {
-    let mut v = Vec::new();
+    // Exact Audacity 3.7.3 re-ports come first; later duplicates (older ports) are dropped.
+    let mut v: Vec<Box<dyn BuiltinEffect>> = Vec::new();
+    v.extend(fx::fix_distortion::all());
+    v.extend(fx::fix_nyqfilters::all());
+    v.extend(fx::fix_dynamics::all());
     v.extend(fx::simple::all());
     v.extend(fx::filters::all());
     v.extend(fx::modulation::all());
@@ -20,6 +24,8 @@ pub fn all() -> Vec<Box<dyn BuiltinEffect>> {
     v.extend(fx::silence::all());
     v.extend(fx::generators::all());
     v.extend(fx::analyzers::all());
+    let mut seen = std::collections::HashSet::new();
+    v.retain(|e| seen.insert(e.id()));
     v
 }
 

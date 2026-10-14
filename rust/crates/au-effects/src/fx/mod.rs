@@ -13,3 +13,6 @@ pub mod reverb;
 pub mod silence;
 pub mod simple;
 pub mod stretch;
+pub mod fix_distortion;
+pub mod fix_nyqfilters;
+pub mod fix_dynamics;

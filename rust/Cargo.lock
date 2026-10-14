@@ -359,6 +359,7 @@ name = "au-effects"
 version = "0.1.0"
 dependencies = [
  "au-core",
+ "cc",
  "rustfft",
  "tempfile",
 ]

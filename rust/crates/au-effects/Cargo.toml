@@ -12,3 +12,6 @@ rustfft = "6"
 
 [dev-dependencies]
 tempfile = "3"
+
+[build-dependencies]
+cc = "1"

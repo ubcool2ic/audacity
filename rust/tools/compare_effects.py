@@ -31,8 +31,8 @@ CASES = [
  ("FadeOut", "FadeOut", {}, "FadeOut", "fx", -110, "exact"),
  ("Repeat", "Repeat", {"Count": 2}, "Repeat", "fx", -120, "exact"),
  ("BassAndTreble", "BassAndTreble", {"Bass": 6, "Treble": -4, "Gain": 0}, "BassAndTreble", "fx", -100, "biquad"),
- ("ClassicFilters", "ClassicFilters", {"FilterType": "Butterworth", "FilterSubtype": "Lowpass", "Order": 4, "Cutoff": 1000}, "ClassicFilters", "fx", -100, "biquad"),
- ("Cheby", "ClassicFilters", {"FilterType": "Chebyshev Type I", "FilterSubtype": "Highpass", "Order": 3, "Cutoff": 2000, "PassbandRipple": 1}, "ClassicFilters", "fx", -100, "biquad"),
+ ("ClassicFilters", "ClassicFilters", {"FilterType": "Butterworth", "FilterSubtype": "Lowpass", "Order": 4, "Cutoff": 1000}, "ClassicFilters", "ref_classic", -100, "ref: Audacity lib-math.so (3.7.3 crashes when scripted)"),
+ ("Cheby", "ClassicFilters", {"FilterType": "Chebyshev Type I", "FilterSubtype": "Highpass", "Order": 3, "Cutoff": 2000, "PassbandRipple": 1}, "ClassicFilters", "ref_classic", -100, "ref: Audacity lib-math.so (3.7.3 crashes when scripted)"),
  ("High-pass", "High-passFilter", {"FREQUENCY": 1000, "ROLLOFF": "dB12"}, "High-passFilter", "fx", -80, "nyquist"),
  ("Low-pass", "Low-passFilter", {"FREQUENCY": 1000, "ROLLOFF": "dB24"}, "Low-passFilter", "fx", -80, "nyquist"),
  ("Notch", "NotchFilter", {"FREQUENCY": 220, "Q": 1}, "NotchFilter", "fx", -80, "nyquist"),
@@ -55,10 +55,10 @@ CASES = [
  ("LoudnessNormalization", "LoudnessNormalization", {"StereoIndependent": 0, "LUFSLevel": -23, "RMSLevel": -20, "DualMono": 1, "NormalizeTo": 0}, "LoudnessNormalization", "fx", -100, ""),
  ("LoudnessRMS", "LoudnessNormalization", {"StereoIndependent": 0, "LUFSLevel": -23, "RMSLevel": -20, "DualMono": 1, "NormalizeTo": 1}, "LoudnessNormalization", "fx", -100, ""),
  ("ClickRemoval", "ClickRemoval", {"Threshold": 200, "Width": 20}, "ClickRemoval", "fx", -100, ""),
- ("ChangeSpeed", "ChangeSpeedAndPitch", {"Percentage": 25}, "ChangeSpeed", "fx", -60, "resampler differs (soxr)"),
- ("ChangeTempo", "ChangeTempo", {"Percentage": 20, "SBSMS": 0}, "ChangeTempo", "fx", 0, "SoundTouch WSOLA; length+level only"),
- ("ChangePitch", "ChangePitch", {"Percentage": 20, "SBSMS": 0}, "ChangePitch", "fx", 0, "SoundTouch; length+level only"),
- ("Paulstretch", "Paulstretch", {"Stretch Factor": 3, "Time Resolution": 0.25}, "Paulstretch", "fx", 0, "random phases; length+level only"),
+ ("ChangeSpeed", "ChangeSpeedAndPitch", {"Percentage": 25}, "ChangeSpeed", "fx", -120, "system libsoxr 0.1.3 (same as Audacity)"),
+ ("ChangeTempo", "ChangeTempo", {"Percentage": 20, "SBSMS": 0}, "ChangeTempo", "fx", -120, "system libSoundTouch 2.4.0 (same as Audacity)"),
+ ("ChangePitch", "ChangePitch", {"Percentage": 20, "SBSMS": 0}, "ChangePitch", "fx", -120, "system libSoundTouch 2.4.0 (same as Audacity)"),
+ ("Paulstretch", "Paulstretch", {"Stretch Factor": 3, "Time Resolution": 0.25}, "Paulstretch", "fx", -120, "glibc rand() phases"),
  ("TruncateSilence", "TruncateSilence", {"Threshold": -40, "Action": "Truncate Detected Silence", "Minimum": 0.2, "Truncate": 0.1, "Compress": 50, "Independent": 0}, "TruncateSilence", "fx", -100, ""),
  ("StereoToMono", "StereoToMono", {}, "StereoToMono", "fx", -120, ""),
  ("AdjustableFade", "AdjustableFade", {"TYPE": "Up", "CURVE": 0, "UNITS": "Percent", "GAIN0": 0, "GAIN1": 100, "PRESET": "None"}, "AdjustableFade", "fx", -80, "nyquist"),
@@ -68,13 +68,13 @@ CASES = [
  ("ToneSquareNA", "Tone", {"Frequency": 1000, "Amplitude": 0.5, "Waveform": "Square, no alias"}, "Tone", "gen", -100, ""),
  ("ToneSaw", "Tone", {"Frequency": 300, "Amplitude": 0.5, "Waveform": "Sawtooth"}, "Tone", "gen", -100, ""),
  ("Chirp", "Chirp", {"StartFreq": 100, "EndFreq": 4000, "StartAmp": 0.8, "EndAmp": 0.1, "Waveform": "Sine", "Interpolation": "Logarithmic"}, "Chirp", "gen", -100, ""),
- ("DTMF", "DtmfTones", {"Sequence": "123abc", "Duty Cycle": 55, "Amplitude": 0.8}, "DtmfTones", "gen", -100, ""),
+ ("DTMF", "DtmfTones", {"Sequence": "audacity", "Duty Cycle": 55, "Amplitude": 0.8}, "DtmfTones", "gen", -100, ""),
  ("NoiseWhite", "Noise", {"Type": "White", "Amplitude": 0.5}, "Noise", "gennoise", 0, "random; level only"),
  ("NoisePink", "Noise", {"Type": "Pink", "Amplitude": 0.5}, "Noise", "gennoise", 0, "random; level only"),
  ("NoiseBrown", "Noise", {"Type": "Brownian", "Amplitude": 0.5}, "Noise", "gennoise", 0, "random; level only"),
  ("Silence", "Silence", {}, "Silence", "gen", -120, ""),
  ("RhythmTrack", "RhythmTrack", {"TEMPO": 120, "TIMESIG": 4, "SWING": 0, "BARS": 1, "CLICK-TRACK-DUR": 0, "OFFSET": 0, "CLICK-TYPE": "Metronome", "HIGH": 84, "LOW": 80}, "RhythmTrack", "gen", -40, "nyquist"),
- ("Pluck", "Pluck", {"PITCH": 60, "FADE": "Abrupt", "DUR": 1}, "Pluck", "gen", 0, "nyquist (random excitation)"),
+ ("Pluck", "Pluck", {"PITCH": 60, "FADE": "Abrupt", "DUR": 1}, "Pluck", "gen", -120, "nyquist (krand, deterministic)"),
  ("FindClipping", "FindClipping", {"Duty Cycle Start": 3, "Duty Cycle End": 3}, "FindClipping", "lab", 0, ""),
  ("BeatFinder", "BeatFinder", {"THRESVAL": 60}, "BeatFinder", "lab", 0, ""),
  ("LabelSounds", "LabelSounds", {"THRESHOLD": -30, "MEASUREMENT": "peak", "SIL-DUR": 0.1, "SND-DUR": 0.1, "TYPE": "region", "PRE-OFFSET": 0, "POST-OFFSET": 0, "TEXT": "S"}, "LabelSounds", "lab", 0, ""),
@@ -123,6 +123,12 @@ def make_inputs():
     b = 0.02 * rng.standard_normal(t.size)
     for k in range(4): s = int((0.25 + 0.5*k) * SR); b[s:s+300] += np.exp(-np.arange(300)/50.0) * 0.9
     write_wav(f"{W}/beats.wav", [b])
+    # clicks for ClickRemoval: quiet program material with short spikes
+    k = 0.05 * np.sin(2*np.pi*440*t) + 0.002 * rng.standard_normal(t.size)
+    k2 = 0.05 * np.sin(2*np.pi*660*t) + 0.002 * rng.standard_normal(t.size)
+    for j, pos in enumerate([0.3, 0.71, 1.13, 1.52, 1.87]):
+        s0 = int(pos*SR); k[s0:s0+2+j%3] += 0.7; k2[s0+500:s0+503] -= 0.6
+    write_wav(f"{W}/clicks.wav", [k, k2])
 
 PIPE_TO = f"/tmp/audacity_script_pipe.to.{os.getuid()}"; PIPE_FROM = f"/tmp/audacity_script_pipe.from.{os.getuid()}"
 class Aud:
@@ -178,11 +184,19 @@ def split_params(s):  # "Key=v with space Key2=v" -> ["Key=v with space", ...] u
 def main():
     make_inputs()
     subprocess.run(["cargo", "build", "-q", "--release", "-p", "au-app", "--example", "fx_tool"], cwd=R, check=True)
-    cases = [c for c in CASES if FILT in c[0]]
+    cases = [c for c in CASES if not FILT or any(f == c[0] or (f.endswith("*") and c[0].startswith(f[:-1])) for f in FILT.split(","))]
     results = []
     A = Aud().__enter__()
     for name, cmd, params, rid, kind, thr, note in cases:
-        acmd = cmd + ":" + "".join(f' {k}="{v}"' for k, v in params.items())
+        ap_ = dict(params)
+        if cmd == "Tone":
+            # Audacity 3.7.3 scripting bug: Tone via mod-script-pipe skips PostSet(), so End* keep
+            # stale values and the tone ramps. Tone == Chirp with equal start/end (same ToneGenBase
+            # code path), which is exactly what the Tone dialog produces.
+            cmd = "Chirp"
+            ap_ = {"StartFreq": params["Frequency"], "EndFreq": params["Frequency"], "StartAmp": params["Amplitude"],
+                   "EndAmp": params["Amplitude"], "Waveform": params["Waveform"], "Interpolation": "Linear"}
+        acmd = cmd + ":" + "".join(f' {k.replace(" ", "_")}="{v}"' for k, v in ap_.items())  # Audacity macro syntax: spaces in keys -> _
         rp = [f"{k}={v}" for k, v in params.items()]
         try:
             run_case(A, name, acmd, rid, rp, kind, thr, note, results)
@@ -198,25 +212,31 @@ def run_case(A, name, acmd, rid, rp, kind, thr, note, results):
     if True:
         if True:
             A("SelectAll:"); A("RemoveTracks:")
-            src = {"fx": "in.wav", "aux": "in.wav", "lab": "beats.wav" if name == "BeatFinder" else "in.wav"}.get(kind)
+            if kind == "ref_classic":
+                return run_classic_ref(name, rp, thr, note, results)
+            src = {"fx": "clicks.wav" if name == "ClickRemoval" else "in.wav", "aux": "in.wav", "lab": "beats.wav" if name == "BeatFinder" else "in.wav"}.get(kind)
             if src: A(f"Import2: Filename={W}/{src}")
             else: A("NewStereoTrack:"); A("SelectTime: Start=0 End=2 RelativeTo=ProjectStart")
             if kind == "aux":
                 A(f"Import2: Filename={W}/ctl.wav"); A("SelectTracks: Track=0 TrackCount=1 Mode=Set")
                 A("SelectTime: Start=0 End=2 RelativeTo=ProjectStart")
             elif src: A("SelectAll:")
-            A(acmd)
+            if kind == "gen" and cmd_is_gui(acmd):
+                gui_generate(acmd)
+            else:
+                A(acmd)
             ap = f"{W}/{name}.aud.aup3"
             if os.path.exists(ap): os.remove(ap)
             info = A("GetInfo: Type=Labels Format=JSON") if kind == "lab" else ""
             A(f"SaveProject2: Filename={ap}")
+            if kind == "gen" and cmd_is_gui(acmd): time.sleep(3)
             row = {"case": name, "note": note, "thr": thr}
             try:
                 if kind == "lab":
                     out = rust(["analyze", rid, f"{W}/{src}"] + rp)
                     rl = [(round(float(a), 3), round(float(b), 3), c) for _, a, b, c in (l.split("\t") for l in out.splitlines() if l.startswith("LABEL"))]
                     al = labels_from(info)
-                    ok = len(rl) == len(al) and all(abs(x[0]-y[0]) <= 0.002 and abs(x[1]-y[1]) <= 0.002 for x, y in zip(rl, al))
+                    ok = len(rl) == len(al) and all(abs(x[0]-y[0]) <= 0.002 and abs(x[1]-y[1]) <= 0.002 and x[2] == y[2] for x, y in zip(rl, al))
                     row.update(aud=len(al), rust=len(rl), pass_=ok, detail=f"aud {al[:6]} rust {rl[:6]}")
                 else:
                     rust(["aup3wav", ap, f"{W}/{name}.aud.wav"])
@@ -225,7 +245,7 @@ def run_case(A, name, acmd, rid, rp, kind, thr, note, results):
                         rust(["gen", rid, f"{W}/{name}.rs.wav", str(SR), "2", "2"] + rp)
                     else:
                         extra = [f"aux={W}/ctl.wav"] if kind == "aux" else []
-                        rust(["apply", rid, f"{W}/in.wav", f"{W}/{name}.rs.wav"] + rp + extra)
+                        rust(["apply", rid, f"{W}/{src}", f"{W}/{name}.rs.wav"] + rp + extra)
                     b = read_wav(f"{W}/{name}.rs.wav")
                     n = min(a.shape[1], b.shape[1]); ch = min(a.shape[0], b.shape[0])
                     d = a[:ch, :n] - b[:ch, :n]
@@ -242,6 +262,47 @@ def run_case(A, name, acmd, rid, rp, kind, thr, note, results):
                 row.update(pass_=False, error=str(e)[-300:])
             results.append(row)
             print(json.dumps(row), flush=True)
+
+def cmd_is_gui(acmd): return acmd.startswith("DtmfTones:")
+def gui_generate(acmd):
+    """Audacity 3.7.3 DTMF via scripting ignores Sequence/Duty Cycle and computes tone lengths from a stale
+    duration (DtmfSettings::Recalculate runs before the selection duration is applied). So drive the real
+    dialog: Generate > DTMF Tones... and press OK with the dialog defaults (sequence 'audacity', 55 %, 0.8),
+    duration = the 2 s selection."""
+    import shlex
+    pid = subprocess.run("pgrep -x audacity", shell=True, capture_output=True, text=True).stdout.split()[0]
+    envs = dict(l.split("=", 1) for l in open(f"/proc/{pid}/environ").read().split("\0") if "=" in l)
+    e = dict(os.environ, DISPLAY=envs["DISPLAY"], XAUTHORITY=envs.get("XAUTHORITY", ""))
+    x = lambda *a: subprocess.run(["xdotool", *a], env=e, capture_output=True)
+    x("search", "--onlyvisible", "--name", "Welcome to Audacity", "windowactivate", "--sync", "key", "Escape"); time.sleep(1)
+    x("search", "--onlyvisible", "--name", "^Audacity$", "windowactivate", "--sync"); time.sleep(0.5)
+    x("key", "alt+g"); time.sleep(1); x("key", "Down", "Down", "Return"); time.sleep(3)
+    wid = x("search", "--onlyvisible", "--name", "^DTMF Tones$").stdout.split()[-1].decode()
+    geo = x("getwindowgeometry", wid).stdout.decode()
+    w, h = map(int, re.search(r"Geometry: (\d+)x(\d+)", geo).groups())
+    x("mousemove", "--window", wid, str(w - 52), str(h - 21), "click", "1"); time.sleep(4)  # 'Generate' button (bottom-right)
+
+CF_TYPES = ["Butterworth", "Chebyshev Type I", "Chebyshev Type II"]; CF_SUB = ["Lowpass", "Highpass"]
+def run_classic_ref(name, rp, thr, note, results):
+    """Audacity 3.7.3 crashes running Classic Filters from scripts (null mpBiquad in ProcessInitialize),
+    so the reference is Audacity's own lib-math.so driven by tools/aud_ref/classic_filters_ref.cpp."""
+    ref = "/tmp/classic_filters_ref"
+    if not os.path.exists(ref):
+        subprocess.run(["g++", "-O2", "-o", ref, os.path.join(R, "tools/aud_ref/classic_filters_ref.cpp"), "-L/usr/lib/audacity",
+                        "-l:lib-math.so", "-Wl,-rpath,/usr/lib/audacity"], check=True)
+    p = dict(x.split("=", 1) for x in rp)
+    args = [str(CF_TYPES.index(p["FilterType"])), str(CF_SUB.index(p["FilterSubtype"])), p["Order"], p["Cutoff"],
+            p.get("PassbandRipple", "1"), p.get("StopbandRipple", "30"), str(SR)]
+    x = read_wav(f"{W}/in.wav").astype(np.float32)
+    a = np.stack([np.frombuffer(subprocess.run([ref] + args, input=ch.tobytes(), capture_output=True, check=True).stdout, dtype="<f4") for ch in x]).astype(np.float64)
+    rust(["apply", "ClassicFilters", f"{W}/in.wav", f"{W}/{name}.rs.wav"] + rp)
+    b = read_wav(f"{W}/{name}.rs.wav")
+    d = a - b[:, :a.shape[1]] if b.shape == a.shape else None
+    row = {"case": name, "note": note, "thr": thr, "len_aud": list(a.shape), "len_rust": list(b.shape)}
+    if d is None: row.update(pass_=False)
+    else:
+        rms_d = db(np.sqrt(np.mean(d**2))); row.update(rms_diff_db=round(rms_d, 1), peak_diff_db=round(db(np.max(np.abs(d))), 1), pass_=bool(rms_d <= thr))
+    results.append(row); print(json.dumps(row), flush=True)
 
 if __name__ == "__main__":
     main()

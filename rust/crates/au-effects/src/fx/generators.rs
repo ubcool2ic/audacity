@@ -3,7 +3,7 @@ use au_core::AudioBuffer;
 use std::f64::consts::PI;
 
 /// Waveforms supported by Tone and Chirp.
-const WAVEFORMS: &[&str] = &["Sine", "Square", "Sawtooth", "Square no alias", "Triangle"];
+const WAVEFORMS: &[&str] = &["Sine", "Square", "Sawtooth", "Square, no alias", "Triangle"];
 /// Tone and Chirp interpolation modes.
 const INTERPOLATIONS: &[&str] = &["Linear", "Logarithmic"];
 
@@ -247,12 +247,12 @@ impl BuiltinEffect for Noise {
     }
 }
 
-/// Generate dual-frequency DTMF telephone tones.
+/// DTMF Tones (port of Audacity 3.7.3 `DtmfBase.cpp`).
 #[derive(Clone, Debug)]
 pub struct Dtmf {
-    /// Sequence of keypad symbols.
+    /// Sequence of keypad symbols (0-9 A-D a-z * #).
     pub sequence: String,
-    /// Tone duty cycle from 0 to 1.
+    /// Duty cycle in percent (0-100), Audacity key "Duty Cycle".
     pub duty_cycle: f64,
     /// Linear amplitude.
     pub amplitude: f64,
@@ -260,29 +260,104 @@ pub struct Dtmf {
     pub duration: f64,
 }
 impl Dtmf {
-    /// Replace the DTMF sequence.
-    pub fn set_sequence(&mut self, sequence: impl Into<String>) { self.sequence = sequence.into(); }
+    /// Replace the DTMF sequence (rejected if it contains invalid symbols, like Audacity).
+    pub fn set_sequence(&mut self, sequence: impl Into<String>) -> bool {
+        let s = sequence.into();
+        if s.chars().all(|c| DTMF_SYMBOLS.contains(c)) { self.sequence = s; true } else { false }
+    }
 }
-impl Default for Dtmf { fn default()->Self{Self{sequence:"123A456B789C*0#D".into(),duty_cycle:0.5,amplitude:0.8,duration:30.0}} }
+const DTMF_SYMBOLS: &str = "0123456789*#ABCDabcdefghijklmnopqrstuvwxyz";
+/// Audacity's fade divisor: fs / 250 samples of linear fade in/out per tone chunk.
+const DTMF_FADE: f64 = 250.0;
+/// Audacity processes generators in blocks of the track's max block size (float: 1 MiB / 4).
+pub const AUD_BLOCK: usize = 262_144;
+fn dtmf_freqs(c: char) -> (f32, f32) {
+    let f1 = match c { '1'|'2'|'3'|'A'|'a'..='f' => 697.0, '4'|'5'|'6'|'B'|'g'..='o' => 770.0,
+        '7'|'8'|'9'|'C'|'p'..='z' => 852.0, '*'|'0'|'#'|'D' => 941.0, _ => 0.0 };
+    let f2 = match c { '1'|'4'|'7'|'*'|'g'|'h'|'i'|'p'|'q'|'r'|'s' => 1209.0,
+        '2'|'5'|'8'|'0'|'a'|'b'|'c'|'j'|'k'|'l'|'t'|'u'|'v' => 1336.0,
+        '3'|'6'|'9'|'#'|'d'|'e'|'f'|'m'|'n'|'o'|'w'|'x'|'y'|'z' => 1477.0, 'A'|'B'|'C'|'D' => 1633.0, _ => 0.0 };
+    (f1, f2)
+}
+/// `DtmfBase::MakeDtmfTone`: called per processing chunk; fades depend on the chunk length as in Audacity.
+fn make_dtmf_tone(buf: &mut [f32], fs: f32, tone: char, last: u64, total: u64, amplitude: f32) {
+    let (f1, f2) = dtmf_freqs(tone);
+    let base = 2.0 * std::f64::consts::PI / fs as f64;
+    let (a, b) = (base * f1 as f64, base * f2 as f64);
+    let len = buf.len();
+    for (i, o) in buf.iter_mut().enumerate() {
+        let n = (i as u64 + last) as f64;
+        *o = (amplitude as f64 * 0.5 * ((a * n).sin() + (b * n).sin())) as f32;
+    }
+    let fade = (len as f64).min(fs as f64 / DTMF_FADE);
+    if last == 0 {
+        let mut i = 0usize;
+        while (i as f64) < fade { buf[i] = (buf[i] as f64 * (i as f64 / fade)) as f32; i += 1; }
+    }
+    if last as i64 >= total as i64 - len as i64 {
+        let offset = (len as f64 - fade) as usize; // C++: size_t offset = len - A (double, truncated)
+        let mut i = 0usize;
+        while (i as f64) < fade && i + offset < len { buf[i + offset] = (buf[i + offset] as f64 * (1.0 - i as f64 / fade)) as f32; i += 1; }
+    }
+}
+/// Renders `n` samples exactly like `ProcessInitialize` + `ProcessBlock` called with `block`-sized buffers.
+pub fn dtmf_render(seq: &str, duty: f64, amplitude: f64, fs: f64, n: usize, block: usize) -> Vec<f32> {
+    let tones: Vec<char> = seq.chars().collect();
+    let nt = tones.len() as i64;
+    if nt == 0 { return vec![0.0; n]; }
+    let duration = n as f64 / fs;
+    let (tone_s, sil_s) = if nt == 1 { (duration, 0.0) } else {
+        let slot = duration / (nt as f64 + duty / 100.0 - 1.0);
+        (slot * (duty / 100.0), slot * (1.0 - duty / 100.0))
+    };
+    let seq_n = (duration * fs + 0.5).floor() as i64;
+    let mut n_tone = (tone_s * fs).floor() as i64;
+    let mut n_sil = (sil_s * fs).floor() as i64;
+    let mut diff = seq_n - nt * n_tone - (nt - 1) * n_sil;
+    while diff > 2 * nt - 1 {
+        n_tone += diff / nt;
+        n_sil += diff / (nt - 1);
+        diff = seq_n - nt * n_tone - (nt - 1) * n_sil;
+    }
+    let mut out = vec![0.0f32; n];
+    let (mut cur, mut is_tone, mut remaining, mut tone_pos) = (-1i64, false, 0i64, 0u64);
+    let mut pos = 0usize;
+    'outer: while pos < n {
+        let mut size = block.min(n - pos);
+        while size > 0 {
+            if remaining == 0 {
+                is_tone = !is_tone;
+                if is_tone { cur += 1; remaining = n_tone; tone_pos = 0; } else { remaining = n_sil; }
+                if diff > 0 { remaining += 1; }
+                diff -= 1;
+                if remaining == 0 { continue; }
+            }
+            let len = (size as i64).min(remaining) as usize;
+            if is_tone {
+                if cur >= nt { break 'outer; }
+                let c = tones[cur as usize];
+                make_dtmf_tone(&mut out[pos..pos + len], fs as f32, c, tone_pos, n_tone as u64, amplitude as f32);
+                tone_pos += len as u64;
+            }
+            remaining -= len as i64; pos += len; size -= len;
+        }
+    }
+    out
+}
+impl Default for Dtmf { fn default()->Self{Self{sequence:"audacity".into(),duty_cycle:55.0,amplitude:0.8,duration:30.0}} }
 impl BuiltinEffect for Dtmf {
     fn id(&self)->&'static str{"DTMF Tones"}
     fn kind(&self)->EffectKind{EffectKind::Generate}
-    fn params(&self)->Vec<ParamDef>{vec![ParamDef::float("Duty Cycle","Duty cycle",0.0,1.0,0.5),ParamDef::float("Amplitude","Amplitude",0.0,1.0,0.8),ParamDef::float("Duration","Duration",0.0,3600.0,30.0)]}
+    fn params(&self)->Vec<ParamDef>{vec![ParamDef::float("Duty Cycle","Duty cycle (%)",0.0,100.0,55.0),ParamDef::float("Amplitude","Amplitude",0.001,1.0,0.8),ParamDef::float("Duration","Duration",0.0,3600.0,30.0)]}
     fn get(&self,k:&str)->Option<f64>{match k{"Duty Cycle"=>Some(self.duty_cycle),"Amplitude"=>Some(self.amplitude),"Duration"=>Some(self.duration),_=>None}}
     fn set(&mut self,k:&str,v:f64)->bool{match k{"Duty Cycle"=>self.duty_cycle=v,"Amplitude"=>self.amplitude=v,"Duration"=>self.duration=v,_=>return false}true}
+    fn text_keys(&self)->Vec<&'static str>{vec!["Sequence"]}
+    fn get_text(&self,k:&str)->Option<String>{(k=="Sequence").then(||self.sequence.clone())}
+    fn set_text(&mut self,k:&str,v:&str)->bool{k=="Sequence"&&self.set_sequence(v)}
     fn process(&mut self,b:&mut AudioBuffer,_:&mut EffectContext)->Result<(),EffectError>{
-        let n=duration_frames(b,self.duration);let sr=b.sample_rate.max(1) as f64;
-        let rows=[697.0,770.0,852.0,941.0];let cols=[1209.0,1336.0,1477.0,1633.0];let keys=b"123A456B789C*0#D";
-        let tone_n=(sr*0.1).round() as usize;let silence_n=(tone_n as f64*(1.0-self.duty_cycle)/self.duty_cycle.max(0.001)).round() as usize;
-        let mut out=vec![0.0;n];
-        for i in 0..n {
-            let cycle=tone_n+silence_n;if cycle==0{break}let pos=i%cycle;if pos>=tone_n{continue}
-            let key=self.sequence.as_bytes().get((i/cycle)%self.sequence.len().max(1)).copied().unwrap_or(b' ');
-            let idx=keys.iter().position(|&x|x==key);if let Some(k)=idx{
-                let row=k/4;let col=k%4;let fade=(pos.min(tone_n.saturating_sub(pos)).min(250) as f64/250.0).min(1.0);
-                out[i]=(self.amplitude*fade*((2.0*PI*rows[row]*i as f64/sr).sin()+(2.0*PI*cols[col]*i as f64/sr).sin())*0.5) as f32;
-            }
-        }
+        if self.sequence.is_empty(){return Err(EffectError::Invalid("DTMF sequence empty.".into()));}
+        let n=duration_frames(b,self.duration);
+        let out=dtmf_render(&self.sequence,self.duty_cycle,self.amplitude,b.sample_rate.max(1) as f64,n,AUD_BLOCK);
         resize_generated(b,n,&out);Ok(())
     }
 }

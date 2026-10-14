@@ -74,7 +74,9 @@ fn parse_value(def: &ParamDef, s: &str) -> Option<f64> {
 
 /// Parameters of an effect as Audacity-style strings.
 pub fn params_to_strings(e: &dyn BuiltinEffect) -> Vec<(String, String)> {
-    e.params().iter().filter_map(|p| e.get(p.key).map(|v| (p.key.to_string(), fmt_value(p, v)))).collect()
+    let mut v: Vec<(String, String)> = e.params().iter().filter_map(|p| e.get(p.key).map(|v| (p.key.to_string(), fmt_value(p, v)))).collect();
+    for k in e.text_keys() { if let Some(t) = e.get_text(k) { v.push((k.to_string(), t)); } }
+    v
 }
 
 /// Applies Audacity-style string parameters; unknown keys are ignored.
@@ -83,6 +85,8 @@ pub fn params_from_strings(e: &mut dyn BuiltinEffect, ps: &[(String, String)]) {
     for (k, v) in ps {
         if let Some(d) = defs.iter().find(|d| d.key == k).or_else(|| defs.iter().find(|d| d.key.eq_ignore_ascii_case(k))) {
             if let Some(x) = parse_value(d, v) { e.set(d.key, d.clamp(x)); }
+        } else if let Some(t) = e.text_keys().into_iter().find(|t| t.eq_ignore_ascii_case(k)) {
+            e.set_text(t, v);
         }
     }
 }

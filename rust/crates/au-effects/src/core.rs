@@ -138,6 +138,12 @@ pub trait BuiltinEffect: Send {
     fn rt_process(&mut self, _block: &mut [Vec<f32>]) {}
     /// Latency (frames) introduced by realtime processing.
     fn rt_latency(&self) -> usize { 0 }
+    /// Keys of string-valued parameters (e.g. DTMF `Sequence`, Label Sounds `TEXT`).
+    fn text_keys(&self) -> Vec<&'static str> { Vec::new() }
+    /// Reads a string parameter.
+    fn get_text(&self, _key: &str) -> Option<String> { None }
+    /// Writes a string parameter. Returns false for unknown keys.
+    fn set_text(&mut self, _key: &str, _value: &str) -> bool { false }
 }
 
 /// Sets a parameter with clamping. Returns false for unknown keys.
