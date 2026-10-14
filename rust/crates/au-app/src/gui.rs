@@ -56,6 +56,9 @@ fn selftest() -> eframe::Result<()> {
 }
 
 
+mod accessibility;
+#[cfg(test)]
+mod layout_tests;
 mod toolbars;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -152,6 +155,8 @@ struct AudacityApp {
     autosave_at: std::time::Instant,
     tool: Tool,
     zoom: ZoomInfo,
+    /// Track with keyboard focus in the track panel.
+    focused_track: Option<usize>,
     /// Active colour theme.
     theme: crate::theme::Theme,
     /// Custom theme loaded from components or a cache.
@@ -263,6 +268,7 @@ impl Default for AudacityApp {
             theme: crate::theme::load_saved(),
             custom_theme: None,
             theme_applied: false,
+            focused_track: None,
             zoom: ZoomInfo {
                 h_offset: 0.0,
                 pixels_per_sec: 100.0,
@@ -1858,6 +1864,21 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
 
         let (rect, response) =
             ui.allocate_exact_size(egui::vec2(width, 116.0), egui::Sense::click_and_drag());
+        let info = {
+            let state = self.editor.state();
+            state.tracks.get(index).map(|track| {
+                (
+                    track.name.clone(),
+                    track.clips.n_channels.max(1),
+                    au_core::frames_to_secs(track.len(), track.sample_rate().max(1)),
+                    state.tracks.len(),
+                )
+            })
+        };
+        if let Some((name, channels, seconds, count)) = info {
+            let selected = self.selected_track == Some(index);
+            self.track_accessibility(ui, &response, index, count, &name, channels, seconds, selected);
+        }
         let painter = ui.painter_at(rect);
 
         let mut clip_bounds = Vec::new();
@@ -3284,10 +3305,10 @@ if self.ffmpeg_window {
 }
 
 impl eframe::App for AudacityApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // The panic hook has already written the crash report; flush unsaved
         // edits to the autosave before the panic continues to unwind.
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.update_frame(ctx, frame)));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.update_frame(ctx)));
         if let Err(p) = r {
             self.flush_autosave();
             std::panic::resume_unwind(p);
@@ -3296,7 +3317,7 @@ impl eframe::App for AudacityApp {
 }
 
 impl AudacityApp {
-    fn update_frame(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update_frame(&mut self, ctx: &egui::Context) {
         if !self.theme_applied {
             crate::theme::apply(&self.theme, ctx);
             self.theme_applied = true;

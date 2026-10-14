@@ -828,15 +828,58 @@ impl AudacityApp {
     ) {
         let rows = self.toolbars.rows(top);
         let mut actions = Vec::new();
+        let available_width = ui.available_width();
+        let item_spacing = ui.spacing().item_spacing.x;
 
         for (row_index, row) in rows.iter().enumerate() {
-            ui.horizontal_wrapped(|ui| {
-                for id in row {
-                    if let Some(action) = self.draw_toolbar_frame(ui, ctx, *id) {
-                        actions.push((*id, action, row_index as u32));
-                    }
+            let ids: Vec<_> = row.iter().copied().collect();
+            let mut lines: Vec<Vec<_>> = Vec::new();
+            let mut used_width = 0.0;
+
+            for id in ids {
+                let width = ctx
+                    .data(|data| {
+                        data.get_temp::<f32>(egui::Id::new(("toolbar-width", id.key())))
+                    })
+                    .unwrap_or(0.0);
+
+                if lines
+                    .last()
+                    .is_some_and(|line| !line.is_empty())
+                    && used_width + item_spacing + width > available_width
+                {
+                    lines.push(Vec::new());
+                    used_width = 0.0;
                 }
-            });
+
+                if lines.is_empty() {
+                    lines.push(Vec::new());
+                } else if !lines.last().is_some_and(Vec::is_empty) {
+                    used_width += item_spacing;
+                }
+
+                lines.last_mut().unwrap().push(id);
+                used_width += width;
+            }
+
+            for line in lines {
+                ui.horizontal(|ui| {
+                    for id in line {
+                        let inner = ui.scope(|ui| self.draw_toolbar_frame(ui, ctx, id));
+                        let width = inner.response.rect.width();
+                        ctx.data_mut(|data| {
+                            data.insert_temp(
+                                egui::Id::new(("toolbar-width", id.key())),
+                                width,
+                            );
+                        });
+
+                        if let Some(action) = inner.inner {
+                            actions.push((id, action, row_index as u32));
+                        }
+                    }
+                });
+            }
         }
 
         if !actions.is_empty() {
@@ -847,7 +890,6 @@ impl AudacityApp {
         }
     }
 
-    /// Draws visible floating toolbars and applies requested actions.
     pub(super) fn floating_toolbars(&mut self, ctx: &egui::Context) {
         let floating: Vec<(ToolbarId, f32, f32)> = self
             .toolbars
