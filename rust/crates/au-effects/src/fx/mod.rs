@@ -27,3 +27,7 @@ pub mod fix_tremolo;
 pub mod fix_speedpitch;
 pub mod nyq_tables;
 pub mod fix_findclipping;
+pub mod fix_rissetdrum;
+pub mod fix_sampledataexport;
+pub mod fix_contrast;
+pub mod fix_plotspectrum;

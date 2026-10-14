@@ -78,6 +78,25 @@ CASES = [
  ("FindClipping", "FindClipping", {"Duty Cycle Start": 3, "Duty Cycle End": 3}, "FindClipping", "lab", 0, ""),
  ("BeatFinder", "BeatFinder", {"THRESVAL": 60}, "BeatFinder", "lab", 0, ""),
  ("LabelSounds", "LabelSounds", {"THRESHOLD": -30, "MEASUREMENT": "peak", "SIL-DUR": 0.1, "SND-DUR": 0.1, "TYPE": "region", "PRE-OFFSET": 0, "POST-OFFSET": 0, "TEXT": "S"}, "LabelSounds", "lab", 0, ""),
+ ("RissetDrum", "RissetDrum", {"FREQ": 100, "DECAY": 2, "CF": 500, "BW": 400, "NOISE": 25, "GAIN": 0.8}, "RissetDrum", "genfresh", -100, "nyquist; glibc rand() noise (fresh Audacity)"),
+ ("SampleDataExport", "SampleDataExport", {"NUMBER": 200, "UNITS": "Linear", "FILEFORMAT": "Count", "HEADER": "None", "OPTEXT": "", "CHANNEL-LAYOUT": "SameLine", "MESSAGES": "None"}, "SampleDataExport", "txt", 0, "nyquist; exported text compared byte-for-byte"),
+ ("SampleDataExportDB", "SampleDataExport", {"NUMBER": 500, "UNITS": "dB", "FILEFORMAT": "Time", "HEADER": "Standard", "OPTEXT": "hello", "CHANNEL-LAYOUT": "Alternate", "MESSAGES": "None"}, "SampleDataExport", "txt", 0, "nyquist; exported text compared byte-for-byte"),
+ ("PlotSpectrum_0_3_1024", "PlotSpectrum", {"Algorithm": "Spectrum", "Function": "Hann window", "Size": 1024, "Axis": "Linear frequency"}, "PlotSpectrum", "ref_spectrum", 0, "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format"),
+ ("PlotSpectrum_0_0_128", "PlotSpectrum", {"Algorithm": "Spectrum", "Function": "Rectangular window", "Size": 128, "Axis": "Linear frequency"}, "PlotSpectrum", "ref_spectrum", 0, "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format"),
+ ("PlotSpectrum_0_5_65536", "PlotSpectrum", {"Algorithm": "Spectrum", "Function": "Blackman-Harris window", "Size": 65536, "Axis": "Linear frequency"}, "PlotSpectrum", "ref_spectrum", 0, "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format"),
+ ("PlotSpectrum_0_9_4096", "PlotSpectrum", {"Algorithm": "Spectrum", "Function": "Gaussian(a=4.5) window", "Size": 4096, "Axis": "Linear frequency"}, "PlotSpectrum", "ref_spectrum", 0, "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format"),
+ ("PlotSpectrum_0_2_2048", "PlotSpectrum", {"Algorithm": "Spectrum", "Function": "Hamming window", "Size": 2048, "Axis": "Linear frequency"}, "PlotSpectrum", "ref_spectrum", 0, "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format"),
+ ("PlotSpectrum_0_1_512", "PlotSpectrum", {"Algorithm": "Spectrum", "Function": "Bartlett window", "Size": 512, "Axis": "Linear frequency"}, "PlotSpectrum", "ref_spectrum", 0, "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format"),
+ ("PlotSpectrum_0_4_8192", "PlotSpectrum", {"Algorithm": "Spectrum", "Function": "Blackman window", "Size": 8192, "Axis": "Linear frequency"}, "PlotSpectrum", "ref_spectrum", 0, "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format"),
+ ("PlotSpectrum_0_6_256", "PlotSpectrum", {"Algorithm": "Spectrum", "Function": "Welch window", "Size": 256, "Axis": "Linear frequency"}, "PlotSpectrum", "ref_spectrum", 0, "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format"),
+ ("PlotSpectrum_0_7_16384", "PlotSpectrum", {"Algorithm": "Spectrum", "Function": "Gaussian(a=2.5) window", "Size": 16384, "Axis": "Linear frequency"}, "PlotSpectrum", "ref_spectrum", 0, "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format"),
+ ("PlotSpectrum_0_8_32768", "PlotSpectrum", {"Algorithm": "Spectrum", "Function": "Gaussian(a=3.5) window", "Size": 32768, "Axis": "Linear frequency"}, "PlotSpectrum", "ref_spectrum", 0, "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format"),
+ ("PlotSpectrum_1_3_1024", "PlotSpectrum", {"Algorithm": "Standard Autocorrelation", "Function": "Hann window", "Size": 1024, "Axis": "Linear frequency"}, "PlotSpectrum", "ref_spectrum", 0, "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format"),
+ ("PlotSpectrum_2_3_2048", "PlotSpectrum", {"Algorithm": "Cuberoot Autocorrelation", "Function": "Hann window", "Size": 2048, "Axis": "Linear frequency"}, "PlotSpectrum", "ref_spectrum", 0, "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format"),
+ ("PlotSpectrum_3_2_1024", "PlotSpectrum", {"Algorithm": "Enhanced Autocorrelation", "Function": "Hamming window", "Size": 1024, "Axis": "Linear frequency"}, "PlotSpectrum", "ref_spectrum", 0, "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format"),
+ ("PlotSpectrum_4_3_4096", "PlotSpectrum", {"Algorithm": "Cepstrum", "Function": "Hann window", "Size": 4096, "Axis": "Linear frequency"}, "PlotSpectrum", "ref_spectrum", 0, "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format"),
+ ("Contrast", "Contrast", {"FgStart": 0, "FgEnd": 1, "BgStart": 1, "BgEnd": 2}, "Contrast", "ref_contrast", 0, "ref: ContrastBase::GetDB formula (dialog-only); %.2f dB values + WCAG verdict"),
+ ("ContrastQuiet", "Contrast", {"FgStart": 0.2, "FgEnd": 0.7, "BgStart": 0, "BgEnd": 0}, "Contrast", "ref_contrast", 0, "background = quiet aux track (ctl.wav x 0.01)"),
 ]
 
 def write_wav(p, x):  # x: (ch, n) float32 -> 32-bit float WAV
@@ -214,6 +233,17 @@ def run_case(A, name, acmd, rid, rp, kind, thr, note, results):
             A("SelectAll:"); A("RemoveTracks:")
             if kind == "ref_classic":
                 return run_classic_ref(name, rp, thr, note, results)
+            if kind == "ref_spectrum":
+                return run_spectrum_ref(name, rp, results, note)
+            if kind == "ref_contrast":
+                return run_contrast_ref(name, rp, results, note)
+            if kind == "genfresh":
+                A.__exit__(); A.__enter__()  # fresh process => glibc rand() default seed
+                A("SelectAll:"); A("RemoveTracks:"); A("NewStereoTrack:"); A("SelectTime: Start=0 End=2 RelativeTo=ProjectStart")
+                A(acmd)
+                return finish_gen(A, name, rid, rp, thr, note, results)
+            if kind == "txt":
+                return run_txt(A, name, acmd, rid, rp, note, results)
             src = {"fx": "clicks.wav" if name == "ClickRemoval" else "in.wav", "aux": "in.wav", "lab": "beats.wav" if name == "BeatFinder" else "in.wav"}.get(kind)
             if src: A(f"Import2: Filename={W}/{src}")
             else: A("NewStereoTrack:"); A("SelectTime: Start=0 End=2 RelativeTo=ProjectStart")
@@ -262,6 +292,85 @@ def run_case(A, name, acmd, rid, rp, kind, thr, note, results):
                 row.update(pass_=False, error=str(e)[-300:])
             results.append(row)
             print(json.dumps(row), flush=True)
+
+def finish_gen(A, name, rid, rp, thr, note, results):
+    ap = f"{W}/{name}.aud.aup3"
+    if os.path.exists(ap): os.remove(ap)
+    A(f"SaveProject2: Filename={ap}")
+    rust(["aup3wav", ap, f"{W}/{name}.aud.wav"]); a = read_wav(f"{W}/{name}.aud.wav")
+    rust(["gen", rid, f"{W}/{name}.rs.wav", str(SR), str(a.shape[0]), "0"] + rp); b = read_wav(f"{W}/{name}.rs.wav")
+    n = min(a.shape[1], b.shape[1]); ch = min(a.shape[0], b.shape[0]); d = a[:ch, :n] - b[:ch, :n]
+    rms_d = db(np.sqrt(np.mean(d**2))) if n else 0
+    ok = a.shape == b.shape and rms_d <= thr
+    row = {"case": name, "note": note, "thr": thr, "len_aud": list(a.shape), "len_rust": list(b.shape), "rms_diff_db": round(rms_d, 1),
+           "peak_diff_db": round(db(np.max(np.abs(d))), 1) if n else 0, "pass_": bool(ok)}
+    results.append(row); print(json.dumps(row), flush=True)
+
+def run_txt(A, name, acmd, rid, rp, note, results):
+    """Nyquist analyzers that write a text file (Sample Data Export): compare the files byte-for-byte."""
+    A(f"Import2: Filename={W}/in.wav"); A("SelectAll:")
+    fa, fr = f"{W}/{name}.aud.txt", f"{W}/{name}.rs.txt"
+    for f in (fa, fr):
+        if os.path.exists(f): os.remove(f)
+    A(acmd + f' FILENAME="{fa}"'); time.sleep(1)
+    rust(["analyze", rid, f"{W}/in.wav"] + rp + [f"FILENAME={fr}"])
+    ta = open(fa).read() if os.path.exists(fa) else None; tr = open(fr).read() if os.path.exists(fr) else None
+    if tr: tr = tr.replace(fr, fa)  # header line carries the output file name
+    ok = ta is not None and ta == tr
+    row = {"case": name, "note": note, "thr": 0, "pass_": ok, "aud_lines": ta and ta.count("\n"), "rust_lines": tr and tr.count("\n")}
+    if not ok and ta and tr:
+        al, rl = ta.splitlines(), tr.splitlines()
+        k = next((i for i, (x, y) in enumerate(zip(al, rl)) if x != y), min(len(al), len(rl)))
+        row["first_diff"] = [k, al[k:k+1], rl[k:k+1]]
+    results.append(row); print(json.dumps(row), flush=True)
+
+SPEC_REF = "/tmp/plot_spectrum_ref"
+def run_spectrum_ref(name, rp, results, note):
+    """Plot Spectrum is dialog-only: reference = Audacity 3.7.3 lib-fft.so SpectrumAnalyst::Calculate on the
+    channel sum (PlotSpectrumBase::GetAudio), printed in FreqWindow::OnExport's text format."""
+    if not os.path.exists(SPEC_REF):
+        subprocess.run(["g++", "-O1", "-o", SPEC_REF, os.path.join(R, "tools/aud_ref/plot_spectrum_ref.cpp"), "-L/usr/lib/audacity",
+                        "-l:lib-fft.so", "-Wl,-rpath,/usr/lib/audacity"], check=True)
+    _, a, w, n = name.split("_")
+    x = read_wav(f"{W}/in.wav").astype(np.float32)
+    raw = f"{W}/in.f32"; x.T.copy().astype("<f4").tofile(raw)
+    ref = subprocess.run([SPEC_REF, raw, str(x.shape[0]), str(SR), a, w, n], capture_output=True, text=True).stdout
+    out = rust(["analyze", "PlotSpectrum", f"{W}/in.wav"] + rp)
+    al = ref.splitlines()
+    rs = out[out.index(al[0]):] if al and al[0] in out else out
+    rl = rs.splitlines()[:len(al)]
+    exact = sum(x == y for x, y in zip(al, rl))
+    try:
+        av = np.array([[float(v) for v in l.split("\t")] for l in al[1:]]); rv = np.array([[float(v) for v in l.split("\t")] for l in rl[1:]])
+        md = float(np.max(np.abs(av - rv))) if av.shape == rv.shape else None
+    except Exception:
+        md = None
+    ok = len(rl) == len(al) and bool(al) and al[0] == rl[0] and md is not None and md <= 1e-4
+    row = {"case": name, "note": note, "thr": 0, "rows": len(al) - 1, "identical_lines": exact, "max_abs_diff": md, "pass_": bool(ok)}
+    results.append(row); print(json.dumps(row), flush=True)
+
+def contrast_db(x, t0, t1):  # ContrastBase::GetDB
+    s0, s1 = int(np.floor(t0*SR + 0.5)), int(np.floor(t1*SR + 0.5))
+    if s1 <= s0: return None
+    ms = sum(float(np.sum(c[s0:s1].astype(np.float64)**2)/(s1-s0)) for c in x)
+    rms = np.sqrt(ms / x.shape[0]); return float(np.float32(20*np.log10(rms))) if rms > 0 else float("-inf")
+def run_contrast_ref(name, rp, results, note):
+    """Contrast is dialog-only: reference = ContrastBase::GetDB (per-channel WaveChannelUtilities::GetRMS,
+    mean of squares over channels, LINEAR_TO_DB) and Contrast.cpp's %.2f formatting / WCAG 20 dB rule."""
+    p = {k: float(v) for k, v in (z.split("=", 1) for z in rp)}
+    x = read_wav(f"{W}/in.wav")
+    quiet = p["BgEnd"] <= p["BgStart"]
+    if quiet:
+        write_wav(f"{W}/quiet.wav", (read_wav(f"{W}/ctl.wav") * 0.01).astype(np.float32))
+    bgx = read_wav(f"{W}/quiet.wav") if quiet else x
+    fg = contrast_db(x, p["FgStart"], p["FgEnd"]); bg = contrast_db(bgx, 0 if quiet else p["BgStart"], 2 if quiet else p["BgEnd"])
+    diff = fg - bg
+    exp = [f"{fg:.2f} dB", f"{bg:.2f} dB", f"{diff:.2f}", "Pass" if diff > 20 else "Fail"]
+    out = rust(["analyze", "Contrast", f"{W}/in.wav"] + rp + ([f"aux={W}/quiet.wav"] if quiet else []))
+    got = [s in out for s in exp]
+    row = {"case": name, "note": note, "thr": 0, "expected": exp, "found": got, "pass_": all(got)}
+    if not all(got): row["rust_out"] = out[-600:]
+    results.append(row); print(json.dumps(row), flush=True)
 
 def cmd_is_gui(acmd): return acmd.startswith("DtmfTones:")
 def gui_generate(acmd):

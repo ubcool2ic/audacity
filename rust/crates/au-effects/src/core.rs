@@ -138,6 +138,8 @@ pub trait BuiltinEffect: Send {
     fn rt_process(&mut self, _block: &mut [Vec<f32>]) {}
     /// Latency (frames) introduced by realtime processing.
     fn rt_latency(&self) -> usize { 0 }
+    /// Audacity automation symbols for a choice parameter (Nyquist `("Sym" (_ "Label"))`), if they differ from the labels.
+    fn choice_symbols(&self, _key: &str) -> Option<&'static [&'static str]> { None }
     /// Keys of string-valued parameters (e.g. DTMF `Sequence`, Label Sounds `TEXT`).
     fn text_keys(&self) -> Vec<&'static str> { Vec::new() }
     /// Reads a string parameter.

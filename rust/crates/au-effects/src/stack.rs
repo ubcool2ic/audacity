@@ -84,7 +84,9 @@ pub fn params_from_strings(e: &mut dyn BuiltinEffect, ps: &[(String, String)]) {
     let defs = e.params();
     for (k, v) in ps {
         if let Some(d) = defs.iter().find(|d| d.key == k).or_else(|| defs.iter().find(|d| d.key.eq_ignore_ascii_case(k))) {
-            if let Some(x) = parse_value(d, v) { e.set(d.key, d.clamp(x)); }
+            if let Some(i) = e.choice_symbols(d.key).and_then(|syms| syms.iter().position(|s| s == v)) {
+                e.set(d.key, i as f64);
+            } else if let Some(x) = parse_value(d, v) { e.set(d.key, d.clamp(x)); }
         } else if let Some(t) = e.text_keys().into_iter().find(|t| t.eq_ignore_ascii_case(k)) {
             e.set_text(t, v);
         }
