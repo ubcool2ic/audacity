@@ -1,7 +1,7 @@
 #![cfg(feature = "gui")]
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use au_core::timeline::ZoomInfo;
 use au_core::{AudioBuffer, Track};
@@ -79,14 +79,44 @@ impl Default for ViewSettings {
 pub struct SpectralSelection {
     /// Index of the selected track.
     pub track: usize,
-    /// Start time in seconds.
-    pub t0: f64,
-    /// End time in seconds.
-    pub t1: f64,
-    /// Lower frequency in hertz.
-    pub f0: f64,
-    /// Upper frequency in hertz.
-    pub f1: f64,
+    /// Selected time and frequency region.
+    pub region: au_core::selected_region::SelectedRegion,
+}
+
+impl SpectralSelection {
+    /// Creates a spectral selection for `track` and `region`.
+    pub fn new(
+        track: usize,
+        region: au_core::selected_region::SelectedRegion,
+    ) -> Self {
+        Self { track, region }
+    }
+
+    /// Returns the start time in seconds.
+    pub fn t0(&self) -> f64 {
+        self.region.t0()
+    }
+
+    /// Returns the end time in seconds.
+    pub fn t1(&self) -> f64 {
+        self.region.t1()
+    }
+
+    /// Returns the lower frequency in hertz.
+    pub fn f0(&self) -> f64 {
+        self.region.f0()
+    }
+
+    /// Returns the upper frequency in hertz.
+    pub fn f1(&self) -> f64 {
+        self.region.f1()
+    }
+
+    /// Returns whether either frequency bound is defined.
+    pub fn has_frequencies(&self) -> bool {
+        let undefined = au_core::selected_region::SelectedRegion::UndefinedFrequency;
+        self.f0() != undefined || self.f1() != undefined
+    }
 }
 
 /// A replaceable function that computes decibel-valued spectrogram columns.
@@ -336,51 +366,44 @@ impl SpectrogramCache {
         }
     }
 
-    fn source_for(&mut self, index: usize, track: &Track) -> (Arc<AudioBuffer>, u64) {
-        let now = Instant::now();
-        let track_len = track.len();
-        let sample_rate = track.sample_rate();
-        let existing = self.sources.iter().position(|source| {
-            source.track_index == index
-                && source.track_len == track_len
-                && source.sample_rate == sample_rate
-        });
-        let needs_refresh = existing
-            .map(|position| now.duration_since(self.sources[position].checked_at) >= SOURCE_REFRESH)
-            .unwrap_or(true);
+fn source_for(&mut self, index: usize, track: &Track) -> (Arc<AudioBuffer>, u64) {
+    use std::hash::{Hash, Hasher};
 
-        if needs_refresh {
-            let buffer = Arc::new(track.render());
-            let fingerprint = buffer_fingerprint(&buffer);
-            let source = SourceBuffer {
-                track_index: index,
-                track_len,
-                sample_rate,
-                checked_at: now,
-                buffer,
-                fingerprint,
-            };
-            if let Some(position) = existing {
-                self.sources[position] = source;
-            } else {
-                self.sources.push(source);
-            }
-        }
-
-        let position = self
-            .sources
-            .iter()
-            .position(|source| {
-                source.track_index == index
-                    && source.track_len == track_len
-                    && source.sample_rate == sample_rate
-            })
-            .expect("source buffer was inserted or retained");
-        (
-            Arc::clone(&self.sources[position].buffer),
-            self.sources[position].fingerprint,
-        )
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (track.len(), track.sample_rate()).hash(&mut hasher);
+    for clip in &track.clips.clips {
+        (clip.start, crate::gui::waveform_cache::WaveKey::of(clip)).hash(&mut hasher);
     }
+    let content = hasher.finish();
+
+    if let Some(source) = self
+        .sources
+        .iter()
+        .find(|source| source.track_index == index && source.content == content)
+    {
+        return (Arc::clone(&source.buffer), content);
+    }
+
+    let source = SourceBuffer {
+        track_index: index,
+        content,
+        buffer: Arc::new(track.render()),
+    };
+
+    if let Some(position) = self
+        .sources
+        .iter()
+        .position(|source| source.track_index == index)
+    {
+        self.sources[position] = source;
+        let source = &self.sources[position];
+        (Arc::clone(&source.buffer), content)
+    } else {
+        self.sources.push(source);
+        let source = self.sources.last().expect("source buffer was inserted");
+        (Arc::clone(&source.buffer), content)
+    }
+}
 
     fn take_texture(&mut self, key: &CacheKey) -> Option<egui::TextureHandle> {
         let position = self.entries.iter().position(|entry| entry.key == *key)?;
@@ -398,7 +421,6 @@ impl Default for SpectrogramCache {
 }
 
 const MAX_CACHE_ENTRIES: usize = 16;
-const SOURCE_REFRESH: Duration = Duration::from_secs(1);
 
 struct CacheEntry {
     key: CacheKey,
@@ -412,11 +434,8 @@ struct Pending {
 
 struct SourceBuffer {
     track_index: usize,
-    track_len: usize,
-    sample_rate: u32,
-    checked_at: Instant,
+    content: u64,
     buffer: Arc<AudioBuffer>,
-    fingerprint: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -728,29 +747,22 @@ fn update_selection(
             let anchor = ui
                 .input(|input| input.pointer.press_origin())
                 .unwrap_or(current);
-            let start_time = time_at(anchor);
-            let end_time = time_at(current);
-            let start_frequency = frequency_at(anchor);
-            let end_frequency = frequency_at(current);
-            *selection = Some(SpectralSelection {
-                track: track_index,
-                t0: start_time.min(end_time),
-                t1: start_time.max(end_time),
-                f0: start_frequency.min(end_frequency),
-                f1: start_frequency.max(end_frequency),
-            });
+            let mut region = au_core::selected_region::SelectedRegion::new(
+                time_at(anchor),
+                time_at(current),
+            );
+            region.set_times(time_at(anchor), time_at(current));
+            region.set_frequencies(frequency_at(anchor), frequency_at(current));
+            *selection = Some(SpectralSelection::new(track_index, region));
         }
     } else if response.clicked_by(egui::PointerButton::Primary) {
         if let Some(position) = response.interact_pointer_pos() {
             let time = time_at(position);
             let frequency = frequency_at(position);
-            *selection = Some(SpectralSelection {
-                track: track_index,
-                t0: time,
-                t1: time,
-                f0: frequency,
-                f1: frequency,
-            });
+            let mut region =
+                au_core::selected_region::SelectedRegion::new(time, time);
+            region.set_frequencies(frequency, frequency);
+            *selection = Some(SpectralSelection::new(track_index, region));
         }
     }
 
@@ -766,12 +778,27 @@ fn paint_selection(
     settings: &ViewSettings,
     nyquist: f32,
 ) {
-    let x0 = track_rect.left() + zoom.time_to_x(selection.t0) as f32;
-    let x1 = track_rect.left() + zoom.time_to_x(selection.t1) as f32;
-    let u0 = freq_to_unit(selection.f0 as f32, settings, nyquist);
-    let u1 = freq_to_unit(selection.f1 as f32, settings, nyquist);
-    let y0 = image_area.bottom() - u0 * image_area.height();
-    let y1 = image_area.bottom() - u1 * image_area.height();
+    let x0 = track_rect.left() + zoom.time_to_x(selection.t0()) as f32;
+    let x1 = track_rect.left() + zoom.time_to_x(selection.t1()) as f32;
+
+    let (y0, y1) = if selection.has_frequencies() {
+        let undefined = au_core::selected_region::SelectedRegion::UndefinedFrequency;
+        let minimum = settings.min_freq.max(0.0).min(nyquist);
+        let maximum = settings.max_freq.max(minimum).min(nyquist);
+        let f0 = selection.f0();
+        let f1 = selection.f1();
+        let f0 = if f0 == undefined { minimum as f64 } else { f0 };
+        let f1 = if f1 == undefined { maximum as f64 } else { f1 };
+        let u0 = freq_to_unit(f0 as f32, settings, nyquist);
+        let u1 = freq_to_unit(f1 as f32, settings, nyquist);
+        (
+            image_area.bottom() - u0 * image_area.height(),
+            image_area.bottom() - u1 * image_area.height(),
+        )
+    } else {
+        (image_area.top(), image_area.bottom())
+    };
+
     let selection_rect = egui::Rect::from_min_max(
         egui::pos2(x0.min(x1), y0.min(y1)),
         egui::pos2(x0.max(x1), y0.max(y1)),

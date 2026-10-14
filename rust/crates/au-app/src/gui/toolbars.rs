@@ -649,7 +649,7 @@ impl AudacityApp {
             ToolbarId::Spectral => {
                 ui.horizontal(|ui| {
                     if let Some(selection) = &self.spectral_selection {
-                        ui.label(format!("{:.0}–{:.0} Hz", selection.f0, selection.f1));
+                        ui.label(format!("{:.0}–{:.0} Hz", selection.f0(), selection.f1()));
                     } else {
                         ui.label("No spectral selection");
                     }

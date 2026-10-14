@@ -80,7 +80,7 @@ mod accessibility;
 mod layout_tests;
 mod progress;
 mod toolbars;
-mod waveform_cache;
+pub(crate) mod waveform_cache;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
@@ -662,7 +662,7 @@ fn export_midi(&mut self) {
             let rate = self.editor.state().tracks.get(sel.track).map_or(44100, |t| t.sample_rate()).max(1) as f64;
             extras.selection = (sel.start as f64 / rate, sel.end as f64 / rate);
         }
-        extras.frequencies = self.spectral_selection.map_or((-1.0, -1.0), |sp| (sp.f0, sp.f1));
+        extras.frequencies = self.spectral_selection.map_or((-1.0, -1.0), |sp| (sp.f0(), sp.f1()));
         extras.track_formats.resize(self.editor.state().tracks.len(), au_project::blocks::SampleFormat::Float);
         extras.track_selected = (0..self.editor.state().tracks.len()).map(|i| self.selected_track == Some(i)).collect();
         au_project::aup3::Aup3Project { state: self.editor.state().clone(), extras }
@@ -1245,7 +1245,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     self.selection = Some(Selection { track: 0, start: (s0 * rate) as usize, end: (s1 * rate) as usize });
                 }
                 let (f0, f1) = self.aup3_extras.frequencies;
-                self.spectral_selection = (f0 >= 0.0 || f1 >= 0.0).then_some(crate::spectrogram_view::SpectralSelection { track: 0, t0: s0, t1: s1, f0, f1 });
+                self.spectral_selection = (f0 >= 0.0 || f1 >= 0.0).then_some({ let mut r = au_core::selected_region::SelectedRegion::new(s0, s1); r.set_frequencies(f0, f1); crate::spectrogram_view::SpectralSelection::new(0, r) });
                 if source == au_project::aup3::DocSource::Autosave {
                     // Unsaved until the user saves, like Audacity after recovery.
                     self.autosave_sig = (0, None);
@@ -4296,7 +4296,7 @@ if response.changed() && self.script_pipe_enabled {
                                 if let Some(selection) = self.spectral_selection {
                                     self.status = format!(
                                         "Spectral selection: {:.3}–{:.3} s, {:.0}–{:.0} Hz",
-                                        selection.t0, selection.t1, selection.f0, selection.f1
+                                        selection.t0(), selection.t1(), selection.f0(), selection.f1()
                                     );
                                 }
                             }
@@ -4318,7 +4318,7 @@ if response.changed() && self.script_pipe_enabled {
                                 if let Some(selection) = self.spectral_selection {
                                     self.status = format!(
                                         "Spectral selection: {:.3}–{:.3} s, {:.0}–{:.0} Hz",
-                                        selection.t0, selection.t1, selection.f0, selection.f1
+                                        selection.t0(), selection.t1(), selection.f0(), selection.f1()
                                     );
                                 }
                             }
@@ -4442,8 +4442,8 @@ impl<'a> AppScriptHost<'a> {
             }
         }
         if let Some(sp) = app.spectral_selection {
-            sel.f0 = sp.f0;
-            sel.f1 = sp.f1;
+            sel.f0 = sp.f0();
+            sel.f1 = sp.f1();
         }
         Self { app, work: None, sel }
     }
@@ -4459,13 +4459,9 @@ impl<'a> AppScriptHost<'a> {
             self.app.selected_track = Some(track);
             self.app.selection = Some(Selection { track, start: a.min(b), end: a.max(b) });
             if self.sel.f0 >= 0.0 || self.sel.f1 >= 0.0 {
-                self.app.spectral_selection = Some(crate::spectrogram_view::SpectralSelection {
-                    track,
-                    t0: self.sel.t0,
-                    t1: self.sel.t1,
-                    f0: self.sel.f0,
-                    f1: self.sel.f1,
-                });
+                let mut region = au_core::selected_region::SelectedRegion::new(self.sel.t0, self.sel.t1);
+                region.set_frequencies(self.sel.f0, self.sel.f1);
+                self.app.spectral_selection = Some(crate::spectrogram_view::SpectralSelection::new(track, region));
             }
         }
     }
