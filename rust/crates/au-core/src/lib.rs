@@ -296,6 +296,11 @@ impl UndoManager {
         self.cursor = self.entries.len() - 1;
     }
 
+    /// Changes the current state in place without a new undo step (Audacity's ModifyState).
+    pub fn modify_current(&mut self, f: impl FnOnce(&mut ProjectState)) {
+        f(&mut self.entries[self.cursor].1);
+    }
+
     /// Moves to and returns the preceding state.
     pub fn undo(&mut self) -> Result<&ProjectState> {
         if !self.can_undo() {

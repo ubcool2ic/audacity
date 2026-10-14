@@ -292,22 +292,166 @@ pub mod device {
     use super::IoError;
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use std::sync::{
-        atomic::Ordering,
+        atomic::{AtomicU64, Ordering},
         Arc,
     };
 
-    pub fn output_devices() -> Vec<String> {
+    /// Returns the names of audio hosts available through cpal.
+    pub fn hosts() -> Vec<String> {
+        cpal::available_hosts()
+            .into_iter()
+            .map(|host| host.name().to_owned())
+            .collect()
+    }
+
+    fn resolve_host(name: &str) -> cpal::Host {
+        if !name.is_empty() {
+            if let Some(id) = cpal::available_hosts()
+                .into_iter()
+                .find(|host| host.name() == name)
+            {
+                if let Ok(host) = cpal::host_from_id(id) {
+                    return host;
+                }
+            }
+        }
         cpal::default_host()
+    }
+
+    /// Returns output device names for a host, or the default host when `host` is empty or unavailable.
+    pub fn output_devices_on(host: &str) -> Vec<String> {
+        resolve_host(host)
             .output_devices()
             .map(|devices| devices.filter_map(|device| device.name().ok()).collect())
             .unwrap_or_default()
     }
 
-    pub fn input_devices() -> Vec<String> {
-        cpal::default_host()
+    /// Returns input device names for a host, or the default host when `host` is empty or unavailable.
+    pub fn input_devices_on(host: &str) -> Vec<String> {
+        resolve_host(host)
             .input_devices()
             .map(|devices| devices.filter_map(|device| device.name().ok()).collect())
             .unwrap_or_default()
+    }
+
+    /// Returns output devices on the default host.
+    pub fn output_devices() -> Vec<String> {
+        output_devices_on("")
+    }
+
+    /// Returns input devices on the default host.
+    pub fn input_devices() -> Vec<String> {
+        input_devices_on("")
+    }
+
+    /// Selects an audio host and device. Empty names select the system default;
+    /// missing saved host or device names fall back to the corresponding default.
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    pub struct DeviceChoice {
+        /// Host name, or empty to use the default host.
+        pub host: String,
+        /// Device name, or empty to use the default device.
+        pub device: String,
+    }
+
+    fn resolve_output_device(choice: &DeviceChoice) -> Result<cpal::Device, IoError> {
+        let host = resolve_host(&choice.host);
+        let selected = if choice.device.is_empty() {
+            None
+        } else {
+            host.output_devices()
+                .ok()
+                .and_then(|devices| {
+                    devices.into_iter().find(|device| {
+                        device
+                            .name()
+                            .map(|name| name == choice.device)
+                            .unwrap_or(false)
+                    })
+                })
+        };
+        selected
+            .or_else(|| host.default_output_device())
+            .ok_or_else(|| IoError::Device("no default output device".to_owned()))
+    }
+
+    fn resolve_input_device(choice: &DeviceChoice) -> Result<cpal::Device, IoError> {
+        let host = resolve_host(&choice.host);
+        let selected = if choice.device.is_empty() {
+            None
+        } else {
+            host.input_devices()
+                .ok()
+                .and_then(|devices| {
+                    devices.into_iter().find(|device| {
+                        device
+                            .name()
+                            .map(|name| name == choice.device)
+                            .unwrap_or(false)
+                    })
+                })
+        };
+        selected
+            .or_else(|| host.default_input_device())
+            .ok_or_else(|| IoError::Device("no default input device".to_owned()))
+    }
+
+    fn choose_config(
+        default: cpal::SupportedStreamConfig,
+        ranges: Vec<cpal::SupportedStreamConfigRange>,
+        requested_channels: Option<u16>,
+    ) -> cpal::SupportedStreamConfig {
+        let Some(requested_channels) = requested_channels else {
+            return default;
+        };
+        let sample_rate = default.sample_rate();
+        let supports_rate = |range: &cpal::SupportedStreamConfigRange| {
+            range.min_sample_rate() <= sample_rate && range.max_sample_rate() >= sample_rate
+        };
+        let max_channels = ranges
+            .iter()
+            .filter(|range| supports_rate(range))
+            .map(|range| range.channels())
+            .max()
+            .unwrap_or(default.channels());
+        let target_channels = requested_channels.min(max_channels);
+        ranges
+            .into_iter()
+            .find(|range| {
+                range.channels() == target_channels
+                    && supports_rate(range)
+                    && range.sample_format() == cpal::SampleFormat::F32
+            })
+            .map(|range| range.with_sample_rate(sample_rate))
+            .unwrap_or(default)
+    }
+
+    fn choose_input_config(
+        device: &cpal::Device,
+        requested_channels: Option<u16>,
+    ) -> Result<cpal::SupportedStreamConfig, IoError> {
+        let default = device
+            .default_input_config()
+            .map_err(|error| IoError::Device(error.to_string()))?;
+        let ranges = device
+            .supported_input_configs()
+            .map(|configs| configs.collect())
+            .unwrap_or_default();
+        Ok(choose_config(default, ranges, requested_channels))
+    }
+
+    fn choose_output_config(
+        device: &cpal::Device,
+        requested_channels: Option<u16>,
+    ) -> Result<cpal::SupportedStreamConfig, IoError> {
+        let default = device
+            .default_output_config()
+            .map_err(|error| IoError::Device(error.to_string()))?;
+        let ranges = device
+            .supported_output_configs()
+            .map(|configs| configs.collect())
+            .unwrap_or_default();
+        Ok(choose_config(default, ranges, requested_channels))
     }
 
     /// Lock-free playback through the Stage 3 [`crate::engine`].
@@ -351,10 +495,33 @@ pub mod device {
             speed: f64,
             loop_range: Option<(usize, usize)>,
         ) -> Result<Player, IoError> {
-            let host = cpal::default_host();
-            let device = host
-                .default_output_device()
-                .ok_or_else(|| IoError::Device("no default output device".to_owned()))?;
+            Self::start_with_effects_on(
+                &DeviceChoice::default(),
+                tracks,
+                track_fx,
+                master_fx,
+                project_rate,
+                master_gain,
+                start,
+                speed,
+                loop_range,
+            )
+        }
+
+        /// Starts playback on the selected host and output device.
+        #[allow(clippy::too_many_arguments)]
+        pub fn start_with_effects_on(
+            choice: &DeviceChoice,
+            tracks: Vec<crate::engine::MixTrack>,
+            track_fx: Vec<Option<au_effects::stack::EffectStack>>,
+            master_fx: Option<au_effects::stack::EffectStack>,
+            project_rate: u32,
+            master_gain: f32,
+            start: usize,
+            speed: f64,
+            loop_range: Option<(usize, usize)>,
+        ) -> Result<Player, IoError> {
+            let device = resolve_output_device(choice)?;
             let config = device
                 .default_output_config()
                 .map_err(|error| IoError::Device(error.to_string()))?;
@@ -431,6 +598,7 @@ pub mod device {
         _stream: cpal::Stream,
         rx: rtrb::Consumer<f32>,
         peak: Arc<std::sync::atomic::AtomicU32>,
+        dropped_samples: Arc<AtomicU64>,
         /// Interleaved channel count of the capture.
         pub channels: u16,
         /// Capture sample rate.
@@ -438,16 +606,25 @@ pub mod device {
     }
 
     impl Recorder {
-        /// Starts capture. `channels` is a request; the device's own count is used.
+        /// Starts capture on the default host and device. `channels` is the
+        /// device's default channel count.
         pub fn start(kind: InputKind) -> Result<Recorder, IoError> {
-            let host = cpal::default_host();
+            Self::start_on(kind, &DeviceChoice::default(), None)
+        }
+
+        /// Starts capture from the chosen host and device. `channels` requests
+        /// a channel count when supported; devices with fewer channels use
+        /// their highest available count.
+        pub fn start_on(
+            kind: InputKind,
+            choice: &DeviceChoice,
+            channels: Option<u16>,
+        ) -> Result<Recorder, IoError> {
             let (device, supported) = match kind {
                 InputKind::Default => {
-                    let d = host
-                        .default_input_device()
-                        .ok_or_else(|| IoError::Device("no default input device".to_owned()))?;
-                    let c = d.default_input_config().map_err(|e| IoError::Device(e.to_string()))?;
-                    (d, c)
+                    let device = resolve_input_device(choice)?;
+                    let config = choose_input_config(&device, channels)?;
+                    (device, config)
                 }
                 InputKind::Loopback => {
                     if !cfg!(target_os = "windows") {
@@ -455,11 +632,9 @@ pub mod device {
                             "system-audio loopback is only native on Windows (WASAPI); on Linux pick a \"Monitor of\" input, on macOS use a virtual device".to_owned(),
                         ));
                     }
-                    let d = host
-                        .default_output_device()
-                        .ok_or_else(|| IoError::Device("no default output device".to_owned()))?;
-                    let c = d.default_output_config().map_err(|e| IoError::Device(e.to_string()))?;
-                    (d, c)
+                    let device = resolve_output_device(choice)?;
+                    let config = choose_output_config(&device, channels)?;
+                    (device, config)
                 }
             };
             if supported.sample_format() != cpal::SampleFormat::F32 {
@@ -472,6 +647,8 @@ pub mod device {
             let (mut tx, rx) = rtrb::RingBuffer::<f32>::new(sample_rate as usize * channels as usize * 20);
             let peak = Arc::new(std::sync::atomic::AtomicU32::new(0));
             let peak_cb = peak.clone();
+            let dropped_samples = Arc::new(AtomicU64::new(0));
+            let dropped_samples_cb = dropped_samples.clone();
             let stream = device
                 .build_input_stream(
                     &config,
@@ -479,7 +656,9 @@ pub mod device {
                         let mut p = f32::from_bits(peak_cb.load(Ordering::Relaxed));
                         for &s in input {
                             p = p.max(s.abs());
-                            let _ = tx.push(s);
+                            if tx.push(s).is_err() {
+                                dropped_samples_cb.fetch_add(1, Ordering::Relaxed);
+                            }
                         }
                         peak_cb.store(p.to_bits(), Ordering::Relaxed);
                     },
@@ -488,7 +667,7 @@ pub mod device {
                 )
                 .map_err(|error| IoError::Device(error.to_string()))?;
             stream.play().map_err(|error| IoError::Device(error.to_string()))?;
-            Ok(Recorder { _stream: stream, rx, peak, channels, sample_rate })
+            Ok(Recorder { _stream: stream, rx, peak, dropped_samples, channels, sample_rate })
         }
 
         /// Drains captured interleaved samples into `out`.
@@ -501,6 +680,37 @@ pub mod device {
         /// Returns and resets the input peak since the last call.
         pub fn take_peak(&self) -> f32 {
             f32::from_bits(self.peak.swap(0, Ordering::Relaxed))
+        }
+
+        /// Returns the cumulative number of input samples dropped because the ring was full.
+        pub fn dropped_samples(&self) -> u64 {
+            self.dropped_samples.load(Ordering::Relaxed)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn hosts_and_device_listings_do_not_panic() {
+            for host in hosts() {
+                let _ = input_devices_on(&host);
+                let _ = output_devices_on(&host);
+            }
+            let _ = input_devices();
+            let _ = output_devices();
+        }
+
+        #[test]
+        fn device_choice_defaults_to_system_defaults() {
+            assert_eq!(
+                DeviceChoice::default(),
+                DeviceChoice {
+                    host: String::new(),
+                    device: String::new(),
+                }
+            );
         }
     }
 }

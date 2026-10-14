@@ -17,6 +17,8 @@ pub mod fx_bridge;
 pub mod plugin_bridge;
 pub mod transport;
 pub mod shortcuts;
+pub mod settings;
+pub mod effect_meta;
 #[cfg(feature = "gui")]
 mod prefs_dialog;
 #[cfg(feature = "gui")]

@@ -71,6 +71,13 @@ impl AudacityApp {
                 Some(egui::Key::ArrowDown) if index + 1 < track_count => {
                     self.focused_track = Some(index + 1);
                 }
+                // Tracks Behaviors > "Wrap around" (/GUI/CircularTrackNavigation).
+                Some(egui::Key::ArrowUp) if self.settings.circular_track_navigation && track_count > 0 => {
+                    self.focused_track = Some(track_count - 1);
+                }
+                Some(egui::Key::ArrowDown) if self.settings.circular_track_navigation && track_count > 0 => {
+                    self.focused_track = Some(0);
+                }
                 Some(egui::Key::Home) if track_count > 0 => {
                     self.focused_track = Some(0);
                 }

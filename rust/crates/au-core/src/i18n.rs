@@ -989,6 +989,60 @@ pub fn tr_ui(label: &str) -> String {
     catalog.get(label).map(strip_menu_accel).unwrap_or_else(|| label.to_string())
 }
 
+/// `wxString::Format(_("…%s…"), args…)`: translates `msgid`, then substitutes printf-style
+/// `%s`/`%d`/`%lld`/`%g`/`%f` in order (also positional `%1$s` as translators use), `%%` -> `%`.
+pub fn tr_format(msgid: &str, args: &[&dyn std::fmt::Display]) -> String {
+    format_printf(&tr(msgid), args)
+}
+
+/// printf-style substitution used by [`tr_format`].
+pub fn format_printf(template: &str, args: &[&dyn std::fmt::Display]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut chars = template.chars().peekable();
+    let mut next = 0usize;
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        if chars.peek() == Some(&'%') {
+            chars.next();
+            out.push('%');
+            continue;
+        }
+        // optional positional index "N$", flags/width/precision, length, conversion
+        let mut spec = String::new();
+        while let Some(&d) = chars.peek() {
+            if d.is_ascii_digit() || matches!(d, '$' | '.' | '-' | '+' | ' ' | '#' | 'l' | 'h' | 'z') {
+                spec.push(d);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        let Some(conv) = chars.next() else { out.push('%'); out.push_str(&spec); break };
+        let (index, rest) = match spec.split_once('$') {
+            Some((n, rest)) => (n.parse::<usize>().ok().map(|n| n.saturating_sub(1)), rest.to_string()),
+            None => (None, spec.clone()),
+        };
+        let i = index.unwrap_or_else(|| { let i = next; next += 1; i });
+        let Some(arg) = args.get(i) else {
+            out.push('%');
+            out.push_str(&spec);
+            out.push(conv);
+            continue;
+        };
+        let text = arg.to_string();
+        let precision = rest.split_once('.').and_then(|(_, p)| p.trim_end_matches(|c: char| c.is_alphabetic()).parse::<usize>().ok());
+        match (conv, precision, text.parse::<f64>()) {
+            ('f' | 'g', Some(p), Ok(v)) => out.push_str(&format!("{v:.p$}")),
+            ('f', None, Ok(v)) => out.push_str(&format!("{v:.6}")),
+            _ => out.push_str(&text),
+        }
+    }
+    out
+}
+
 /// Translates a contextual message, falling back to the message id.
 pub fn trc(context: &str, msgid: &str) -> String {
     let state = runtime()
@@ -1155,6 +1209,18 @@ fn load_catalog(path: &Path) -> Result<Catalog, String> {
             Catalog::parse_po(&text)
         }
         _ => Err("unsupported catalog file extension".into()),
+    }
+}
+
+#[cfg(test)]
+mod printf_tests {
+    use super::format_printf;
+    #[test]
+    fn printf_substitution() {
+        assert_eq!(format_printf("Select the audio for %s to use", &[&"Cut"]), "Select the audio for Cut to use");
+        assert_eq!(format_printf("%2$s then %1$s", &[&"a", &"b"]), "b then a");
+        assert_eq!(format_printf("%d%% done, %.2f s", &[&50, &1.23456]), "50% done, 1.23 s");
+        assert_eq!(format_printf("%lld samples", &[&12]), "12 samples");
     }
 }
 

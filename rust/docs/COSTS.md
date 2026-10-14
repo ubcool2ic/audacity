@@ -265,3 +265,17 @@ Luna 4 calls, $0.0267. Sol: none. **Batch total: $0.0267**
 Hand edits: `ProgressFn` type + `IoError::Cancelled`; removed 3 now-unused helpers; app glue (pool job Progress/CancelToken bridge, export_range_with_progress, export_multiple_with). Exports still 27/27 vs Audacity 3.7.3 (compare_exports.py).
 
 **Running total (ubcool2ic): $1.9845**
+
+## Last parity batch, part 1: preferences wired up (settings, devices, effects menu)
+
+| File | Model | USD |
+|---|---|---|
+| au-app/src/settings.rs (AppSettings, naming, directories, solo, seek/zoom) | openai/gpt-6-luna | 0.0106 |
+| au-io/src/lib.rs (device module: hosts, DeviceChoice, record channels, dropouts) | openai/gpt-6-luna | 0.0061 |
+| au-app/src/settings.rs (effects menu = MenuHelper PopulateEffectsMenu) | openai/gpt-6-luna | 0.0104 |
+
+Luna 3 calls, $0.0271. Sol: none. **Batch total: $0.0271**
+
+Hand edits: gui.rs glue for every page; effect_meta.rs generated from Audacity's pluginregistry.cfg; small fixes after comparing against Audacity 3.7.3 with tools/compare_prefs.py: the /GUI/TrackNames/DefaultTrackName key and its "Audio" default, XML group members sorted by name, our "RMS" mapped to "Measure RMS", effects Audacity doesn't ship marked non-default.
+
+**Running total (ubcool2ic): $2.0116**

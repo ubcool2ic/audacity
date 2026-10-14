@@ -3,6 +3,9 @@
 //! egui dialogs for built-in effects / generators / analyzers and the realtime
 //! effect stack panel.
 
+/// Realtime effects menu grouping, set from preferences.
+pub static REALTIME_GROUP_BY: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
 use au_effects::core::{BuiltinEffect, EffectKind, ParamType};
 use au_effects::registry;
 use au_effects::stack::{self, Preset};
@@ -215,10 +218,18 @@ pub fn realtime_panel(
     }
 
     ui.menu_button(au_core::i18n::tr_ui("Add effect…"), |ui| {
-        for e in registry::all().into_iter().filter(|e| e.supports_realtime()) {
-            if ui.button(e.name().as_ref()).clicked() {
+        // Preferences > Effects > Realtime effects grouping (/Effects/RealtimeGroupBy).
+        let entries: Vec<crate::settings::EffectEntry> = registry::all()
+            .into_iter()
+            .filter(|e| e.supports_realtime())
+            .map(|e| crate::settings::entry_for(&e.id(), &e.name()))
+            .collect();
+        let group_by = REALTIME_GROUP_BY.read().map(|g| g.clone()).unwrap_or_default();
+        let nodes = crate::settings::effect_menu(&entries, &group_by);
+        if let Some(id) = crate::gui::show_effect_nodes(ui, &nodes) {
+            {
                 let mut st = au_effects::stack::EffectStack::new();
-                st.push(&e.id());
+                st.push(&id);
                 list.effects
                     .extend(crate::fx_bridge::list_from_stack(&mut st).effects);
                 changed = true;

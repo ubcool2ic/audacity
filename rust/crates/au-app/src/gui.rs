@@ -184,6 +184,14 @@ struct AudacityApp {
     keys_filter: String,
     keys_xml_path: String,
     prefs_applied: bool,
+    /// Typed view of `prefs` (refreshed by apply_prefs).
+    settings: crate::settings::AppSettings,
+    /// /GUI/Theme value last applied (None until startup; the theme menu owns theme.cfg).
+    applied_theme_pref: Option<String>,
+    /// Recording dropped samples (Audacity DropoutDetector) -> warning dialog.
+    dropout_warning: bool,
+    dropout_dont_show: bool,
+    zoom_toggle_second: bool,
     /// Top-level menu titles as last rendered (test hook GetMenuTitles).
     menu_titles: Vec<String>,
     /// Pool for scripting test jobs.
@@ -320,6 +328,11 @@ impl Default for AudacityApp {
             keys_filter: String::new(),
             keys_xml_path: String::new(),
             prefs_applied: false,
+            settings: crate::settings::AppSettings::from_prefs(&au_core::prefs::Prefs::new()),
+            applied_theme_pref: None,
+            dropout_warning: false,
+            dropout_dont_show: false,
+            zoom_toggle_second: false,
             menu_titles: Vec::new(),
             zoom: ZoomInfo {
                 h_offset: 0.0,
@@ -463,7 +476,7 @@ impl AudacityApp {
     }
 
 fn import_file(&mut self) {
-    if let Some(path) = rfd::FileDialog::new()
+    if let Some(path) = self.file_dialog(crate::settings::DirOp::Import)
         .add_filter(
             "All supported",
             &[
@@ -478,7 +491,7 @@ fn import_file(&mut self) {
                 "m4a", "aac", "mp4", "mov", "mkv", "webm", "avi", "wmv", "wma", "ac3",
             ],
         )
-        .pick_file()
+        .pick_file().inspect(|p| self.remember_dir(crate::settings::DirOp::Import, p))
     {
         self.import_path_background(path);
     }
@@ -570,6 +583,7 @@ fn poll_io_jobs(&mut self) {
                 self.selected_track = Some(self.editor.state().tracks.len() - 1);
                 self.ensure_track_mix();
                 self.status = "Imported audio".to_owned();
+                self.beep_if_enabled();
             }
             (IoJob::Import(path, _), IoDone::Import(Ok(Err(e)))) => {
                 if e.starts_with("FfmpegMissing") {
@@ -585,7 +599,10 @@ fn poll_io_jobs(&mut self) {
             }
             (_, IoDone::Import(Err(e))) => self.status = format!("Import failed: {e:?}"),
             (IoJob::Export(..), IoDone::Import(Ok(_))) => unreachable!("import result for an export job"),
-            (_, IoDone::Export(Ok(msg))) => self.status = msg,
+            (_, IoDone::Export(Ok(msg))) => {
+                self.status = msg;
+                self.beep_if_enabled();
+            }
             (IoJob::Export(what, _), IoDone::Export(Err(au_runtime::JobError::Failed(e)))) => self.status = format!("{what} failed: {e}"),
             (_, IoDone::Export(Err(e))) => self.status = format!("Export failed: {e:?}"),
         }
@@ -610,10 +627,10 @@ fn export_ffmpeg(&mut self, format: au_io::ffmpeg::ExportFormat) {
         return;
     }
 
-    let Some(path) = rfd::FileDialog::new()
+    let Some(path) = self.file_dialog(crate::settings::DirOp::Export)
         .add_filter(format.label(), &[format.extension()])
         .set_file_name(format!("export.{}", format.extension()))
-        .save_file()
+        .save_file().inspect(|p| self.remember_dir(crate::settings::DirOp::Export, p))
     else {
         return;
     };
@@ -644,10 +661,10 @@ fn export_midi(&mut self) {
         .unwrap_or(0);
     let track = note_tracks[track_index].clone();
 
-    let Some(path) = rfd::FileDialog::new()
+    let Some(path) = self.file_dialog(crate::settings::DirOp::Export)
         .add_filter(au_core::i18n::tr_ui("MIDI"), &["mid"])
         .set_file_name("export.mid")
-        .save_file()
+        .save_file().inspect(|p| self.remember_dir(crate::settings::DirOp::Export, p))
     else {
         return;
     };
@@ -688,11 +705,11 @@ fn export_midi(&mut self) {
     }
 
     fn save_project_as(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
+        if let Some(path) = self.file_dialog(crate::settings::DirOp::Save)
             .add_filter(au_core::i18n::tr_ui("Audacity project"), &["aup3"])
             .add_filter(au_core::i18n::tr_ui("Audacity-RS project (legacy)"), &["aurs"])
             .set_file_name("Untitled.aup3")
-            .save_file()
+            .save_file().inspect(|p| self.remember_dir(crate::settings::DirOp::Save, p))
         {
             self.save_to(path);
         }
@@ -734,11 +751,11 @@ fn export_midi(&mut self) {
     }
 
     fn open_project(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
+        if let Some(path) = self.file_dialog(crate::settings::DirOp::Open)
             .add_filter(au_core::i18n::tr_ui("All projects"), &["aup3", "aurs"])
             .add_filter(au_core::i18n::tr_ui("Audacity project"), &["aup3"])
             .add_filter(au_core::i18n::tr_ui("Audacity-RS project (legacy)"), &["aurs"])
-            .pick_file()
+            .pick_file().inspect(|p| self.remember_dir(crate::settings::DirOp::Open, p))
         {
             self.open_path(path);
         }
@@ -767,6 +784,37 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             }
             let _ = self.prefs.save(prefs_path());
             self.apply_prefs();
+            return Some((String::new(), true));
+        }
+        "NewMonoTrack" | "NewStereoTrack" => {
+            // Tracks > Default audio track name + TrackList::MakeUniqueTrackName.
+            let existing: Vec<String> = self.editor.state().tracks.iter().map(|t| t.name.clone()).collect();
+            let name = crate::settings::unique_track_name(&self.settings.default_audio_track_name, &existing);
+            let channels = if command == "NewStereoTrack" { 2 } else { 1 };
+            let rate = self.project_rate();
+            self.editor.add_track(Track::new(name.clone(), au_core::AudioBuffer::from_channels(rate, vec![Vec::new(); channels])));
+            self.ensure_track_mix();
+            self.apply_default_view(self.editor.state().tracks.len() - 1);
+            return Some((String::new(), true));
+        }
+        "SeekLeftShort" | "SeekRightShort" | "SeekLeftLong" | "SeekRightLong" => {
+            // Playback > Seek Time when playing (short/long period).
+            let long = command.ends_with("Long");
+            let secs = crate::settings::seek_seconds(&self.settings, long) * if command.starts_with("SeekLeft") { -1.0 } else { 1.0 };
+            let rate = self.project_rate() as f64;
+            let pos = self.player.as_ref().map(|p| p.position()).unwrap_or(0) as f64;
+            let target = (pos + secs * rate).max(0.0) as usize;
+            if self.player.is_some() {
+                self.seek_transport(target);
+            }
+            return Some((String::new(), true));
+        }
+        "ZoomToggle" => {
+            // View > Zoom > Zoom Toggle between Tracks preferences Preset 1 and Preset 2.
+            let preset = if self.zoom_toggle_second { self.settings.zoom_preset1 } else { self.settings.zoom_preset2 };
+            self.zoom_toggle_second = !self.zoom_toggle_second;
+            let width = 1000.0;
+            self.zoom.pixels_per_sec = crate::settings::zoom_of_preset(preset, self.project_duration(), width, self.zoom.pixels_per_sec);
             return Some((String::new(), true));
         }
         "Import2" => {
@@ -1190,6 +1238,27 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 }
                 panic!("CrashTest requested over mod-script-pipe");
             }
+            "GetEffectMenu" => {
+                // Test hook: the effects menu layout as "depth<TAB>label" lines (Kind=Generate|Effect|Analyze).
+                let (_, params) = crate::script_bridge::parse_command(line);
+                let kind = match params.iter().find(|(k, _)| k == "Kind").map(|(_, v)| v.as_str()) {
+                    Some("Generate") => EffectKind::Generate,
+                    Some("Analyze") => EffectKind::Analyze,
+                    _ => EffectKind::Process,
+                };
+                fn flat(nodes: &[crate::settings::MenuNode], depth: usize, out: &mut Vec<String>) {
+                    for n in nodes {
+                        match n {
+                            crate::settings::MenuNode::Item { label, .. } => out.push(format!("{depth}\t{label}")),
+                            crate::settings::MenuNode::Submenu { label, items } => { out.push(format!("{depth}\t{label}")); flat(items, depth + 1, out); }
+                            crate::settings::MenuNode::Separator => out.push(format!("{depth}\t----")),
+                        }
+                    }
+                }
+                let mut out = Vec::new();
+                flat(&effects_menu_nodes(kind, &self.settings.group_by), 0, &mut out);
+                return Some((out.join("\n"), true));
+            }
             "GetMenuTitles" => {
                 return Some((self.menu_titles.join("\t"), true));
             }
@@ -1396,9 +1465,9 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         let Some(buffer) = crate::fx_bridge::render_track(self.editor.state(), &self.aup3_extras, index) else { return; };
         let filter = if flac { "FLAC audio" } else { "WAV audio" };
         let extension = if flac { "flac" } else { "wav" };
-        if let Some(path) = rfd::FileDialog::new()
+        if let Some(path) = self.file_dialog(crate::settings::DirOp::Export)
             .add_filter(filter, &[extension])
-            .save_file()
+            .save_file().inspect(|p| self.remember_dir(crate::settings::DirOp::Export, p))
         {
             let result = if flac {
                 au_io::export_flac(&path, &buffer, usize::from(self.export_bits.min(24)))
@@ -1540,7 +1609,8 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         };
         let tracks = crate::transport::mix_tracks(state);
         let (track_fx, master_fx) = crate::fx_bridge::stacks_for(&self.aup3_extras, tracks.len());
-        match Player::start_with_effects(
+        match au_io::device::Player::start_with_effects_on(
+            &self.device_choice(false),
             tracks,
             track_fx,
             master_fx,
@@ -1625,7 +1695,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     }
 
     fn start_noise_capture(&mut self) {
-        match Recorder::start(self.input_kind) {
+        match Recorder::start_on(self.input_kind, &self.device_choice(true), Some(self.settings.record_channels.max(1) as u16)) {
             Ok(rec) => {
                 let key = self.input_device_key();
                 self.room_noise.start_capture(&key, rec.sample_rate.max(1), rec.channels.max(1) as usize);
@@ -1660,7 +1730,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     }
 
     fn begin_recording(&mut self) {
-        let recorder = match Recorder::start(self.input_kind) {
+        let recorder = match Recorder::start_on(self.input_kind, &self.device_choice(true), Some(self.settings.record_channels.max(1) as u16)) {
             Ok(recorder) => recorder,
             Err(error) => {
                 self.status = format!("Recording failed: {error:?}");
@@ -1767,8 +1837,11 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             let start_secs = au_core::frames_to_secs(start, rate);
             let playback_start = au_core::secs_to_frames(start_secs, project_rate);
             let tracks = crate::transport::mix_tracks(self.editor.state());
-            match Player::start(
+            match au_io::device::Player::start_with_effects_on(
+                &self.device_choice(false),
                 tracks,
+                Vec::new(),
+                None,
                 project_rate,
                 self.master_gain,
                 playback_start,
@@ -1783,6 +1856,9 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     }
 
     fn stop_recording(&mut self) {
+        let dropped = self.recorder.as_ref().map_or(0, |r| r.dropped_samples());
+        let rec_channels = self.recorder.as_ref().map_or(1, |r| r.channels as usize);
+        let names_before: Vec<String> = self.editor.state().tracks.iter().map(|t| t.name.clone()).collect();
         self.recorder = None;
         self.record_buffer.clear();
         if let Some(controller) = self.record_controller.take() {
@@ -1795,6 +1871,19 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                         }
                     }
                     self.live_take_active = false;
+                    // Recording > Name newly recorded track (ProjectAudioManager naming).
+                    if track >= names_before.len() {
+                        let names = crate::settings::recording_track_names(
+                            &self.settings, &names_before, names_before.len(), rec_channels, local_now());
+                        if let Some(name) = names.into_iter().next() {
+                            self.editor.history.modify_current(|st| {
+                                if let Some(t) = st.tracks.get_mut(track) { t.name = name; }
+                            });
+                        }
+                    }
+                    if dropped > 0 && self.settings.dropout_detected {
+                        self.dropout_warning = true;
+                    }
                     self.selected_track = Some(track);
                     self.selection = None;
                     self.ensure_track_mix();
@@ -1932,18 +2021,22 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                         self.editor.state(),
                         sel.unwrap(),
                         dlg.effect.as_mut(),
-                        6.0,
+                        self.settings.effects_preview_len.max(0.1),
                     ) {
                         Ok(buf) => {
                             self.player = None;
+                            let play_choice = self.device_choice(false);
                             let rate = buf.sample_rate;
                             let mt = au_io::engine::MixTrack {
                                 audio: std::sync::Arc::new(buf),
                                 offset: 0,
                                 params: Default::default(),
                             };
-                            match Player::start(
+                            match au_io::device::Player::start_with_effects_on(
+                                &play_choice,
                                 vec![mt],
+                                Vec::new(),
+                                None,
                                 rate,
                                 self.master_gain,
                                 0,
@@ -2266,9 +2359,9 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     }
 
     fn import_labels(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
+        if let Some(path) = self.file_dialog(crate::settings::DirOp::Import)
             .add_filter(au_core::i18n::tr_ui("Audacity label track"), &["txt"])
-            .pick_file()
+            .pick_file().inspect(|p| self.remember_dir(crate::settings::DirOp::Import, p))
         {
             match std::fs::read_to_string(&path) {
                 Ok(text) => {
@@ -2298,9 +2391,9 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             .map(LabelTrack::to_audacity_txt)
             .collect::<Vec<_>>()
             .join("\n");
-        if let Some(path) = rfd::FileDialog::new()
+        if let Some(path) = self.file_dialog(crate::settings::DirOp::Export)
             .add_filter(au_core::i18n::tr_ui("Audacity label track"), &["txt"])
-            .save_file()
+            .save_file().inspect(|p| self.remember_dir(crate::settings::DirOp::Export, p))
         {
             self.status = match std::fs::write(path, contents) {
                 Ok(()) => "Labels exported".to_owned(),
@@ -2350,6 +2443,18 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             take(&["ZoomOut"]),
             take(&["FitInWindow"]),
         );
+        // Tracks Behaviors > "Select all audio, if selection required" (/GUI/SelectAllOnNone).
+        let (cut, copy, delete) = if self.selection.is_none() && !self.settings.select_all_on_none && (shortcuts.0 || shortcuts.1 || shortcuts.5) {
+            let action = if shortcuts.0 { "Cut" } else if shortcuts.1 { "Copy" } else { "Delete" };
+            self.status = au_core::i18n::tr_format(
+                "Select the audio for %s to use (for example, Ctrl + A to Select All) then try again.",
+                &[&au_core::i18n::tr_ui(action)],
+            );
+            (false, false, false)
+        } else {
+            (shortcuts.0, shortcuts.1, shortcuts.5)
+        };
+        let shortcuts = (cut, copy, shortcuts.2, shortcuts.3, shortcuts.4, delete, shortcuts.6, shortcuts.7, shortcuts.8, shortcuts.9, shortcuts.10, shortcuts.11, shortcuts.12);
         let preferences = take(&["Preferences"]);
         if preferences {
             self.prefs_dialog.open_with(&self.prefs);
@@ -2457,6 +2562,8 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             .filter(|_| self.selected_track == Some(index))
             .map(Player::position);
         let drag_preview = self.drag;
+        // Interface > Show Clipping / Show RMS in waveform (GUIPrefs).
+        let (show_clipping, show_rms) = (self.settings.show_clipping, self.settings.show_rms);
         let wave_ctx = ui.ctx().clone();
         // Track-panel colours from the active Audacity theme (clr* ids).
         let theme_colour = |name: &str| crate::theme::c32(self.theme.colour(name));
@@ -2639,6 +2746,22 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                                     ],
                                     egui::Stroke::new(1.0, clr_sample),
                                 );
+                                if show_rms {
+                                    if let Some(samples) = raw.and_then(|r| r.get(start..end)) {
+                                        let rms = (samples.iter().map(|v| v * v).sum::<f32>() / samples.len().max(1) as f32).sqrt();
+                                        painter.line_segment(
+                                            [egui::pos2(x as f32, center - rms.min(high.max(0.0)) * scale),
+                                             egui::pos2(x as f32, center + rms.min((-low).max(0.0)) * scale)],
+                                            egui::Stroke::new(1.0, clr_sample.gamma_multiply(0.55)),
+                                        );
+                                    }
+                                }
+                                if show_clipping && (high >= 1.0 || low <= -1.0) {
+                                    painter.line_segment(
+                                        [egui::pos2(x as f32, center - channel_height * 0.5), egui::pos2(x as f32, center + channel_height * 0.5)],
+                                        egui::Stroke::new(1.0, egui::Color32::RED),
+                                    );
+                                }
                             }
                         }
                     }
@@ -3697,6 +3820,7 @@ if self.ffmpeg_window {
             .show(ctx, |ui| {
                 ui.heading(au_core::i18n::tr_ui("Mixer"));
                 ui.separator();
+                let mut solo_click: Option<(usize, bool)> = None;
                 for (index, name) in track_info.iter().enumerate() {
                     let mut params = self.track_mix[index];
                     let mut commit = false;
@@ -3734,6 +3858,9 @@ if self.ffmpeg_window {
 
                         let mute_changed = ui.checkbox(&mut params.mute, au_core::i18n::tr_ui("Mute")).changed();
                         let solo_changed = ui.checkbox(&mut params.solo, au_core::i18n::tr_ui("Solo")).changed();
+                        if solo_changed {
+                            solo_click = Some((index, ui.input(|i| i.modifiers.shift)));
+                        }
                         if mute_changed || solo_changed {
                             commit = true;
                         }
@@ -3744,6 +3871,22 @@ if self.ffmpeg_window {
                     self.track_mix[index] = params;
                     if commit {
                         self.send_track_mix(index, params, true);
+                    }
+                }
+                // Tracks Behaviors > Solo Button (Simple / Multi-track / None).
+                if let Some((clicked, shift)) = solo_click {
+                    let mut solos: Vec<bool> = self.track_mix.iter().map(|p| p.solo).collect();
+                    // Undo the checkbox toggle and let the policy decide, like Audacity's OnSolo.
+                    solos[clicked] = !solos[clicked];
+                    let before = solos.clone();
+                    crate::settings::apply_solo_click(self.settings.solo, &mut solos, clicked, shift);
+                    for (i, solo) in solos.into_iter().enumerate() {
+                        if i == clicked || solo != before[i] {
+                            let mut p = self.track_mix[i];
+                            p.solo = solo;
+                            self.track_mix[i] = p;
+                            self.send_track_mix(i, p, true);
+                        }
                     }
                 }
                 ui.separator();
@@ -3938,6 +4081,8 @@ impl AudacityApp {
             crate::theme::apply(&self.theme, ctx);
             self.theme_applied = true;
         }
+        self.auto_scroll(ctx);
+        self.show_dropout_warning(ctx);
 
 if self.script_pipe_enabled && self.script_pipe.is_none() && !self.script_pipe_failed {
     match crate::script_bridge::ScriptPipe::start(ctx) {
@@ -4214,7 +4359,7 @@ if response.changed() && self.script_pipe_enabled {
                     ("Effect", EffectKind::Process),
                     ("Analyze", EffectKind::Analyze),
                 ] {
-                    ui.menu_button(menu, |ui| {
+                    ui.menu_button({ let t = au_core::i18n::tr_ui(menu); self.menu_titles.push(t.clone()); t }, |ui| {
                         if kind == EffectKind::Process
                             && ui.button(au_core::i18n::tr_ui("Realtime Effects…")).clicked()
                         {
@@ -4222,13 +4367,11 @@ if response.changed() && self.script_pipe_enabled {
                             self.rt_window = true;
                         }
                         egui::ScrollArea::vertical().max_height(500.0).show(ui, |ui| {
-                            let mut items: Vec<(String, String)> = au_effects::registry::all().iter()
-                                .filter(|e| e.kind() == kind).map(|e| (e.name().to_string(), e.id().into_owned())).collect();
-                            items.sort();
-                            for (name, id) in items {
-                                if ui.button(format!("{name}…")).clicked() {
-                                    ui.close_menu();
-                                    match id.as_str() {
+                            // Effects menu layout from Preferences > Effects ("Effects in menus" grouping), MenuHelper.cpp.
+                            let nodes = effects_menu_nodes(kind, &self.settings.group_by);
+                            if let Some(id) = show_effect_nodes(ui, &nodes) {
+                                ui.close_menu();
+                                match id.as_str() {
                                         "PlotSpectrum" => self.open_spectrum(),
                                         "Contrast" => self.contrast_win = Some(crate::analyze_ui::ContrastWindow::new()),
                                         "NoiseReduction" => {
@@ -4242,7 +4385,6 @@ if response.changed() && self.script_pipe_enabled {
                                         }
                                         _ => self.fx_dialog = crate::fx_ui::EffectDialog::open(&id),
                                     }
-                                }
                             }
 
                                 if kind == EffectKind::Process {
@@ -4750,7 +4892,7 @@ impl AudacityApp {
         if let Some(files) = apply {
             let mut runner = au_script::macros::MacroRunner::new(self.macros.lines());
             if files {
-                let picked = rfd::FileDialog::new().pick_files().unwrap_or_default();
+                let picked = self.file_dialog(crate::settings::DirOp::Import).pick_files().inspect(|ps| if let Some(p) = ps.first() { self.remember_dir(crate::settings::DirOp::Import, p) }).unwrap_or_default();
                 if picked.is_empty() {
                     return;
                 }
@@ -4860,6 +5002,129 @@ fn apply_export_dither(format: &mut au_io::export::ExportFormat, prefs: &au_core
 }
 
 impl AudacityApp {
+    /// A file dialog starting in the Directories-preference default for `op` (FileNames::FindDefaultPath).
+    fn file_dialog(&self, op: crate::settings::DirOp) -> rfd::FileDialog {
+        let dialog = rfd::FileDialog::new();
+        match crate::settings::find_default_path(&self.prefs, op) {
+            Some(dir) if dir.is_dir() => dialog.set_directory(dir),
+            _ => dialog,
+        }
+    }
+
+    /// FileNames::UpdateDefaultPath after a successful pick; saved immediately.
+    fn remember_dir(&mut self, op: crate::settings::DirOp, path: &std::path::Path) {
+        crate::settings::update_default_path(&mut self.prefs, op, path);
+        self.save_prefs();
+    }
+
+    /// Preferences > Devices: host + playback/recording device (empty = system default).
+    fn device_choice(&self, recording: bool) -> au_io::device::DeviceChoice {
+        au_io::device::DeviceChoice {
+            host: self.settings.host.clone(),
+            device: if recording { self.settings.recording_device.clone() } else { self.settings.playback_device.clone() },
+        }
+    }
+
+    /// Tracks > Default View Mode for a newly created track.
+    fn apply_default_view(&mut self, index: usize) {
+        use crate::spectrogram_view::TrackView;
+        let view = match self.settings.default_view_mode {
+            crate::settings::ViewMode::Waveform => TrackView::Waveform,
+            crate::settings::ViewMode::Spectrogram => TrackView::Spectrogram,
+            crate::settings::ViewMode::Multiview => TrackView::Multiview,
+        };
+        if self.track_views.len() <= index {
+            self.track_views.resize(index + 1, Default::default());
+        }
+        self.track_views[index] = view;
+    }
+
+    /// Interface > Beep on completion of longer activities.
+    fn beep_if_enabled(&self) {
+        if self.settings.beep_on_completion {
+            use std::io::Write;
+            let _ = std::io::stderr().write_all(b"\x07");
+        }
+    }
+
+    /// Tracks > Auto-scroll if head unpinned: page the view when the play head leaves it.
+    fn auto_scroll(&mut self, ctx: &egui::Context) {
+        if !self.settings.auto_scroll {
+            return;
+        }
+        let Some(pos) = self.player.as_ref().map(|p| p.position()) else { return };
+        let t = pos as f64 / self.project_rate().max(1) as f64;
+        let visible = ctx.screen_rect().width() as f64 / self.zoom.pixels_per_sec.max(0.1);
+        if t > self.zoom.h_offset + visible || t < self.zoom.h_offset {
+            self.zoom.h_offset = t;
+        }
+    }
+
+    /// Audacity's DropoutDetector warning (/Warnings/DropoutDetected).
+    fn show_dropout_warning(&mut self, ctx: &egui::Context) {
+        if !self.dropout_warning {
+            return;
+        }
+        let mut close = false;
+        egui::Window::new(au_core::i18n::tr_ui("Warning")).collapsible(false).show(ctx, |ui| {
+            ui.label(au_core::i18n::tr("Recorded audio was lost at the labeled locations. Possible causes:\n\nOther applications are competing with Audacity for processor time\n\nYou are saving directly to a slow external storage device\n"));
+            ui.checkbox(&mut self.dropout_dont_show, au_core::i18n::tr_ui("Don't show this warning again"));
+            if ui.button(au_core::i18n::tr_ui("OK")).clicked() {
+                close = true;
+            }
+        });
+        if close {
+            self.dropout_warning = false;
+            if self.dropout_dont_show {
+                self.prefs.set("/Warnings/DropoutDetected", au_core::prefs::PrefValue::Bool(false));
+                self.save_prefs();
+                self.settings.dropout_detected = false;
+            }
+        }
+    }
+
+    /// Pushes typed settings into the running app (called from apply_prefs).
+    fn apply_settings(&mut self) {
+        let s = self.settings.clone();
+        if let Ok(mut g) = crate::fx_ui::REALTIME_GROUP_BY.write() {
+            *g = s.realtime_group_by.clone();
+        }
+        // Recording: punch-and-roll crossfade, sound-activated recording level, latency correction
+        // (Audacity's negative correction shifts the take earlier = drop frames at the start).
+        self.record_crossfade_ms = s.roll_crossfade_ms;
+        self.sound_threshold_db = s.silence_level_db as f32;
+        if s.sound_activated_record {
+            self.record_trigger = RecordTriggerUi::SoundActivated;
+        } else if matches!(self.record_trigger, RecordTriggerUi::SoundActivated) {
+            self.record_trigger = RecordTriggerUi::Immediate;
+        }
+        self.record_latency_ms = -s.latency_correction_ms;
+        // Interface > Theme: only when the preference changes (theme.cfg remains the theme menu's store).
+        match &self.applied_theme_pref {
+            None => self.applied_theme_pref = Some(s.theme.clone()),
+            Some(old) if *old != s.theme => {
+                if let Some(id) = crate::theme::ThemeId::from_key(&s.theme) {
+                    if id != crate::theme::ThemeId::Custom {
+                        self.theme = crate::theme::Theme::builtin(id);
+                        self.theme_applied = false;
+                        let _ = crate::theme::save_choice(&self.theme);
+                    }
+                }
+                self.applied_theme_pref = Some(s.theme.clone());
+            }
+            Some(_) => {}
+        }
+    }
+
+    fn save_prefs(&mut self) {
+        if let Some(dir) = prefs_path().parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = self.prefs.save(prefs_path()) {
+            self.status = format!("Could not save preferences: {e}");
+        }
+    }
+
     /// Applies preferences to the running app: language, shortcuts, default project rate.
     fn apply_prefs(&mut self) {
         let lang = self.prefs.language();
@@ -4871,6 +5136,8 @@ impl AudacityApp {
             self.status = e;
         }
         self.keymap = crate::shortcuts::KeyMap::load_from_prefs(&self.prefs);
+        self.settings = crate::settings::AppSettings::from_prefs(&self.prefs);
+        self.apply_settings();
         // Quality > Default Sample Rate for a still-empty project (Audacity's ProjectRate default).
         let rate = self.prefs.quality_default_rate();
         let empty = au_core::ProjectState { sample_rate: self.editor.state().sample_rate, ..Default::default() };
@@ -5012,4 +5279,93 @@ fn io_job_error(error: au_io::IoError) -> au_runtime::JobError {
         au_io::IoError::Cancelled => au_runtime::JobError::Cancelled,
         error => au_runtime::JobError::Failed(error.to_string()),
     }
+}
+
+/// Renders an effects menu tree; returns the clicked effect id.
+pub(crate) fn show_effect_nodes(ui: &mut egui::Ui, nodes: &[crate::settings::MenuNode]) -> Option<String> {
+    let mut clicked = None;
+    for node in nodes {
+        match node {
+            crate::settings::MenuNode::Item { id, label } => {
+                if ui.button(format!("{}…", au_core::i18n::tr_ui(label))).clicked() {
+                    clicked = Some(id.clone());
+                }
+            }
+            crate::settings::MenuNode::Submenu { label, items } => {
+                ui.menu_button(au_core::i18n::tr_ui(label), |ui| {
+                    if let Some(id) = show_effect_nodes(ui, items) {
+                        clicked = Some(id);
+                    }
+                });
+            }
+            crate::settings::MenuNode::Separator => {
+                ui.separator();
+            }
+        }
+    }
+    clicked
+}
+
+/// Local (y, m, d, h, mi, s) for recording track names.
+fn local_now() -> (i32, u32, u32, u32, u32, u32) {
+    let out = std::process::Command::new("date").arg("+%Y %m %d %H %M %S").output().ok();
+    let v: Vec<u32> = out
+        .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().filter_map(|x| x.parse().ok()).collect())
+        .unwrap_or_default();
+    if v.len() == 6 {
+        (v[0] as i32, v[1], v[2], v[3], v[4], v[5])
+    } else {
+        (1970, 1, 1, 0, 0, 0)
+    }
+}
+
+/// Quality > Default Sample Format: new 16/24-bit tracks hold quantized samples, converted with
+/// the real-time Dither setting like Audacity's SampleFormat conversion on import.
+fn quantize_to_project_format(mut buffer: au_core::AudioBuffer, settings: &crate::settings::AppSettings) -> au_core::AudioBuffer {
+    use au_io::export::intfmt::{AudDither, DitherState};
+    let Some(bits) = crate::settings::quantize_needed(settings.default_format) else { return buffer };
+    let dither = match settings.dither.as_str() {
+        "Rectangle" => AudDither::Rectangle,
+        "Triangle" => AudDither::Triangle,
+        "Shaped" => AudDither::Shaped,
+        _ => AudDither::None,
+    };
+    let scale = if bits == 16 { 32_768.0f32 } else { 8_388_608.0f32 };
+    let mut state = DitherState::new();
+    for ch in &mut buffer.channels {
+        let mut ints = vec![0i32; ch.len()];
+        state.convert(ch, bits, dither, &mut ints);
+        for (s, i) in ch.iter_mut().zip(ints) {
+            *s = i as f32 / scale;
+        }
+    }
+    buffer
+}
+
+/// Generate / Effect / Analyze menu layout. Analyze starts with Audacity's non-effect commands
+/// (Contrast…, Plot Spectrum…) and a separator, then the grouped analyzers (MenuHelper).
+fn effects_menu_nodes(kind: EffectKind, group_by: &str) -> Vec<crate::settings::MenuNode> {
+    use crate::settings::MenuNode;
+    const COMMANDS: [&str; 2] = ["Contrast", "PlotSpectrum"];
+    let all = au_effects::registry::all();
+    let entries: Vec<crate::settings::EffectEntry> = all
+        .iter()
+        .filter(|e| e.kind() == kind && !COMMANDS.contains(&e.id().as_ref()))
+        .map(|e| {
+            let mut entry = crate::settings::entry_for(&e.id(), &e.name());
+            entry.effect_type = format!("{:?}", kind);
+            entry
+        })
+        .collect();
+    let mut nodes = Vec::new();
+    if kind == EffectKind::Analyze {
+        for id in COMMANDS {
+            if let Some(e) = all.iter().find(|e| e.id() == id) {
+                nodes.push(MenuNode::Item { id: id.to_owned(), label: e.name().to_string() });
+            }
+        }
+        nodes.push(MenuNode::Separator);
+    }
+    nodes.extend(crate::settings::effect_menu(&entries, group_by));
+    nodes
 }
