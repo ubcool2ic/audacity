@@ -20,12 +20,9 @@ impl AudacityApp {
         let channel_label = match channels {
             1 => "Mono".to_owned(),
             2 => "Stereo".to_owned(),
-            count => format!("{count} channels"),
+            count => au_core::i18n::tr_format("%d channels", &[&count]),
         };
-        let label = format!(
-            "{name} Audio Track, {channel_label}, {seconds:.2} seconds{}",
-            if selected { ", Select On" } else { "" }
-        );
+        let label = au_core::i18n::tr_format("%s Audio Track, %s, %.2f seconds%s", &[&name, &channel_label, &seconds, &(if selected { ", Select On" } else { "" })]);
 
         response.widget_info(|| {
             egui::WidgetInfo::selected(

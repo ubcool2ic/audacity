@@ -507,7 +507,7 @@ pub fn draw_spectrogram_track(
 ) -> bool {
     cache.poll_completed(ui.ctx());
 
-    ui.label(format!("{} · Spectrogram", track.name));
+    ui.label(au_core::i18n::tr_format("%s · Spectrogram", &[&track.name]));
     let available_width = ui.available_width().max(1.0);
     let (track_rect, _) = ui.allocate_exact_size(
         egui::vec2(available_width, height.max(1.0)),

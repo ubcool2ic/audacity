@@ -515,9 +515,9 @@ fn import_path(&mut self, path: PathBuf) {
                     let note_count = track.notes.len();
                     self.editor.add_note_track(track);
                     self.ensure_track_mix();
-                    self.status = format!("Imported MIDI: {note_count} notes");
+                    self.status = au_core::i18n::tr_format("Imported MIDI: %d notes", &[&note_count]);
                 }
-                Err(error) => self.status = format!("Import failed: {error:?}"),
+                Err(error) => self.status = au_core::i18n::tr_format("Import failed: %s", &[&format!("{error:?}")]),
             }
         } else {
             match au_io::import_file(&path) {
@@ -538,7 +538,7 @@ fn import_path(&mut self, path: PathBuf) {
                     self.ffmpeg_window = true;
                     self.ffmpeg_status = au_io::ffmpeg::status();
                 }
-                Err(error) => self.status = format!("Import failed: {error:?}"),
+                Err(error) => self.status = au_core::i18n::tr_format("Import failed: %s", &[&format!("{error:?}")]),
             }
         }
     }
@@ -561,7 +561,7 @@ fn import_path_background(&mut self, path: PathBuf) {
         }
     });
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_owned();
-    let ticket = self.progress.register("Import", format!("Importing {name}"), &handle, false);
+    let ticket = self.progress.register("Import", au_core::i18n::tr_format("Importing %s", &[&name]), &handle, false);
     self.io_jobs.push((ticket, IoJob::Import(path, handle)));
 }
 
@@ -591,20 +591,20 @@ fn poll_io_jobs(&mut self) {
                     self.ffmpeg_window = true;
                     self.ffmpeg_status = au_io::ffmpeg::status();
                 } else {
-                    self.status = format!("Import of {} failed: {e}", path.display());
+                    self.status = au_core::i18n::tr_format("Import of %s failed: %s", &[&path.display().to_string(), &e]);
                 }
             }
             (_, IoDone::Import(Err(au_runtime::JobError::Cancelled)) | IoDone::Export(Err(au_runtime::JobError::Cancelled))) => {
                 self.status = "Cancelled".to_owned();
             }
-            (_, IoDone::Import(Err(e))) => self.status = format!("Import failed: {e:?}"),
+            (_, IoDone::Import(Err(e))) => self.status = au_core::i18n::tr_format("Import failed: %s", &[&format!("{e:?}")]),
             (IoJob::Export(..), IoDone::Import(Ok(_))) => unreachable!("import result for an export job"),
             (_, IoDone::Export(Ok(msg))) => {
                 self.status = msg;
                 self.beep_if_enabled();
             }
-            (IoJob::Export(what, _), IoDone::Export(Err(au_runtime::JobError::Failed(e)))) => self.status = format!("{what} failed: {e}"),
-            (_, IoDone::Export(Err(e))) => self.status = format!("Export failed: {e:?}"),
+            (IoJob::Export(what, _), IoDone::Export(Err(au_runtime::JobError::Failed(e)))) => self.status = au_core::i18n::tr_format("%s failed: %s", &[&what, &e]),
+            (_, IoDone::Export(Err(e))) => self.status = au_core::i18n::tr_format("Export failed: %s", &[&format!("{e:?}")]),
         }
     }
 }
@@ -643,8 +643,8 @@ fn export_ffmpeg(&mut self, format: au_io::ffmpeg::ExportFormat) {
     );
 
     match ffmpeg.export(&path, &buffer, format, format.default_bit_rate()) {
-        Ok(()) => self.status = format!("Exported {}", format.label()),
-        Err(error) => self.status = format!("Export failed: {error:?}"),
+        Ok(()) => self.status = au_core::i18n::tr_format("Exported %s", &[&format.label()]),
+        Err(error) => self.status = au_core::i18n::tr_format("Export failed: %s", &[&format!("{error:?}")]),
     }
 }
 
@@ -671,7 +671,7 @@ fn export_midi(&mut self) {
 
     match au_io::midi::export_midi(&path, &track) {
         Ok(()) => self.status = "Exported MIDI".to_owned(),
-        Err(error) => self.status = format!("MIDI export failed: {error:?}"),
+        Err(error) => self.status = au_core::i18n::tr_format("MIDI export failed: %s", &[&format!("{error:?}")]),
     }
 }
 
@@ -724,13 +724,13 @@ fn export_midi(&mut self) {
         match result {
             Ok(()) => {
                 if let Err(e) = au_project::noise_profiles::save(&path, &self.room_noise.project_blobs()) {
-                    self.status = format!("Saved, but noise profiles not stored: {e}");
+                    self.status = au_core::i18n::tr_format("Saved, but noise profiles not stored: %s", &[&e]);
                 }
-                self.status = format!("Saved {}", path.display());
+                self.status = au_core::i18n::tr_format("Saved %s", &[&path.display().to_string()]);
                 self.project_path = Some(path);
                 self.autosave_sig = self.history_sig();
             }
-            Err(error) => self.status = format!("Save failed: {error}"),
+            Err(error) => self.status = au_core::i18n::tr_format("Save failed: %s", &[&error]),
         }
     }
 
@@ -746,7 +746,7 @@ fn export_midi(&mut self) {
         if let Some(d) = &sig.1 { au_runtime::crash::log_action(format!("edit: {d}")); }
         self.autosave_sig = sig;
         if let Err(e) = au_project::aup3::autosave(&path, &self.current_aup3()) {
-            self.status = format!("Autosave failed: {e}");
+            self.status = au_core::i18n::tr_format("Autosave failed: %s", &[&e]);
         }
     }
 
@@ -1176,9 +1176,9 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             let mut report = io_progress(ctx, &mut last);
             crate::export_glue::export_range_with_progress(&path, &state, &extras, t0, t1, None, &fmt, &tags, &mut report)
                 .map_err(io_job_error)?;
-            Ok(format!("Exported {}", path.display()))
+            Ok(au_core::i18n::tr_format("Exported %s", &[&path.display().to_string()]))
         });
-        let ticket = self.progress.register("Export Audio", format!("Exporting {shown}"), &handle, false);
+        let ticket = self.progress.register("Export Audio", au_core::i18n::tr_format("Exporting %s", &[&shown]), &handle, false);
         self.io_jobs.push((ticket, IoJob::Export("Export".into(), handle)));
     }
 
@@ -1339,7 +1339,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                         self.crash_reports.remove(0);
                         Some(("Crash report dismissed".to_string(), true))
                     }
-                    Err(error) => Some((format!("Failed to dismiss crash report: {error}"), false)),
+                    Err(error) => Some((au_core::i18n::tr_format("Failed to dismiss crash report: %s", &[&error]), false)),
                 }
             }
             _ => None,
@@ -1355,7 +1355,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    self.status = format!("Open failed: {e}");
+                    self.status = au_core::i18n::tr_format("Open failed: %s", &[&e]);
                     return;
                 }
             }
@@ -1377,7 +1377,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 self.aup3_extras = Default::default();
                 self.install_state(state, path);
             }
-            Err(error) => self.status = format!("Open failed: {error}"),
+            Err(error) => self.status = au_core::i18n::tr_format("Open failed: %s", &[&error]),
         }
     }
 
@@ -1400,7 +1400,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     self.status = "Recovered unsaved changes from autosave — save to keep them".to_owned();
                 }
             }
-            Err(e) => self.status = format!("Open failed: {e}"),
+            Err(e) => self.status = au_core::i18n::tr_format("Open failed: %s", &[&e]),
         }
     }
 
@@ -1434,11 +1434,8 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             .collapsible(false)
             .default_width(560.0)
             .show(ctx, |ui| {
-                ui.label(format!(
-                    "A crash report was saved locally (nothing was uploaded):\n{}",
-                    report.path.display()
-                ));
-                if let Some(m) = report.message() { ui.label(format!("Reason: {m}")); }
+                ui.label(au_core::i18n::tr_format("A crash report was saved locally (nothing was uploaded):\n%s", &[&report.path.display().to_string()]));
+                if let Some(m) = report.message() { ui.label(au_core::i18n::tr_format("Reason: %s", &[&m])); }
                 egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                     let mut text = report.text.as_str();
                     ui.add(egui::TextEdit::multiline(&mut text).code_editor().desired_width(f32::INFINITY));
@@ -1446,7 +1443,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 ui.horizontal(|ui| {
                     if ui.button(au_core::i18n::tr_ui("Copy report")).clicked() { action = Some(0); }
                     if ui.button(au_core::i18n::tr_ui("Dismiss")).clicked() { action = Some(1); }
-                    if self.crash_reports.len() > 1 { ui.label(format!("{} more", self.crash_reports.len() - 1)); }
+                    if self.crash_reports.len() > 1 { ui.label(au_core::i18n::tr_format("%d more", &[&(self.crash_reports.len() - 1)])); }
                 });
             });
         match action {
@@ -1487,7 +1484,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 self.recovery_prompt = None;
                 match au_project::aup3::discard_autosave(&path) {
                     Ok(()) => self.open_aup3(path, au_project::aup3::DocSource::Saved),
-                    Err(e) => self.status = format!("Discard failed: {e}"),
+                    Err(e) => self.status = au_core::i18n::tr_format("Discard failed: %s", &[&e]),
                 }
             }
             Some(_) => self.recovery_prompt = None,
@@ -1525,7 +1522,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             };
             self.status = match result {
                 Ok(()) => "Audio exported".to_owned(),
-                Err(error) => format!("Export failed: {error:?}"),
+                Err(error) => au_core::i18n::tr_format("Export failed: %s", &[&format!("{error:?}")]),
             };
         }
     }
@@ -1595,7 +1592,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     ctx.cancel.check()?;
                     let files = crate::export_glue::export_multiple_with(&state, &extras, &req, &fmt, &ctx.cancel, &ctx.progress)
                         .map_err(|e| if ctx.cancel.is_cancelled() { au_runtime::JobError::Cancelled } else { au_runtime::JobError::Failed(e) })?;
-                    Ok(format!("Exported {} files", files.len()))
+                    Ok(au_core::i18n::tr_format("Exported %d files", &[&files.len()]))
                 });
                 let ticket = self.progress.register("Export Multiple", "Exporting files", &handle, false);
                 self.io_jobs.push((ticket, IoJob::Export("Export Multiple".into(), handle)));
@@ -1649,7 +1646,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 self.player = Some(player);
                 self.status = "Playing".to_owned();
             }
-            Err(error) => self.status = format!("Playback failed: {error:?}"),
+            Err(error) => self.status = au_core::i18n::tr_format("Playback failed: %s", &[&format!("{error:?}")]),
         }
     }
 
@@ -1727,7 +1724,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 self.noise_capture = Some(rec);
                 self.status = "Capturing room noise (10 s) - stay quiet".to_owned();
             }
-            Err(e) => self.status = format!("Noise capture failed: {e:?}"),
+            Err(e) => self.status = au_core::i18n::tr_format("Noise capture failed: %s", &[&format!("{e:?}")]),
         }
     }
 
@@ -1741,11 +1738,11 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             }
             crate::room_noise::RoomNoiseEvent::CaptureFinished(dev) => {
                 self.noise_capture = None;
-                self.status = format!("Room noise profile captured for {dev}");
+                self.status = au_core::i18n::tr_format("Room noise profile captured for %s", &[&dev]);
             }
             crate::room_noise::RoomNoiseEvent::CaptureFailed(e) => {
                 self.noise_capture = None;
-                self.status = format!("Noise capture failed: {e}");
+                self.status = au_core::i18n::tr_format("Noise capture failed: %s", &[&e]);
             }
         }
     }
@@ -1758,7 +1755,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         let recorder = match Recorder::start_on(self.input_kind, &self.device_choice(true), Some(self.settings.record_channels.max(1) as u16)) {
             Ok(recorder) => recorder,
             Err(error) => {
-                self.status = format!("Recording failed: {error:?}");
+                self.status = au_core::i18n::tr_format("Recording failed: %s", &[&format!("{error:?}")]);
                 return;
             }
         };
@@ -1874,7 +1871,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 None,
             ) {
                 Ok(player) => self.player = Some(player),
-                Err(error) => self.status = format!("Playback failed: {error:?}"),
+                Err(error) => self.status = au_core::i18n::tr_format("Playback failed: %s", &[&format!("{error:?}")]),
             }
         }
         self.status = "Recording".to_owned();
@@ -1891,7 +1888,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 Ok(track) => {
                     if self.live_take_active {
                         if let Some(buf) = self.room_noise.end_live_take() {
-                            let name = format!("{} (noise suppressed)", self.editor.state().tracks[track].name);
+                            let name = au_core::i18n::tr_format("%s (noise suppressed)", &[&self.editor.state().tracks[track].name]);
                             self.editor.add_track(Track::new(&name, buf));
                         }
                     }
@@ -1914,7 +1911,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     self.ensure_track_mix();
                     self.status = "Recording committed".to_owned();
                 }
-                Err(error) => self.status = format!("Recording commit failed: {error}"),
+                Err(error) => self.status = au_core::i18n::tr_format("Recording commit failed: %s", &[&error]),
             }
         }
         if let Some(mut player) = self.player.take() {
@@ -1960,7 +1957,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         let sel = self.selection_for_track(track).normalized();
         match self.editor.state().tracks[sel.track].clips.render_range(sel.start, sel.end) {
             Ok(buf) => self.spectrum_win = Some(crate::analyze_ui::SpectrumWindow::new(buf)),
-            Err(e) => self.status = format!("Plot Spectrum: {e}"),
+            Err(e) => self.status = au_core::i18n::tr_format("Plot Spectrum: %s", &[&e]),
         }
     }
 
@@ -1996,7 +1993,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             }
         }
         if self.plugins.poll() {
-            self.status = format!("{} plugins found", self.plugins.plugins.len());
+            self.status = au_core::i18n::tr_format("%d plugins found", &[&self.plugins.plugins.len()]);
         }
 
         self.analyzer_windows(ctx);
@@ -2073,7 +2070,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                                     self.status = "Previewing".into();
                                 }
                                 Err(e) => {
-                                    dlg.report = format!("Preview playback failed: {e:?}")
+                                    dlg.report = au_core::i18n::tr_format("Preview playback failed: %s", &[&format!("{e:?}")])
                                 }
                             }
                         }
@@ -2091,9 +2088,9 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                             dlg.report = out.report;
                             if !out.labels.is_empty() {
                                 dlg.report
-                                    .push_str(&format!("\n{} labels added", out.labels.len()));
+                                    .push_str(&au_core::i18n::tr_format("\n%d labels added", &[&out.labels.len()]));
                             }
-                            self.status = format!("Applied {}", dlg.effect.name());
+                            self.status = au_core::i18n::tr_format("Applied %s", &[&dlg.effect.name()]);
                             if dlg.effect.kind() != EffectKind::Analyze {
                                 keep = false;
                             }
@@ -2159,7 +2156,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                             Err(e) => self.status = e.to_string(),
                         }
                     } else {
-                        self.status = format!("Plugin not found: {id}");
+                        self.status = au_core::i18n::tr_format("Plugin not found: %s", &[&id]);
                     }
                 }
 
@@ -2178,16 +2175,14 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                                     }
                                 }
                                 au_plugin_host::editor::EditorEvent::Error(error) => {
-                                    self.status = format!("Plugin editor: {error}");
+                                    self.status = au_core::i18n::tr_format("Plugin editor: %s", &[&error]);
                                 }
                                 au_plugin_host::editor::EditorEvent::Closed => {
                                     drop_editor = true;
                                 }
                                 au_plugin_host::editor::EditorEvent::Crashed { status } => {
                                     drop_editor = true;
-                                    self.status = format!(
-                                        "Plugin editor crashed ({status}); Audacity-RS is unaffected"
-                                    );
+                                    self.status = au_core::i18n::tr_format("Plugin editor crashed (%s); Audacity-RS is unaffected", &[&status]);
                                 }
                             }
                         }
@@ -2400,7 +2395,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                         Err(error) => self.status = error.to_string(),
                     }
                 }
-                Err(error) => self.status = format!("Label import failed: {error}"),
+                Err(error) => self.status = au_core::i18n::tr_format("Label import failed: %s", &[&error]),
             }
         }
     }
@@ -2422,7 +2417,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         {
             self.status = match std::fs::write(path, contents) {
                 Ok(()) => "Labels exported".to_owned(),
-                Err(error) => format!("Label export failed: {error}"),
+                Err(error) => au_core::i18n::tr_format("Label export failed: %s", &[&error]),
             };
         }
     }
@@ -3119,7 +3114,7 @@ fn draw_note_tracks(&mut self, ui: &mut egui::Ui) {
         painter.text(
             rect.left_top() + egui::vec2(7.0, 3.0),
             egui::Align2::LEFT_TOP,
-            format!("{name} ({} notes)", notes.len()),
+            au_core::i18n::tr_format("%s (%d notes)", &[&name, &notes.len()]),
             egui::FontId::proportional(11.0),
             egui::Color32::LIGHT_GRAY,
         );
@@ -3201,7 +3196,7 @@ fn draw_note_tracks(&mut self, ui: &mut egui::Ui) {
             .set_note_track_mix(track_index, mute, solo, velocity)
         {
             Ok(()) => self.ensure_track_mix(),
-            Err(error) => self.status = format!("Could not update note track: {error:?}"),
+            Err(error) => self.status = au_core::i18n::tr_format("Could not update note track: %s", &[&format!("{error:?}")]),
         }
     }
 
@@ -3212,7 +3207,7 @@ fn draw_note_tracks(&mut self, ui: &mut egui::Ui) {
                 self.ensure_track_mix();
                 self.status = "Removed note track".to_owned();
             }
-            Err(error) => self.status = format!("Could not remove note track: {error:?}"),
+            Err(error) => self.status = au_core::i18n::tr_format("Could not remove note track: %s", &[&format!("{error:?}")]),
         }
     }
 }
@@ -3563,13 +3558,11 @@ if self.ffmpeg_window {
         .open(&mut self.ffmpeg_window)
         .show(ctx, |ui| match &self.ffmpeg_status {
             au_io::ffmpeg::FfmpegStatus::Available { version } => {
-                ui.label(format!(
-                    "FFmpeg {version} loaded — M4A/AAC, WMA, AC3 and audio from video files can be imported and exported."
-                ));
+                ui.label(au_core::i18n::tr_format("FFmpeg %s loaded — M4A/AAC, WMA, AC3 and audio from video files can be imported and exported.", &[&version]));
             }
             au_io::ffmpeg::FfmpegStatus::Missing { message } => {
                 ui.label(egui::RichText::new(message).monospace());
-                ui.label(format!("Required: {}", au_io::ffmpeg::SUPPORTED));
+                ui.label(au_core::i18n::tr_format("Required: %s", &[&au_io::ffmpeg::SUPPORTED]));
                 if ui.button(au_core::i18n::tr_ui("Retry detection")).clicked() {
                     retry_requested = true;
                 }
@@ -3854,14 +3847,7 @@ if self.ffmpeg_window {
                         let gain_now = params.gain;
                         let response = ui.add(
                             egui::Slider::new(&mut params.gain, 0.0..=2.0)
-                                .text(format!(
-                                    "Gain ({:.1} dB)",
-                                    if gain_now > 0.0 {
-                                        20.0 * gain_now.log10()
-                                    } else {
-                                        f32::NEG_INFINITY
-                                    }
-                                )),
+                                .text(au_core::i18n::tr_format("Gain (%.1f dB)", &[&(if gain_now > 0.0 { 20.0 * gain_now.log10() } else { f32::NEG_INFINITY })])),
                         );
                         if response.changed() {
                             self.send_track_mix(index, params, false);
@@ -3966,19 +3952,7 @@ if self.ffmpeg_window {
         painter.text(
             rect.left_top() + egui::vec2(4.0, 1.0),
             egui::Align2::LEFT_TOP,
-            format!(
-                "{label}  P {:.1} dB  R {:.1} dB",
-                if peak > 0.0 {
-                    20.0 * peak.log10()
-                } else {
-                    -60.0
-                },
-                if rms > 0.0 {
-                    20.0 * rms.log10()
-                } else {
-                    -60.0
-                }
-            ),
+            au_core::i18n::tr_format("%s  P %.1f dB  R %.1f dB", &[&label, &(if peak > 0.0 { 20.0 * peak.log10() } else { -60.0 }), &(if rms > 0.0 { 20.0 * rms.log10() } else { -60.0 })]),
             egui::FontId::proportional(10.0),
             egui::Color32::WHITE,
         );
@@ -4066,7 +4040,7 @@ if self.ffmpeg_window {
                 }
             }
             ui.separator();
-            ui.label(format!("Snap: {}", snap_mode_name(self.snapper.mode.clone())));
+            ui.label(au_core::i18n::tr_format("Snap: %s", &[&snap_mode_name(self.snapper.mode.clone())]));
         });
         if let Some((start, end)) = update {
             if let Some(track) = self.selected_track {
@@ -4203,7 +4177,7 @@ for format in au_io::ffmpeg::ExportFormat::all() {
     let response = ui
         .add_enabled(
             enabled,
-            egui::Button::new(format!("Export {} (FFmpeg)…", format.label())),
+            egui::Button::new(au_core::i18n::tr_format("Export %s (FFmpeg)…", &[&format.label()])),
         )
         .on_disabled_hover_text("FFmpeg is not installed — see FFmpeg status");
     if response.clicked() {
@@ -4544,10 +4518,7 @@ if response.changed() && self.script_pipe_enabled {
                             );
                             if changed {
                                 if let Some(selection) = self.spectral_selection {
-                                    self.status = format!(
-                                        "Spectral selection: {:.3}–{:.3} s, {:.0}–{:.0} Hz",
-                                        selection.t0(), selection.t1(), selection.f0(), selection.f1()
-                                    );
+                                    self.status = au_core::i18n::tr_format("Spectral selection: %.3f–%.3f s, %.0f–%.0f Hz", &[&selection.t0(), &selection.t1(), &selection.f0(), &selection.f1()]);
                                 }
                             }
                         }
@@ -4566,10 +4537,7 @@ if response.changed() && self.script_pipe_enabled {
                             );
                             if changed {
                                 if let Some(selection) = self.spectral_selection {
-                                    self.status = format!(
-                                        "Spectral selection: {:.3}–{:.3} s, {:.0}–{:.0} Hz",
-                                        selection.t0(), selection.t1(), selection.f0(), selection.f1()
-                                    );
+                                    self.status = au_core::i18n::tr_format("Spectral selection: %.3f–%.3f s, %.0f–%.0f Hz", &[&selection.t0(), &selection.t1(), &selection.f0(), &selection.f1()]);
                                 }
                             }
                         }
@@ -4593,7 +4561,7 @@ if response.changed() && self.script_pipe_enabled {
                 ui.label(&self.status);
                 ui.separator();
                 if let Some((track, label)) = self.selected_label {
-                    ui.label(format!("Label {}:{}", track + 1, label + 1));
+                    ui.label(au_core::i18n::tr_format("Label %d:%d", &[&(track + 1), &(label + 1)]));
                 }
                 if self.player.is_some() {
                     ui.label(au_core::i18n::tr_ui("Playhead active"));
@@ -4925,7 +4893,7 @@ impl AudacityApp {
                     }
                 });
                 ui.vertical(|ui| {
-                    ui.label(format!("Macro: {}", d.current));
+                    ui.label(au_core::i18n::tr_format("Macro: %s", &[&d.current]));
                     ui.add(egui::TextEdit::multiline(&mut d.text).code_editor().desired_rows(10));
                     ui.horizontal(|ui| {
                         if ui.button(au_core::i18n::tr_ui("Save")).clicked() {
@@ -4934,7 +4902,7 @@ impl AudacityApp {
                                 mc.set_commands(lines);
                                 d.report = match mc.write_macro(&d.current) {
                                     Ok(_) => "Saved".into(),
-                                    Err(e) => format!("Save failed: {e}"),
+                                    Err(e) => au_core::i18n::tr_format("Save failed: %s", &[&e]),
                                 };
                             }
                         }
@@ -4962,7 +4930,7 @@ impl AudacityApp {
                 let r = runner.apply_to_files(&mut host, &picked, &out_dir, "wav", 2);
                 host.finish();
                 self.macros.report = match r {
-                    Ok(paths) => format!("Exported {} file(s) to {}", paths.len(), out_dir.join("macro-output").display()),
+                    Ok(paths) => au_core::i18n::tr_format("Exported %d file(s) to %s", &[&paths.len(), &out_dir.join("macro-output").display().to_string()]),
                     Err(e) => e,
                 };
             } else {
@@ -4970,7 +4938,7 @@ impl AudacityApp {
                 let r = runner.apply(&mut host);
                 host.finish();
                 self.macros.report = match r {
-                    Ok(()) => format!("Applied macro {}", self.macros.current),
+                    Ok(()) => au_core::i18n::tr_format("Applied macro %s", &[&self.macros.current]),
                     Err(e) => e,
                 };
             }
@@ -5182,7 +5150,7 @@ impl AudacityApp {
             let _ = std::fs::create_dir_all(dir);
         }
         if let Err(e) = self.prefs.save(prefs_path()) {
-            self.status = format!("Could not save preferences: {e}");
+            self.status = au_core::i18n::tr_format("Could not save preferences: %s", &[&e]);
         }
     }
 
@@ -5227,12 +5195,12 @@ impl AudacityApp {
                 self.keymap.save_to_prefs(&mut new_prefs);
                 let changed = crate::prefs_dialog::changed_keys(&self.prefs, &new_prefs).len();
                 self.prefs = new_prefs;
-                self.status = format!("{changed} preference(s) changed");
+                self.status = au_core::i18n::tr_format("%d preference(s) changed", &[&changed]);
                 if let Some(dir) = prefs_path().parent() {
                     let _ = std::fs::create_dir_all(dir);
                 }
                 if let Err(e) = self.prefs.save(prefs_path()) {
-                    self.status = format!("Could not save preferences: {e}");
+                    self.status = au_core::i18n::tr_format("Could not save preferences: %s", &[&e]);
                 }
                 self.apply_prefs();
             }
@@ -5275,11 +5243,11 @@ fn keyboard_page(
                     } else if let Some(combo) = crate::shortcuts::KeyCombo::parse(&text) {
                         let clash = keymap.conflicts(&combo, &id);
                         if !clash.is_empty() {
-                            *status = format!("{} is already used by {}", combo.to_audacity_string(), clash.join(", "));
+                            *status = au_core::i18n::tr_format("%s is already used by %s", &[&combo.to_audacity_string(), &clash.join(", ")]);
                         }
                         keymap.set(&id, Some(combo));
                     } else {
-                        *status = format!("Not a valid key: {text}");
+                        *status = au_core::i18n::tr_format("Not a valid key: %s", &[&text]);
                     }
                 }
                 ui.end_row();
@@ -5306,16 +5274,16 @@ fn keyboard_page(
         ui.text_edit_singleline(xml_path);
         if ui.button(tr_ui("Import...")).clicked() {
             match std::fs::read_to_string(&*xml_path).map_err(|e| e.to_string()).and_then(|t| keymap.import_xml(&t)) {
-                Ok(n) => *status = format!("Loaded {n} keyboard shortcuts"),
-                Err(e) => *status = format!("Import failed: {e}"),
+                Ok(n) => *status = au_core::i18n::tr_format("Loaded %d keyboard shortcuts", &[&n]),
+                Err(e) => *status = au_core::i18n::tr_format("Import failed: %s", &[&e]),
             }
         }
         if ui.button(tr_ui("Export...")).clicked() {
             let ids: Vec<String> = keymap.iter().map(|(id, _)| id.to_owned()).collect();
             let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
             *status = match std::fs::write(&*xml_path, keymap.to_xml(&ids)) {
-                Ok(()) => format!("Exported shortcuts to {xml_path}"),
-                Err(e) => format!("Export failed: {e}"),
+                Ok(()) => au_core::i18n::tr_format("Exported shortcuts to %s", &[&xml_path]),
+                Err(e) => au_core::i18n::tr_format("Export failed: %s", &[&e]),
             };
         }
     });

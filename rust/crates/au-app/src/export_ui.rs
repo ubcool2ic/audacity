@@ -252,7 +252,7 @@ impl MetadataEditor {
                     .collect();
                 self.message.clear();
             }
-            Err(error) => self.message = format!("Unable to load template: {error}"),
+            Err(error) => self.message = au_core::i18n::tr_format("Unable to load template: %s", &[&error]),
         }
     }
 
@@ -267,7 +267,7 @@ impl MetadataEditor {
 
         match std::fs::write(&self.template_path, contents) {
             Ok(()) => self.message = "Template saved.".to_owned(),
-            Err(error) => self.message = format!("Unable to save template: {error}"),
+            Err(error) => self.message = au_core::i18n::tr_format("Unable to save template: %s", &[&error]),
         }
     }
 

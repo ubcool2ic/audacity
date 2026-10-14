@@ -252,9 +252,7 @@ impl SpectrumWindow {
             painter.text(
                 graph.center(),
                 Align2::CENTER_CENTER,
-                format!(
-                    "Not enough data selected.\nTo plot the spectrum, select at least {requested} samples."
-                ),
+                au_core::i18n::tr_format("Not enough data selected.\nTo plot the spectrum, select at least %d samples.", &[&requested]),
                 egui::FontId::proportional(14.0),
                 Color32::DARK_GRAY,
             );
@@ -304,20 +302,9 @@ impl SpectrumWindow {
                         Stroke::new(1.0, Color32::RED),
                     );
                     if spectrum {
-                        self.cursor_text = format!(
-                            "Cursor: {} Hz ({}) = {} dB   Peak: {} Hz ({}) = {:.1} dB",
-                            (cursor_x + 0.5) as i32,
-                            pitch_name(cursor_x),
-                            (value + 0.5) as i32,
-                            (peak_x + 0.5) as i32,
-                            pitch_name(peak_x),
-                            peak_value
-                        );
+                        self.cursor_text = au_core::i18n::tr_format("Cursor: %d Hz (%s) = %d dB   Peak: %d Hz (%s) = %.1f dB", &[&((cursor_x + 0.5) as i32), &pitch_name(cursor_x), &((value + 0.5) as i32), &((peak_x + 0.5) as i32), &pitch_name(peak_x), &peak_value]);
                     } else {
-                        self.cursor_text = format!(
-                            "Cursor: {:.4} sec = {:.3}   Peak: {:.4} sec = {:.3}",
-                            cursor_x, value, peak_x, peak_value
-                        );
+                        self.cursor_text = au_core::i18n::tr_format("Cursor: %.4f sec = %.3f   Peak: %.4f sec = %.3f", &[&cursor_x, &value, &peak_x, &peak_value]);
                     }
                 }
             }
@@ -499,7 +486,7 @@ impl ContrastWindow {
             );
             match std::fs::write(path, report) {
                 Ok(()) => self.status = "Contrast report exported.".to_owned(),
-                Err(error) => self.status = format!("Couldn't write to file: {error}"),
+                Err(error) => self.status = au_core::i18n::tr_format("Couldn't write to file: %s", &[&error]),
             }
         }
     }
@@ -508,7 +495,7 @@ impl ContrastWindow {
 fn measurement_text(result: &Option<Result<f32, String>>) -> String {
     match result {
         Some(Ok(value)) if value.is_infinite() && value.is_sign_negative() => "zero".to_owned(),
-        Some(Ok(value)) => format!("{value:.2} dB"),
+        Some(Ok(value)) => au_core::i18n::tr_format("%.2f dB", &[&value]),
         Some(Err(error)) => error.clone(),
         None => String::new(),
     }
@@ -541,7 +528,7 @@ fn format_difference(diff_db: f32) -> String {
     } else if diff_db == f32::INFINITY {
         "Infinite dB difference".to_owned()
     } else {
-        format!("{diff_db:.2} dB RMS")
+        au_core::i18n::tr_format("%.2f dB RMS", &[&diff_db])
     }
 }
 
@@ -549,7 +536,7 @@ fn format_rms_message(value: Option<f32>) -> String {
     match value {
         None => "RMS =  dB.".to_owned(),
         Some(value) if value.is_infinite() => "RMS = zero.".to_owned(),
-        Some(value) => format!("RMS = {value:.2} dB."),
+        Some(value) => au_core::i18n::tr_format("RMS = %.2f dB.", &[&value]),
     }
 }
 
@@ -559,7 +546,7 @@ fn format_difference_for_export(diff_db: f32) -> String {
     } else if diff_db.is_infinite() {
         "Difference = infinite RMS dB.".to_owned()
     } else {
-        format!("Difference = {diff_db:.2} RMS dB.")
+        au_core::i18n::tr_format("Difference = %.2f RMS dB.", &[&diff_db])
     }
 }
 
@@ -568,9 +555,7 @@ fn format_time_line(label: &str, time: f64) -> String {
     let hours = (t / 3600.0) as i32;
     let minutes = ((t - hours as f32 * 3600.0) / 60.0) as i32;
     let seconds = t - hours as f32 * 3600.0 - minutes as f32 * 60.0;
-    format!(
-        "{label} = {hours:2} hour(s), {minutes:2} minute(s), {seconds:.2} seconds."
-    )
+    au_core::i18n::tr_format("%s = %2d hour(s), %2d minute(s), %.2f seconds.", &[&label, &hours, &minutes, &seconds])
 }
 
 fn contrast_export_report(

@@ -281,8 +281,8 @@ impl ProgressCenter {
                             )
                         };
 
-                        ui.label(format!("Elapsed Time: {}", Self::format_hms(elapsed)));
-                        ui.label(format!("Remaining Time: {remaining}"));
+                        ui.label(au_core::i18n::tr_format("Elapsed Time: %s", &[&Self::format_hms(elapsed)]));
+                        ui.label(au_core::i18n::tr_format("Remaining Time: %s", &[&remaining]));
 
                         ui.horizontal(|ui| {
                             if ui.button(au_core::i18n::tr_ui("Cancel")).clicked() {

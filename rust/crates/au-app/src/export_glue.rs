@@ -139,7 +139,7 @@ impl FormatChooser {
             ExportFormat::Flac(options) => {
                 ui.label(au_core::i18n::tr_ui("FLAC options"));
                 egui::ComboBox::from_id_salt("flac_bit_depth")
-                    .selected_text(format!("{}-bit", options.bit_depth))
+                    .selected_text(au_core::i18n::tr_format("%d-bit", &[&options.bit_depth]))
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut options.bit_depth, 16, au_core::i18n::tr_ui("16-bit"));
                         ui.selectable_value(&mut options.bit_depth, 24, au_core::i18n::tr_ui("24-bit"));
@@ -227,28 +227,28 @@ impl FormatChooser {
                     320, 256, 224, 192, 160, 144, 128, 112, 96, 80, 64, 56, 48, 40, 32,
                 ];
                 egui::ComboBox::from_id_salt("mp3_abr")
-                    .selected_text(format!("{} kbps", options.bitrate_abr))
+                    .selected_text(au_core::i18n::tr_format("%d kbps", &[&options.bitrate_abr]))
                     .show_ui(ui, |ui| {
                         for bitrate in bitrates {
                             ui.selectable_value(
                                 &mut options.bitrate_abr,
                                 bitrate as _,
-                                format!("{bitrate} kbps"),
+                                au_core::i18n::tr_format("%d kbps", &[&bitrate]),
                             );
                         }
                     });
                 egui::ComboBox::from_id_salt("mp3_cbr")
-                    .selected_text(format!("{} kbps", options.bitrate_cbr))
+                    .selected_text(au_core::i18n::tr_format("%d kbps", &[&options.bitrate_cbr]))
                     .show_ui(ui, |ui| {
                         for bitrate in bitrates {
                             ui.selectable_value(
                                 &mut options.bitrate_cbr,
                                 bitrate as _,
-                                format!("{bitrate} kbps"),
+                                au_core::i18n::tr_format("%d kbps", &[&bitrate]),
                             );
                         }
                     });
-                ui.label(format!("Channel mode: {:?}", options.channel_mode));
+                ui.label(au_core::i18n::tr_format("Channel mode: %s", &[&format!("{:?}", options.channel_mode)]));
             }
             ExportFormat::Vorbis(options) => {
                 ui.label(au_core::i18n::tr_ui("Ogg Vorbis options"));

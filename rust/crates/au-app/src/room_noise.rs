@@ -235,16 +235,12 @@ impl RoomNoise {
 
         let directory = Self::user_profile_dir();
         if let Err(error) = fs::create_dir_all(&directory) {
-            return RoomNoiseEvent::CaptureFailed(format!(
-                "Could not create noise-profile directory: {error}"
-            ));
+            return RoomNoiseEvent::CaptureFailed(au_core::i18n::tr_format("Could not create noise-profile directory: %s", &[&error]));
         }
 
         let path = directory.join(format!("{}.aunp", capture.key));
         if let Err(error) = fs::write(path, profile.to_bytes()) {
-            return RoomNoiseEvent::CaptureFailed(format!(
-                "Could not write noise profile: {error}"
-            ));
+            return RoomNoiseEvent::CaptureFailed(au_core::i18n::tr_format("Could not write noise profile: %s", &[&error]));
         }
 
         self.profiles.insert(capture.key, profile);
@@ -392,10 +388,7 @@ impl RoomNoise {
         let mut capture_pressed = false;
 
         if let Some(profile) = self.profile_for(device) {
-            ui.label(format!(
-                "Noise profile: {} Hz, {}-sample windows, {} windows",
-                profile.rate as u32, profile.window_size, profile.total_windows
-            ));
+            ui.label(au_core::i18n::tr_format("Noise profile: %d Hz, %d-sample windows, %d windows", &[&(profile.rate as u32), &profile.window_size, &profile.total_windows]));
         } else {
             ui.label("No noise profile for this device.");
         }

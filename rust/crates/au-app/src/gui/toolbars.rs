@@ -976,7 +976,7 @@ impl AudacityApp {
 
     fn persist_toolbars(&mut self) {
         if let Err(error) = self.toolbars.save() {
-            self.status = format!("Could not save toolbar layout: {error}");
+            self.status = au_core::i18n::tr_format("Could not save toolbar layout: %s", &[&error]);
         }
     }
 }

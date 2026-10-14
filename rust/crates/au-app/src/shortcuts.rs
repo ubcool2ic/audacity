@@ -448,7 +448,7 @@ impl KeyMap {
             } else {
                 Some(
                     KeyCombo::parse(key_string)
-                        .ok_or_else(|| format!("invalid shortcut key: {key_string}"))?,
+                        .ok_or_else(|| au_core::i18n::tr_format("Invalid shortcut key: %s", &[&key_string]))?,
                 )
             };
 
@@ -549,16 +549,16 @@ fn decode_xml_entities(value: &str) -> Result<String, String> {
             "apos" => '\'',
             _ if entity.starts_with("#x") || entity.starts_with("#X") => {
                 let code = u32::from_str_radix(&entity[2..], 16)
-                    .map_err(|_| format!("invalid XML entity &{entity};"))?;
-                char::from_u32(code).ok_or_else(|| format!("invalid XML entity &{entity};"))?
+                    .map_err(|_| au_core::i18n::tr_format("Invalid XML entity &%s;", &[&entity]))?;
+                char::from_u32(code).ok_or_else(|| au_core::i18n::tr_format("Invalid XML entity &%s;", &[&entity]))?
             }
             _ if entity.starts_with('#') => {
                 let code = entity[1..]
                     .parse::<u32>()
-                    .map_err(|_| format!("invalid XML entity &{entity};"))?;
-                char::from_u32(code).ok_or_else(|| format!("invalid XML entity &{entity};"))?
+                    .map_err(|_| au_core::i18n::tr_format("Invalid XML entity &%s;", &[&entity]))?;
+                char::from_u32(code).ok_or_else(|| au_core::i18n::tr_format("Invalid XML entity &%s;", &[&entity]))?
             }
-            _ => return Err(format!("unknown XML entity &{entity};")),
+            _ => return Err(au_core::i18n::tr_format("Unknown XML entity &%s;", &[&entity])),
         };
         decoded.push(ch);
         rest = &rest[entity_start + end + 1..];
@@ -664,17 +664,17 @@ fn parse_xml_start_tag(body: &str) -> Result<(String, BTreeMap<String, String>),
 
         skip_ascii_whitespace(body, &mut index);
         if index >= body.len() || body.as_bytes()[index] != b'=' {
-            return Err(format!("missing '=' after XML attribute {attr}"));
+            return Err(au_core::i18n::tr_format("Missing '=' after XML attribute %s", &[&attr]));
         }
         index += 1;
         skip_ascii_whitespace(body, &mut index);
 
         if index >= body.len() {
-            return Err(format!("missing value for XML attribute {attr}"));
+            return Err(au_core::i18n::tr_format("Missing value for XML attribute %s", &[&attr]));
         }
         let quote = body.as_bytes()[index];
         if quote != b'"' && quote != b'\'' {
-            return Err(format!("unquoted XML attribute {attr}"));
+            return Err(au_core::i18n::tr_format("Unquoted XML attribute %s", &[&attr]));
         }
         index += 1;
         let value_start = index;
@@ -682,7 +682,7 @@ fn parse_xml_start_tag(body: &str) -> Result<(String, BTreeMap<String, String>),
             index += 1;
         }
         if index >= body.len() {
-            return Err(format!("unterminated XML attribute {attr}"));
+            return Err(au_core::i18n::tr_format("Unterminated XML attribute %s", &[&attr]));
         }
         let value = decode_xml_entities(&body[value_start..index])?;
         index += 1;

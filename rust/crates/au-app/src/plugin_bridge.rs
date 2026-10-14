@@ -361,10 +361,7 @@ impl PluginCatalog {
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => {
-                    catalog.last_error = Some(format!(
-                        "Could not read disabled plugin list {}: {error}",
-                        path.display()
-                    ));
+                    catalog.last_error = Some(au_core::i18n::tr_format("Could not read disabled plugin list %s: %s", &[&path.display().to_string(), &error]));
                 }
             }
         }
@@ -410,10 +407,7 @@ impl PluginCatalog {
         match result {
             Ok(()) => self.last_error = None,
             Err(error) => {
-                self.last_error = Some(format!(
-                    "Could not save disabled plugin list {}: {error}",
-                    path.display()
-                ));
+                self.last_error = Some(au_core::i18n::tr_format("Could not save disabled plugin list %s: %s", &[&path.display().to_string(), &error]));
             }
         }
     }
@@ -520,10 +514,10 @@ impl PluginCatalog {
     pub fn instantiate(&self, id: &str) -> Result<PluginEffect, String> {
         let descriptor = self
             .find(id)
-            .ok_or_else(|| format!("Plugin not found: {id}"))?;
+            .ok_or_else(|| au_core::i18n::tr_format("Plugin not found: %s", &[&id]))?;
 
         if !self.is_enabled(id) {
-            return Err(format!("Plugin is disabled: {}", descriptor.name));
+            return Err(au_core::i18n::tr_format("Plugin is disabled: %s", &[&descriptor.name]));
         }
 
         let instance: Box<dyn PluginInstance> = match descriptor.format {
@@ -543,7 +537,7 @@ impl PluginCatalog {
                 .instantiate(descriptor)
                 .map_err(|error| format!("{error:?}"))?,
             PluginFormat::Native => {
-                return Err(format!("Unsupported plugin format for {id}"));
+                return Err(au_core::i18n::tr_format("Unsupported plugin format for %s", &[&id]));
             }
         };
 

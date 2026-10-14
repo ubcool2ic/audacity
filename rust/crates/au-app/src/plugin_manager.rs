@@ -155,11 +155,7 @@ pub fn plugin_manager_ui(
         }
     }
 
-    ui.label(format!(
-        "{} plugins ({} enabled)",
-        catalog.plugins.len(),
-        catalog.enabled().count()
-    ));
+    ui.label(au_core::i18n::tr_format("%d plugins (%d enabled)", &[&catalog.plugins.len(), &catalog.enabled().count()]));
     if let Some(error) = catalog.last_error.as_deref() {
         ui.colored_label(egui::Color32::RED, error);
     }

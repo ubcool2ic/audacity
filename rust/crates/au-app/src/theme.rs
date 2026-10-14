@@ -311,15 +311,11 @@ impl Theme {
         } else if components.is_file() {
             components
         } else {
-            return Err(format!(
-                "No Colors.txt found in {} or {}",
-                dir.display(),
-                dir.join("Components").display()
-            ));
+            return Err(au_core::i18n::tr_format("No Colors.txt found in %s or %s", &[&dir.display().to_string(), &dir.join("Components").display().to_string()]));
         };
 
         let text = fs::read_to_string(&path)
-            .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+            .map_err(|error| au_core::i18n::tr_format("Could not read %s: %s", &[&path.display().to_string(), &error]))?;
         Theme::parse_colors_txt(ThemeId::Custom, &text)
     }
 
@@ -571,8 +567,8 @@ pub fn apply(theme: &Theme, ctx: &egui::Context) {
 fn activate_and_save(theme: &Theme, ctx: &egui::Context) -> String {
     apply(theme, ctx);
     match save_choice(theme) {
-        Ok(()) => format!("Theme changed to {}.", theme.id.label()),
-        Err(error) => format!("Theme applied, but could not save the choice: {error}"),
+        Ok(()) => au_core::i18n::tr_format("Theme changed to %s.", &[&theme.id.label()]),
+        Err(error) => au_core::i18n::tr_format("Theme applied, but could not save the choice: %s", &[&error]),
     }
 }
 
@@ -625,7 +621,7 @@ pub fn theme_menu(
                         status = Some(activate_and_save(theme, &ctx));
                     }
                     Err(error) => {
-                        status = Some(format!("Could not load theme components: {error}"));
+                        status = Some(au_core::i18n::tr_format("Could not load theme components: %s", &[&error]));
                     }
                 }
             }
@@ -634,8 +630,8 @@ pub fn theme_menu(
         if ui.button("Save Theme Components…").clicked() {
             if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                 status = Some(match theme.save_components_dir(&dir) {
-                    Ok(()) => format!("Theme components saved to {}.", dir.display()),
-                    Err(error) => format!("Could not save theme components: {error}"),
+                    Ok(()) => au_core::i18n::tr_format("Theme components saved to %s.", &[&dir.display().to_string()]),
+                    Err(error) => au_core::i18n::tr_format("Could not save theme components: %s", &[&error]),
                 });
             }
         }
@@ -646,7 +642,7 @@ pub fn theme_menu(
             *custom = Some(custom_copy.clone());
             status = Some(match save_choice(&custom_copy) {
                 Ok(()) => "Custom theme cache saved.".to_owned(),
-                Err(error) => format!("Could not save theme cache: {error}"),
+                Err(error) => au_core::i18n::tr_format("Could not save theme cache: %s", &[&error]),
             });
         }
 
@@ -662,11 +658,11 @@ pub fn theme_menu(
                             status = Some(activate_and_save(theme, &ctx));
                         }
                         Err(error) => {
-                            status = Some(format!("Could not load theme cache: {error}"));
+                            status = Some(au_core::i18n::tr_format("Could not load theme cache: %s", &[&error]));
                         }
                     },
                     Err(error) => {
-                        status = Some(format!("Could not read theme cache: {error}"));
+                        status = Some(au_core::i18n::tr_format("Could not read theme cache: %s", &[&error]));
                     }
                 },
             }

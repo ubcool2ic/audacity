@@ -117,7 +117,7 @@ impl EffectDialog {
             ui.text_edit_singleline(&mut self.preset_name).on_hover_text(au_core::i18n::tr_ui("Preset name"));
             if ui.button(au_core::i18n::tr_ui("Save Preset")).clicked() && !self.preset_name.trim().is_empty() {
                 let p = Preset::capture(self.preset_name.trim(), self.effect.as_mut());
-                self.report = match stack::save_user_preset(&dir, id, &p) { Ok(()) => format!("Saved preset '{}'", p.name), Err(e) => format!("Preset save failed: {e}") };
+                self.report = match stack::save_user_preset(&dir, id, &p) { Ok(()) => au_core::i18n::tr_format("Saved preset '%s'", &[&p.name]), Err(e) => au_core::i18n::tr_format("Preset save failed: %s", &[&e]) };
             }
         });
     }
@@ -246,7 +246,7 @@ pub fn realtime_panel(
             } else {
                 "CLAP"
             };
-            if ui.button(format!("{} ({format})", d.name)).clicked() {
+            if ui.button(au_core::i18n::tr_format("%s (%s)", &[&d.name, &format])).clicked() {
                 if let Ok(eff) = plugins.instantiate(&d.id) {
                     let mut st = au_effects::stack::EffectStack::new();
                     if st.push_effect(Box::new(eff)) {

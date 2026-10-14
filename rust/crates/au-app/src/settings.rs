@@ -757,7 +757,7 @@ fn add_sorted_items(
             if group.is_empty() {
                 name.to_owned()
             } else {
-                format!("{group}: {name}")
+                au_core::i18n::tr_format("%s: %s", &[&group, &name])
             }
         })
         .collect();
