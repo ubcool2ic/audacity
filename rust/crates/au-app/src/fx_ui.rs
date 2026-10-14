@@ -73,13 +73,13 @@ impl EffectDialog {
             ui.separator();
             ui.horizontal(|ui| {
                 if self.effect.id() == "NoiseReduction" {
-                    if ui.button("Get Noise Profile").clicked() { action = DialogAction::GetProfile; }
+                    if ui.button(au_core::i18n::tr_ui("Get Noise Profile")).clicked() { action = DialogAction::GetProfile; }
                     ui.label(if self.has_profile { "profile ✓" } else { "no profile" });
                 }
-                if self.effect.kind() != EffectKind::Analyze && ui.button("Preview").clicked() { action = DialogAction::Preview; }
+                if self.effect.kind() != EffectKind::Analyze && ui.button(au_core::i18n::tr_ui("Preview")).clicked() { action = DialogAction::Preview; }
                 let apply = match self.effect.kind() { EffectKind::Analyze => "Analyze", EffectKind::Generate => "Generate", EffectKind::Process => "Apply" };
                 if ui.button(apply).clicked() { action = DialogAction::Apply; }
-                if ui.button("Close").clicked() { action = DialogAction::Close; }
+                if ui.button(au_core::i18n::tr_ui("Close")).clicked() { action = DialogAction::Close; }
             });
         });
         if !open { action = DialogAction::Close; }
@@ -91,28 +91,28 @@ impl EffectDialog {
         let id: &str = &id_cow;
         let dir = stack::user_preset_dir();
         ui.horizontal(|ui| {
-            ui.menu_button("Presets & settings", |ui| {
+            ui.menu_button(au_core::i18n::tr_ui("Presets & settings"), |ui| {
                 let factory = stack::factory_presets(id);
                 if !factory.is_empty() {
-                    ui.label("Factory presets");
+                    ui.label(au_core::i18n::tr_ui("Factory presets"));
                     for p in factory { if ui.button(&p.name).clicked() { p.apply(self.effect.as_mut()); ui.close_menu(); } }
                     ui.separator();
                 }
                 let user = stack::load_user_presets(&dir, id);
                 if !user.is_empty() {
-                    ui.label("User presets");
+                    ui.label(au_core::i18n::tr_ui("User presets"));
                     for p in &user {
                         ui.horizontal(|ui| {
                             if ui.button(&p.name).clicked() { p.apply(self.effect.as_mut()); ui.close_menu(); }
-                            if ui.small_button("🗑").on_hover_text("Delete preset").clicked() { let _ = stack::delete_user_preset(&dir, id, &p.name); }
+                            if ui.small_button(au_core::i18n::tr_ui("🗑")).on_hover_text(au_core::i18n::tr_ui("Delete preset")).clicked() { let _ = stack::delete_user_preset(&dir, id, &p.name); }
                         });
                     }
                     ui.separator();
                 }
-                if ui.button("Defaults").clicked() { au_effects::core::reset_defaults(self.effect.as_mut()); ui.close_menu(); }
+                if ui.button(au_core::i18n::tr_ui("Defaults")).clicked() { au_effects::core::reset_defaults(self.effect.as_mut()); ui.close_menu(); }
             });
-            ui.text_edit_singleline(&mut self.preset_name).on_hover_text("Preset name");
-            if ui.button("Save Preset").clicked() && !self.preset_name.trim().is_empty() {
+            ui.text_edit_singleline(&mut self.preset_name).on_hover_text(au_core::i18n::tr_ui("Preset name"));
+            if ui.button(au_core::i18n::tr_ui("Save Preset")).clicked() && !self.preset_name.trim().is_empty() {
                 let p = Preset::capture(self.preset_name.trim(), self.effect.as_mut());
                 self.report = match stack::save_user_preset(&dir, id, &p) { Ok(()) => format!("Saved preset '{}'", p.name), Err(e) => format!("Preset save failed: {e}") };
             }
@@ -171,14 +171,14 @@ pub fn realtime_panel(
     plugins: &crate::plugin_bridge::PluginCatalog,
 ) -> bool {
     let mut changed = false;
-    if ui.checkbox(&mut list.active, "Stack enabled").changed() {
+    if ui.checkbox(&mut list.active, au_core::i18n::tr_ui("Stack enabled")).changed() {
         changed = true;
     }
 
     let mut action: Option<(usize, i32)> = None; // (index, -1 up / +1 down / 0 remove)
     for (i, e) in list.effects.iter_mut().enumerate() {
         ui.horizontal(|ui| {
-            if ui.checkbox(&mut e.active, "").on_hover_text("Bypass").changed() {
+            if ui.checkbox(&mut e.active, "").on_hover_text(au_core::i18n::tr_ui("Bypass")).changed() {
                 changed = true;
             }
             let name = if crate::plugin_bridge::is_plugin_id(&e.id) {
@@ -189,13 +189,13 @@ pub fn realtime_panel(
             if ui.selectable_label(*editing == Some(i), name).clicked() {
                 *editing = if *editing == Some(i) { None } else { Some(i) };
             }
-            if ui.small_button("▲").clicked() {
+            if ui.small_button(au_core::i18n::tr_ui("▲")).clicked() {
                 action = Some((i, -1));
             }
-            if ui.small_button("▼").clicked() {
+            if ui.small_button(au_core::i18n::tr_ui("▼")).clicked() {
                 action = Some((i, 1));
             }
-            if ui.small_button("✖").clicked() {
+            if ui.small_button(au_core::i18n::tr_ui("✖")).clicked() {
                 action = Some((i, 0));
             }
         });
@@ -214,7 +214,7 @@ pub fn realtime_panel(
         }
     }
 
-    ui.menu_button("Add effect…", |ui| {
+    ui.menu_button(au_core::i18n::tr_ui("Add effect…"), |ui| {
         for e in registry::all().into_iter().filter(|e| e.supports_realtime()) {
             if ui.button(e.name().as_ref()).clicked() {
                 let mut st = au_effects::stack::EffectStack::new();
@@ -227,7 +227,7 @@ pub fn realtime_panel(
         }
 
         ui.separator();
-        ui.label("Plugins");
+        ui.label(au_core::i18n::tr_ui("Plugins"));
         for d in plugins.enabled() {
             let format_debug = format!("{:?}", d.format).to_ascii_lowercase();
             let format = if format_debug.contains("vst3") {

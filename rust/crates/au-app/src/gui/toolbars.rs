@@ -510,31 +510,31 @@ impl AudacityApp {
         match id {
             ToolbarId::Transport => {
                 ui.horizontal(|ui| {
-                    if ui.button("Play").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Play")).clicked() {
                         self.play();
                     }
-                    if ui.button("Pause").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Pause")).clicked() {
                         self.toggle_pause();
                     }
-                    if ui.button("Stop").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Stop")).clicked() {
                         self.stop_playback();
                     }
                     if ui
                         .add_enabled(
                             self.recorder.is_none(),
-                            egui::Button::new("Record"),
+                            egui::Button::new(au_core::i18n::tr_ui("Record")),
                         )
                         .clicked()
                     {
                         self.open_record_options();
                     }
-                    if self.recorder.is_some() && ui.button("Stop Record").clicked() {
+                    if self.recorder.is_some() && ui.button(au_core::i18n::tr_ui("Stop Record")).clicked() {
                         self.stop_recording();
                     }
-                    if ui.button("Skip to Start").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Skip to Start")).clicked() {
                         self.seek_transport(0);
                     }
-                    if ui.button("Skip to End").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Skip to End")).clicked() {
                         let duration = self.project_duration();
                         let rate = self.project_rate();
                         let frame = if duration.is_finite() && duration > 0.0 {
@@ -544,68 +544,68 @@ impl AudacityApp {
                         };
                         self.seek_transport(frame);
                     }
-                    ui.checkbox(&mut self.loop_play, "Loop");
+                    ui.checkbox(&mut self.loop_play, au_core::i18n::tr_ui("Loop"));
                 });
             }
             ToolbarId::Tools => {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.tool, Tool::Selection, "Selection");
-                    ui.selectable_value(&mut self.tool, Tool::Envelope, "Envelope");
-                    ui.selectable_value(&mut self.tool, Tool::TimeShift, "Time Shift");
-                    ui.selectable_value(&mut self.tool, Tool::Draw, "Draw");
-                    if ui.button("Zoom In").clicked() {
+                    ui.selectable_value(&mut self.tool, Tool::Selection, au_core::i18n::tr_ui("Selection"));
+                    ui.selectable_value(&mut self.tool, Tool::Envelope, au_core::i18n::tr_ui("Envelope"));
+                    ui.selectable_value(&mut self.tool, Tool::TimeShift, au_core::i18n::tr_ui("Time Shift"));
+                    ui.selectable_value(&mut self.tool, Tool::Draw, au_core::i18n::tr_ui("Draw"));
+                    if ui.button(au_core::i18n::tr_ui("Zoom In")).clicked() {
                         self.zoom.zoom_in();
                     }
-                    if ui.button("Zoom Out").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Zoom Out")).clicked() {
                         self.zoom.zoom_out();
                     }
-                    if ui.button("Fit").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Fit")).clicked() {
                         self.fit_zoom(ui.available_width() as f64);
                     }
                 });
             }
             ToolbarId::Edit => {
                 ui.horizontal(|ui| {
-                    if ui.button("Undo").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Undo")).clicked() {
                         let result = self.editor.undo();
                         self.report(result);
                     }
-                    if ui.button("Redo").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Redo")).clicked() {
                         let result = self.editor.redo();
                         self.report(result);
                     }
-                    if ui.button("Zoom In").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Zoom In")).clicked() {
                         self.zoom.zoom_in();
                     }
-                    if ui.button("Zoom Out").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Zoom Out")).clicked() {
                         self.zoom.zoom_out();
                     }
-                    if ui.button("Fit").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Fit")).clicked() {
                         self.fit_zoom(ui.available_width() as f64);
                     }
                 });
             }
             ToolbarId::CutCopyPaste => {
                 ui.horizontal(|ui| {
-                    if ui.button("Cut").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Cut")).clicked() {
                         if let Some(track) = self.selected_track {
                             let selection = self.selection_for_track(track);
                             self.edit_selection(|editor| editor.cut(selection));
                         }
                     }
-                    if ui.button("Copy").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Copy")).clicked() {
                         if let Some(track) = self.selected_track {
                             let selection = self.selection_for_track(track);
                             self.edit_selection(|editor| editor.copy(selection));
                         }
                     }
-                    if ui.button("Paste").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Paste")).clicked() {
                         if let Some(track) = self.selected_track {
                             let at_frame = self.selection_for_track(track).start;
                             self.edit_selection(|editor| editor.paste(track, at_frame));
                         }
                     }
-                    if ui.button("Delete").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Delete")).clicked() {
                         if let Some(track) = self.selected_track {
                             let selection = self.selection_for_track(track);
                             self.edit_selection(|editor| editor.delete(selection));
@@ -627,9 +627,9 @@ impl AudacityApp {
                 });
             }
             ToolbarId::Mixer => {
-                ui.selectable_value(&mut self.mixer_visible, true, "Mixer");
+                ui.selectable_value(&mut self.mixer_visible, true, au_core::i18n::tr_ui("Mixer"));
                 if !self.mixer_visible {
-                    ui.selectable_value(&mut self.mixer_visible, false, "Mixer");
+                    ui.selectable_value(&mut self.mixer_visible, false, au_core::i18n::tr_ui("Mixer"));
                 }
             }
             ToolbarId::Transcription => {
@@ -641,7 +641,7 @@ impl AudacityApp {
                     {
                         self.set_play_speed(speed);
                     }
-                    if ui.button("▶ at speed").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("▶ at speed")).clicked() {
                         self.play();
                     }
                 });
@@ -651,12 +651,12 @@ impl AudacityApp {
                     if let Some(selection) = &self.spectral_selection {
                         ui.label(format!("{:.0}–{:.0} Hz", selection.f0(), selection.f1()));
                     } else {
-                        ui.label("No spectral selection");
+                        ui.label(au_core::i18n::tr_ui("No spectral selection"));
                     }
-                    if ui.button("Clear").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Clear")).clicked() {
                         self.spectral_selection = None;
                     }
-                    if ui.button("Show spectrogram").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Show spectrogram")).clicked() {
                         if let Some(track) = self.selected_track {
                             self.track_views.resize_with(track + 1, || {
                                 crate::spectrogram_view::TrackView::Waveform
@@ -698,7 +698,7 @@ impl AudacityApp {
                         SnapMode::Labels => "Labels",
                     })
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut mode, SnapMode::Off, "Off");
+                        ui.selectable_value(&mut mode, SnapMode::Off, au_core::i18n::tr_ui("Off"));
                         ui.selectable_value(
                             &mut mode,
                             SnapMode::Grid { secs: 1.0 },
@@ -709,32 +709,32 @@ impl AudacityApp {
                             SnapMode::Grid { secs: 0.1 },
                             "Grid 0.1s",
                         );
-                        ui.selectable_value(&mut mode, SnapMode::Samples, "Samples");
+                        ui.selectable_value(&mut mode, SnapMode::Samples, au_core::i18n::tr_ui("Samples"));
                         ui.selectable_value(
                             &mut mode,
                             SnapMode::ZeroCrossing,
                             "Zero crossings",
                         );
-                        ui.selectable_value(&mut mode, SnapMode::Labels, "Labels");
+                        ui.selectable_value(&mut mode, SnapMode::Labels, au_core::i18n::tr_ui("Labels"));
                     });
                 if mode != self.snapper.mode {
                     self.snapper.mode = mode;
                 }
-                if ui.checkbox(&mut self.sync_lock, "Sync-Lock").changed() {
+                if ui.checkbox(&mut self.sync_lock, au_core::i18n::tr_ui("Sync-Lock")).changed() {
                     self.editor.set_sync_lock(self.sync_lock);
                 }
             }
             ToolbarId::AudioSetup => {
-                ui.menu_button("Audio Setup", |ui| {
-                    if ui.button("Recording options…").clicked() {
+                ui.menu_button(au_core::i18n::tr_ui("Audio Setup"), |ui| {
+                    if ui.button(au_core::i18n::tr_ui("Recording options…")).clicked() {
                         self.open_record_options();
                         ui.close_menu();
                     }
                 });
             }
             ToolbarId::Share => {
-                ui.add_enabled(false, egui::Button::new("Share Audio"))
-                    .on_hover_text("audio.com sharing is not available yet");
+                ui.add_enabled(false, egui::Button::new(au_core::i18n::tr_ui("Share Audio")))
+                    .on_hover_text(au_core::i18n::tr_ui("audio.com sharing is not available yet"));
             }
         }
     }
@@ -762,32 +762,32 @@ impl AudacityApp {
                 }
 
                 grip_response.context_menu(|ui| {
-                    if ui.button("Dock at top").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Dock at top")).clicked() {
                         action = Some(ToolbarAction::DockTop(self.toolbars.get(id).row));
                         ui.close_menu();
                     }
-                    if ui.button("Dock at bottom").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Dock at bottom")).clicked() {
                         action = Some(ToolbarAction::DockBottom(self.toolbars.get(id).row));
                         ui.close_menu();
                     }
-                    if ui.button("Float").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Float")).clicked() {
                         let position = ctx.pointer_latest_pos().unwrap_or(egui::Pos2::ZERO);
                         action = Some(ToolbarAction::Float(position.x, position.y));
                         ui.close_menu();
                     }
-                    if ui.button("Move left").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Move left")).clicked() {
                         action = Some(ToolbarAction::MoveLeft);
                         ui.close_menu();
                     }
-                    if ui.button("Move right").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Move right")).clicked() {
                         action = Some(ToolbarAction::MoveRight);
                         ui.close_menu();
                     }
-                    if ui.button("New row").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("New row")).clicked() {
                         action = Some(ToolbarAction::NewRow);
                         ui.close_menu();
                     }
-                    if ui.button("Hide").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Hide")).clicked() {
                         action = Some(ToolbarAction::Hide);
                         ui.close_menu();
                     }
@@ -936,7 +936,7 @@ impl AudacityApp {
 
     /// Adds the toolbar visibility and reset controls to a Toolbars menu.
     pub(super) fn toolbars_menu(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button("Toolbars", |ui| {
+        ui.menu_button(au_core::i18n::tr_ui("Toolbars"), |ui| {
             for id in ToolbarId::ALL {
                 let mut visible = self.toolbars.get(id).visible;
                 if ui.checkbox(&mut visible, id.title()).changed() {
@@ -945,7 +945,7 @@ impl AudacityApp {
                 }
             }
             ui.separator();
-            if ui.button("Reset Toolbars").clicked() {
+            if ui.button(au_core::i18n::tr_ui("Reset Toolbars")).clicked() {
                 self.toolbars = ToolbarLayout::default_layout();
                 self.persist_toolbars();
                 ui.close_menu();

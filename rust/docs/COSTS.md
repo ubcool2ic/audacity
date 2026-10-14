@@ -237,3 +237,16 @@ Luna 2 calls, $0.0179. Sol: none. **Batch total: $0.0179**
 Hand edits: i18n also looks for `<lang>/LC_MESSAGES/audacity.po`.
 
 **Running total (ubcool2ic): $1.9389**
+
+## Stage 10 batch 2 (ubcool2ic): Preferences dialog, shortcuts, UI translation
+
+| Output | Model | USD |
+|---|---|---|
+| au-app/src/prefs_dialog.rs (Audacity 3.7.3 preference pages) | openai/gpt-6-luna | 0.0104 |
+| au-app/src/shortcuts.rs (Audacity default shortcuts, key normalisation, shortcuts XML, /NewKeys) | openai/gpt-6-luna | 0.0085 |
+
+Luna 2 calls, $0.0189. Sol: none. **Batch total: $0.0189**
+
+Hand edits: language combo type fix; 12 menu commands that Audacity 3.7.3 shows without a shortcut (GetInfo Type=Menus) moved from the Standard to the Full set; i18n `tr_ui` (accelerator-free lookup); app glue (prefs load/save, apply, Keyboard page, keymap dispatch, Get/SetPreference, mechanical `tr_ui()` wrapping of 249 UI literals).
+
+**Running total (ubcool2ic): $1.9578**

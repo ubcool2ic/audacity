@@ -193,6 +193,26 @@ impl Catalog {
             .map(String::as_str)
     }
 
+    /// Index for UI labels that drop Audacity's `&` accelerators: stripped msgid -> stripped translation.
+    fn ui_index(&self) -> HashMap<String, String> {
+        let mut index = HashMap::new();
+        // Accelerated msgids (menu items, "&Edit") take priority over plain ones ("Edit" toolbar).
+        let mut entries: Vec<_> = self.messages.iter().collect();
+        entries.sort_by_key(|(key, _)| (!key.contains('&'), (*key).clone()));
+        for (key, message) in entries {
+            if key.contains('\u{4}') || message.is_plural {
+                continue;
+            }
+            let Some(translation) = message.translations.first().filter(|t| !t.is_empty()) else { continue };
+            let stripped = strip_menu_accel(key);
+            let value = strip_menu_accel(translation);
+            for variant in [stripped.clone(), stripped.replace("...", "\u{2026}"), stripped.replace('\u{2026}', "...")] {
+                index.entry(variant).or_insert_with(|| value.clone());
+            }
+        }
+        index
+    }
+
     /// Returns the translation for a contextual message, if translated.
     pub fn pgettext(&self, context: &str, msgid: &str) -> Option<&str> {
         let key = make_key(Some(context), msgid);
@@ -846,6 +866,8 @@ struct Runtime {
     language: String,
     catalog: Option<Catalog>,
     generation: u64,
+    /// UI lookup: msgid with menu accelerators removed and "..." -> "…" variants.
+    ui_index: HashMap<String, String>,
 }
 
 impl Default for Runtime {
@@ -853,6 +875,7 @@ impl Default for Runtime {
         Self {
             language: "en".to_string(),
             catalog: None,
+            ui_index: HashMap::new(),
             generation: 0,
         }
     }
@@ -885,6 +908,7 @@ pub fn set_language(lang: &str, search_dirs: &[PathBuf]) -> Result<(), String> {
             normalized
         };
         state.catalog = None;
+        state.ui_index.clear();
         state.generation = state.generation.wrapping_add(1);
         return Ok(());
     }
@@ -913,6 +937,7 @@ pub fn set_language(lang: &str, search_dirs: &[PathBuf]) -> Result<(), String> {
                         let mut state =
                             runtime().write().unwrap_or_else(|error| error.into_inner());
                         state.language = candidate.clone();
+                        state.ui_index = catalog.ui_index();
                         state.catalog = Some(catalog);
                         state.generation = state.generation.wrapping_add(1);
                         return Ok(());
@@ -951,6 +976,17 @@ pub fn tr(msgid: &str) -> String {
         .and_then(|catalog| catalog.get(msgid))
         .unwrap_or(msgid)
         .to_string()
+}
+
+/// Translates a UI label via Audacity's msgids with `&` accelerators removed (accelerated
+/// menu msgids win over plain ones), then the exact msgid (menus/buttons here show no accelerators); falls back to `label`.
+pub fn tr_ui(label: &str) -> String {
+    let state = runtime().read().unwrap_or_else(|error| error.into_inner());
+    let Some(catalog) = state.catalog.as_ref() else { return label.to_string() };
+    if let Some(t) = state.ui_index.get(label) {
+        return t.clone();
+    }
+    catalog.get(label).map(strip_menu_accel).unwrap_or_else(|| label.to_string())
 }
 
 /// Translates a contextual message, falling back to the message id.

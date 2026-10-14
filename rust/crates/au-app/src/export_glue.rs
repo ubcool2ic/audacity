@@ -90,7 +90,7 @@ impl FormatChooser {
         ui.separator();
         match &mut self.format {
             ExportFormat::Pcm(options) => {
-                ui.label("Format options");
+                ui.label(au_core::i18n::tr_ui("Format options"));
                 let mut header = if options.header == SF_FORMAT_AIFF {
                     "AIFF"
                 } else {
@@ -99,8 +99,8 @@ impl FormatChooser {
                 egui::ComboBox::from_id_salt("pcm_header")
                     .selected_text(header)
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut header, "WAV", "WAV");
-                        ui.selectable_value(&mut header, "AIFF", "AIFF");
+                        ui.selectable_value(&mut header, "WAV", au_core::i18n::tr_ui("WAV"));
+                        ui.selectable_value(&mut header, "AIFF", au_core::i18n::tr_ui("AIFF"));
                     });
                 options.header = if header == "AIFF" {
                     SF_FORMAT_AIFF
@@ -135,21 +135,21 @@ impl FormatChooser {
                 {
                     options.encoding = *encoding;
                 }
-                ui.checkbox(&mut options.needs_dither, "Dither");
+                ui.checkbox(&mut options.needs_dither, au_core::i18n::tr_ui("Dither"));
             }
             ExportFormat::Flac(options) => {
-                ui.label("FLAC options");
+                ui.label(au_core::i18n::tr_ui("FLAC options"));
                 egui::ComboBox::from_id_salt("flac_bit_depth")
                     .selected_text(format!("{}-bit", options.bit_depth))
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut options.bit_depth, 16, "16-bit");
-                        ui.selectable_value(&mut options.bit_depth, 24, "24-bit");
+                        ui.selectable_value(&mut options.bit_depth, 16, au_core::i18n::tr_ui("16-bit"));
+                        ui.selectable_value(&mut options.bit_depth, 24, au_core::i18n::tr_ui("24-bit"));
                     });
                 ui.add(egui::Slider::new(&mut options.level, 0..=8).text("Compression level"));
-                ui.checkbox(&mut options.needs_dither, "Dither");
+                ui.checkbox(&mut options.needs_dither, au_core::i18n::tr_ui("Dither"));
             }
             ExportFormat::WavPack(options) => {
-                ui.label("WavPack options");
+                ui.label(au_core::i18n::tr_ui("WavPack options"));
                 let quality_names = ["Low", "Normal", "High", "Very High"];
                 egui::ComboBox::from_id_salt("wavpack_quality")
                     .selected_text(
@@ -174,20 +174,20 @@ impl FormatChooser {
                         }
                     })
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut options.bit_depth, 16, "16-bit");
-                        ui.selectable_value(&mut options.bit_depth, 24, "24-bit");
-                        ui.selectable_value(&mut options.bit_depth, 32, "32-bit float");
+                        ui.selectable_value(&mut options.bit_depth, 16, au_core::i18n::tr_ui("16-bit"));
+                        ui.selectable_value(&mut options.bit_depth, 24, au_core::i18n::tr_ui("24-bit"));
+                        ui.selectable_value(&mut options.bit_depth, 32, au_core::i18n::tr_ui("32-bit float"));
                     });
-                ui.checkbox(&mut options.hybrid_mode, "Hybrid mode");
-                ui.checkbox(&mut options.create_correction, "Create correction file");
+                ui.checkbox(&mut options.hybrid_mode, au_core::i18n::tr_ui("Hybrid mode"));
+                ui.checkbox(&mut options.create_correction, au_core::i18n::tr_ui("Create correction file"));
                 ui.add(
                     egui::Slider::new(&mut options.bit_rate, 0..=1000)
                         .text("Hybrid bitrate (kbps × 10)"),
                 );
-                ui.checkbox(&mut options.needs_dither, "Dither");
+                ui.checkbox(&mut options.needs_dither, au_core::i18n::tr_ui("Dither"));
             }
             ExportFormat::Mp3(options) => {
-                ui.label("MP3 options");
+                ui.label(au_core::i18n::tr_ui("MP3 options"));
                 egui::ComboBox::from_id_salt("mp3_mode")
                     .selected_text(match options.mode {
                         MP3RateMode::Preset => "Preset",
@@ -196,14 +196,14 @@ impl FormatChooser {
                         MP3RateMode::Constant => "Constant",
                     })
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut options.mode, MP3RateMode::Preset, "Preset");
+                        ui.selectable_value(&mut options.mode, MP3RateMode::Preset, au_core::i18n::tr_ui("Preset"));
                         ui.selectable_value(
                             &mut options.mode,
                             MP3RateMode::Variable,
                             "Variable",
                         );
-                        ui.selectable_value(&mut options.mode, MP3RateMode::Average, "Average");
-                        ui.selectable_value(&mut options.mode, MP3RateMode::Constant, "Constant");
+                        ui.selectable_value(&mut options.mode, MP3RateMode::Average, au_core::i18n::tr_ui("Average"));
+                        ui.selectable_value(&mut options.mode, MP3RateMode::Constant, au_core::i18n::tr_ui("Constant"));
                     });
 
                 let preset_names = ["Insane", "Extreme", "Standard", "Medium"];
@@ -252,11 +252,11 @@ impl FormatChooser {
                 ui.label(format!("Channel mode: {:?}", options.channel_mode));
             }
             ExportFormat::Vorbis(options) => {
-                ui.label("Ogg Vorbis options");
+                ui.label(au_core::i18n::tr_ui("Ogg Vorbis options"));
                 ui.add(egui::Slider::new(&mut options.quality, 0..=10).text("Quality"));
             }
             ExportFormat::Opus(options) => {
-                ui.label("Opus options");
+                ui.label(au_core::i18n::tr_ui("Opus options"));
                 let bitrate_choices = [
                     (OpusBitrate::Kbps6, "6 kbps"),
                     (OpusBitrate::Kbps8, "8 kbps"),
@@ -624,14 +624,14 @@ impl ExportAudioDialog {
         let mut open = self.open;
         let mut result = None;
 
-        egui::Window::new("Export Audio")
+        egui::Window::new(au_core::i18n::tr_ui("Export Audio"))
             .open(&mut open)
             .show(ctx, |ui| {
                 self.chooser.ui(ui);
                 ui.horizontal(|ui| {
-                    ui.label("File:");
+                    ui.label(au_core::i18n::tr_ui("File:"));
                     ui.text_edit_singleline(&mut self.path);
-                    if ui.button("Browse…").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Browse…")).clicked() {
                         if let Some(path) = rfd::FileDialog::new()
                             .set_file_name("untitled")
                             .save_file()
@@ -640,17 +640,17 @@ impl ExportAudioDialog {
                         }
                     }
                 });
-                ui.checkbox(&mut self.selection_only, "Export current selection");
+                ui.checkbox(&mut self.selection_only, au_core::i18n::tr_ui("Export current selection"));
 
-                if ui.button("Edit Metadata…").clicked() {
+                if ui.button(au_core::i18n::tr_ui("Edit Metadata…")).clicked() {
                     self.metadata_editor = Some(MetadataEditor::new(self.tags.clone()));
                 }
 
                 ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Cancel")).clicked() {
                         close = true;
                     }
-                    if ui.button("Export").clicked() && !self.path.trim().is_empty() {
+                    if ui.button(au_core::i18n::tr_ui("Export")).clicked() && !self.path.trim().is_empty() {
                         result = Some((
                             PathBuf::from(self.path.trim()),
                             self.chooser.format,

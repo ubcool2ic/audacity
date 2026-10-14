@@ -283,7 +283,7 @@ impl MetadataEditor {
         let mut open = self.open;
         let mut result = None;
 
-        egui::Window::new("Edit Metadata Tags")
+        egui::Window::new(au_core::i18n::tr_ui("Edit Metadata Tags"))
             .open(&mut open)
             .resizable(true)
             .show(ctx, |ui| {
@@ -319,7 +319,7 @@ impl MetadataEditor {
                         });
 
                     ui.separator();
-                    ui.label("Custom tags");
+                    ui.label(au_core::i18n::tr_ui("Custom tags"));
 
                     let mut remove_index = None;
                     egui::Grid::new("metadata_custom_tags")
@@ -329,7 +329,7 @@ impl MetadataEditor {
                             for (index, (name, value)) in self.custom.iter_mut().enumerate() {
                                 ui.text_edit_singleline(name);
                                 ui.text_edit_singleline(value);
-                                if ui.small_button("Remove").clicked() {
+                                if ui.small_button(au_core::i18n::tr_ui("Remove")).clicked() {
                                     remove_index = Some(index);
                                 }
                                 ui.end_row();
@@ -340,13 +340,13 @@ impl MetadataEditor {
                     }
 
                     ui.horizontal(|ui| {
-                        if ui.button("Add").clicked() {
+                        if ui.button(au_core::i18n::tr_ui("Add")).clicked() {
                             self.custom.push((String::new(), String::new()));
                         }
-                        if ui.button("Remove last").clicked() {
+                        if ui.button(au_core::i18n::tr_ui("Remove last")).clicked() {
                             self.custom.pop();
                         }
-                        if ui.button("Clear").clicked() {
+                        if ui.button(au_core::i18n::tr_ui("Clear")).clicked() {
                             self.standard = std::array::from_fn(|_| String::new());
                             self.custom.clear();
                             self.message.clear();
@@ -355,12 +355,12 @@ impl MetadataEditor {
 
                     ui.separator();
                     ui.horizontal(|ui| {
-                        ui.label("Template path:");
+                        ui.label(au_core::i18n::tr_ui("Template path:"));
                         ui.text_edit_singleline(&mut self.template_path);
-                        if ui.button("Load").clicked() {
+                        if ui.button(au_core::i18n::tr_ui("Load")).clicked() {
                             self.load_template();
                         }
-                        if ui.button("Save").clicked() {
+                        if ui.button(au_core::i18n::tr_ui("Save")).clicked() {
                             self.save_template();
                         }
                     });
@@ -371,10 +371,10 @@ impl MetadataEditor {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("OK")).clicked() {
                         result = Some(Some(self.build_tags()));
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Cancel")).clicked() {
                         result = Some(None);
                     }
                 });
@@ -714,12 +714,12 @@ impl ExportMultipleDialog {
         let mut request = None;
         let mut edit_metadata = false;
 
-        egui::Window::new("Export Multiple")
+        egui::Window::new(au_core::i18n::tr_ui("Export Multiple"))
             .open(&mut open)
             .resizable(true)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Format:");
+                    ui.label(au_core::i18n::tr_ui("Format:"));
                     ComboBox::from_id_salt("export_multiple_format")
                         .selected_text(FORMATS[self.format_index])
                         .show_ui(ui, |ui| {
@@ -734,15 +734,15 @@ impl ExportMultipleDialog {
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label("Folder:");
+                    ui.label(au_core::i18n::tr_ui("Folder:"));
                     ui.text_edit_singleline(&mut self.folder);
                 });
 
                 ui.separator();
-                ui.label("Split files based on:");
+                ui.label(au_core::i18n::tr_ui("Split files based on:"));
                 ui.horizontal(|ui| {
-                    ui.radio_value(&mut self.split_mode, SplitMode::Tracks, "Tracks");
-                    ui.radio_value(&mut self.split_mode, SplitMode::Labels, "Labels");
+                    ui.radio_value(&mut self.split_mode, SplitMode::Tracks, au_core::i18n::tr_ui("Tracks"));
+                    ui.radio_value(&mut self.split_mode, SplitMode::Labels, au_core::i18n::tr_ui("Labels"));
                 });
 
                 ui.add_enabled_ui(self.split_mode == SplitMode::Labels, |ui| {
@@ -751,13 +751,13 @@ impl ExportMultipleDialog {
                         "Include audio before first label",
                     );
                     ui.horizontal(|ui| {
-                        ui.label("First file name:");
+                        ui.label(au_core::i18n::tr_ui("First file name:"));
                         ui.text_edit_singleline(&mut self.first_file_name);
                     });
                 });
 
                 ui.separator();
-                ui.label("Name files:");
+                ui.label(au_core::i18n::tr_ui("Name files:"));
                 ComboBox::from_id_salt("export_multiple_naming_rule")
                     .selected_text(RULES[self.naming_rule_index])
                     .show_ui(ui, |ui| {
@@ -772,22 +772,22 @@ impl ExportMultipleDialog {
 
                 if self.naming_rule_index == 2 {
                     ui.horizontal(|ui| {
-                        ui.label("File name prefix:");
+                        ui.label(au_core::i18n::tr_ui("File name prefix:"));
                         ui.text_edit_singleline(&mut self.prefix);
                     });
                 }
 
-                ui.checkbox(&mut self.overwrite, "Overwrite existing files");
+                ui.checkbox(&mut self.overwrite, au_core::i18n::tr_ui("Overwrite existing files"));
 
                 ui.horizontal(|ui| {
-                    if ui.button("Edit Metadata...").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Edit Metadata...")).clicked() {
                         edit_metadata = true;
                     }
                     ui.add_space(ui.available_width());
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Cancel")).clicked() {
                         cancel = true;
                     }
-                    if ui.button("Export").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Export")).clicked() {
                         let naming_rule = match self.naming_rule_index {
                             1 => NamingRule::NumberBeforeName,
                             2 => NamingRule::NumberWithPrefix(self.prefix.clone()),

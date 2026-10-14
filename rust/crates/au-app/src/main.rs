@@ -16,6 +16,9 @@ use std::path::{Path, PathBuf};
 pub mod fx_bridge;
 pub mod plugin_bridge;
 pub mod transport;
+pub mod shortcuts;
+#[cfg(feature = "gui")]
+mod prefs_dialog;
 #[cfg(feature = "gui")]
 mod gui;
 #[cfg(feature = "gui")]

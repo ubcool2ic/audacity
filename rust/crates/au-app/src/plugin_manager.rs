@@ -39,7 +39,7 @@ pub fn plugin_manager_ui(
         egui::ComboBox::from_id_salt("plugin_manager_format")
             .selected_text(selected_format)
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut state.format, None, "All");
+                ui.selectable_value(&mut state.format, None, au_core::i18n::tr_ui("All"));
                 let mut formats = Vec::new();
                 for descriptor in &catalog.plugins {
                     if !formats.contains(&descriptor.format) {
@@ -55,20 +55,20 @@ pub fn plugin_manager_ui(
                 }
             });
 
-        ui.radio_value(&mut state.show, ShowFilter::All, "All");
-        ui.radio_value(&mut state.show, ShowFilter::Enabled, "Enabled");
-        ui.radio_value(&mut state.show, ShowFilter::Disabled, "Disabled");
+        ui.radio_value(&mut state.show, ShowFilter::All, au_core::i18n::tr_ui("All"));
+        ui.radio_value(&mut state.show, ShowFilter::Enabled, au_core::i18n::tr_ui("Enabled"));
+        ui.radio_value(&mut state.show, ShowFilter::Disabled, au_core::i18n::tr_ui("Disabled"));
 
         let scanning = catalog.is_scanning();
         if ui
-            .add_enabled(!scanning, egui::Button::new("Rescan"))
+            .add_enabled(!scanning, egui::Button::new(au_core::i18n::tr_ui("Rescan")))
             .clicked()
         {
             catalog.start_scan();
         }
         if catalog.is_scanning() {
             ui.spinner();
-            ui.label("Scanning…");
+            ui.label(au_core::i18n::tr_ui("Scanning…"));
         }
     });
 
@@ -111,10 +111,10 @@ pub fn plugin_manager_ui(
     let mut bulk_enabled = None;
 
     ui.horizontal(|ui| {
-        if ui.button("Enable all").clicked() {
+        if ui.button(au_core::i18n::tr_ui("Enable all")).clicked() {
             bulk_enabled = Some(true);
         }
-        if ui.button("Disable all").clicked() {
+        if ui.button(au_core::i18n::tr_ui("Disable all")).clicked() {
             bulk_enabled = Some(false);
         }
     });
@@ -123,11 +123,11 @@ pub fn plugin_manager_ui(
         egui::Grid::new("plugin_manager_grid")
             .striped(true)
             .show(ui, |ui| {
-                ui.label("Enabled");
-                ui.label("Name");
-                ui.label("Type");
-                ui.label("Vendor");
-                ui.label("Path");
+                ui.label(au_core::i18n::tr_ui("Enabled"));
+                ui.label(au_core::i18n::tr_ui("Name"));
+                ui.label(au_core::i18n::tr_ui("Type"));
+                ui.label(au_core::i18n::tr_ui("Vendor"));
+                ui.label(au_core::i18n::tr_ui("Path"));
                 ui.end_row();
 
                 for (id, name, format, vendor, path, initial_enabled) in &rows {

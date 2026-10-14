@@ -285,10 +285,10 @@ impl ProgressCenter {
                         ui.label(format!("Remaining Time: {remaining}"));
 
                         ui.horizontal(|ui| {
-                            if ui.button("Cancel").clicked() {
+                            if ui.button(au_core::i18n::tr_ui("Cancel")).clicked() {
                                 actions.push(JobAction::Cancel(view.ticket));
                             }
-                            if view.can_stop && ui.button("Stop").clicked() {
+                            if view.can_stop && ui.button(au_core::i18n::tr_ui("Stop")).clicked() {
                                 actions.push(JobAction::Stop(view.ticket));
                             }
                         });

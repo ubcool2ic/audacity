@@ -176,6 +176,16 @@ struct AudacityApp {
     /// File > Import / Export jobs running on `io_runtime` with progress dialogs.
     io_jobs: Vec<(progress::JobTicket, IoJob)>,
     io_runtime: au_runtime::Runtime,
+    /// Audacity preferences (audacity.cfg format) and the dialog editing them.
+    prefs: au_core::prefs::Prefs,
+    prefs_dialog: crate::prefs_dialog::PreferencesDialog,
+    /// Active keyboard shortcuts (Audacity command ids).
+    keymap: crate::shortcuts::KeyMap,
+    keys_filter: String,
+    keys_xml_path: String,
+    prefs_applied: bool,
+    /// Top-level menu titles as last rendered (test hook GetMenuTitles).
+    menu_titles: Vec<String>,
     /// Pool for scripting test jobs.
     runtime_for_tests: au_runtime::Runtime,
     /// Waveform min/max summaries computed on the au-runtime pool.
@@ -304,6 +314,13 @@ impl Default for AudacityApp {
             runtime_for_tests: au_runtime::Runtime::new(1, 4),
             io_jobs: Vec::new(),
             io_runtime: au_runtime::Runtime::new(2, 16),
+            prefs: load_prefs(),
+            prefs_dialog: crate::prefs_dialog::PreferencesDialog::new(),
+            keymap: crate::shortcuts::KeyMap::standard(),
+            keys_filter: String::new(),
+            keys_xml_path: String::new(),
+            prefs_applied: false,
+            menu_titles: Vec::new(),
             zoom: ZoomInfo {
                 h_offset: 0.0,
                 pixels_per_sec: 100.0,
@@ -454,7 +471,7 @@ fn import_file(&mut self) {
                 "avi", "wmv", "wma", "ac3", "mid", "midi",
             ],
         )
-        .add_filter("MIDI", &["mid", "midi"])
+        .add_filter(au_core::i18n::tr_ui("MIDI"), &["mid", "midi"])
         .add_filter(
             "Audio/video via FFmpeg",
             &[
@@ -626,7 +643,7 @@ fn export_midi(&mut self) {
     let track = note_tracks[track_index].clone();
 
     let Some(path) = rfd::FileDialog::new()
-        .add_filter("MIDI", &["mid"])
+        .add_filter(au_core::i18n::tr_ui("MIDI"), &["mid"])
         .set_file_name("export.mid")
         .save_file()
     else {
@@ -670,8 +687,8 @@ fn export_midi(&mut self) {
 
     fn save_project_as(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("Audacity project", &["aup3"])
-            .add_filter("Audacity-RS project (legacy)", &["aurs"])
+            .add_filter(au_core::i18n::tr_ui("Audacity project"), &["aup3"])
+            .add_filter(au_core::i18n::tr_ui("Audacity-RS project (legacy)"), &["aurs"])
             .set_file_name("Untitled.aup3")
             .save_file()
         {
@@ -716,9 +733,9 @@ fn export_midi(&mut self) {
 
     fn open_project(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("All projects", &["aup3", "aurs"])
-            .add_filter("Audacity project", &["aup3"])
-            .add_filter("Audacity-RS project (legacy)", &["aurs"])
+            .add_filter(au_core::i18n::tr_ui("All projects"), &["aup3", "aurs"])
+            .add_filter(au_core::i18n::tr_ui("Audacity project"), &["aup3"])
+            .add_filter(au_core::i18n::tr_ui("Audacity-RS project (legacy)"), &["aurs"])
             .pick_file()
         {
             self.open_path(path);
@@ -730,6 +747,26 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     let (command, params) = crate::script_bridge::parse_command(line);
 
     match command.as_str() {
+        // Audacity's GetPreference / SetPreference (PreferenceCommands.cpp).
+        "GetPreference" => {
+            let name = params.iter().find(|(k, _)| k == "Name").map(|(_, v)| v.clone()).unwrap_or_default();
+            let value = self.prefs.read_string_or(&name, "");
+            return Some((value, true));
+        }
+        "SetPreference" => {
+            let name = params.iter().find(|(k, _)| k == "Name").map(|(_, v)| v.clone()).unwrap_or_default();
+            let value = params.iter().find(|(k, _)| k == "Value").map(|(_, v)| v.clone()).unwrap_or_default();
+            if name.is_empty() {
+                return Some(("SetPreference requires Name".to_string(), false));
+            }
+            self.prefs.set(&name, au_core::prefs::PrefValue::Str(value));
+            if let Some(dir) = prefs_path().parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = self.prefs.save(prefs_path());
+            self.apply_prefs();
+            return Some((String::new(), true));
+        }
         "Import2" => {
             let filename = match params
                 .iter()
@@ -1151,6 +1188,9 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 }
                 panic!("CrashTest requested over mod-script-pipe");
             }
+            "GetMenuTitles" => {
+                return Some((self.menu_titles.join("\t"), true));
+            }
             "GetDialogs" => {
                 let mut lines = Vec::new();
                 lines.extend(
@@ -1275,7 +1315,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     fn crash_report_dialog(&mut self, ctx: &egui::Context) {
         let Some(report) = self.crash_reports.first().cloned() else { return };
         let mut action = None;
-        egui::Window::new("Audacity-RS crashed last time")
+        egui::Window::new(au_core::i18n::tr_ui("Audacity-RS crashed last time"))
             .collapsible(false)
             .default_width(560.0)
             .show(ctx, |ui| {
@@ -1289,8 +1329,8 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     ui.add(egui::TextEdit::multiline(&mut text).code_editor().desired_width(f32::INFINITY));
                 });
                 ui.horizontal(|ui| {
-                    if ui.button("Copy report").clicked() { action = Some(0); }
-                    if ui.button("Dismiss").clicked() { action = Some(1); }
+                    if ui.button(au_core::i18n::tr_ui("Copy report")).clicked() { action = Some(0); }
+                    if ui.button(au_core::i18n::tr_ui("Dismiss")).clicked() { action = Some(1); }
                     if self.crash_reports.len() > 1 { ui.label(format!("{} more", self.crash_reports.len() - 1)); }
                 });
             });
@@ -1307,7 +1347,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     fn recovery_dialog(&mut self, ctx: &egui::Context) {
         let Some(path) = self.recovery_prompt.clone() else { return };
         let mut choice = None;
-        egui::Window::new("Automatic Crash Recovery")
+        egui::Window::new(au_core::i18n::tr_ui("Automatic Crash Recovery"))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -1318,9 +1358,9 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     path.display()
                 ));
                 ui.horizontal(|ui| {
-                    if ui.button("Recover").clicked() { choice = Some(0); }
-                    if ui.button("Discard changes").clicked() { choice = Some(1); }
-                    if ui.button("Cancel").clicked() { choice = Some(2); }
+                    if ui.button(au_core::i18n::tr_ui("Recover")).clicked() { choice = Some(0); }
+                    if ui.button(au_core::i18n::tr_ui("Discard changes")).clicked() { choice = Some(1); }
+                    if ui.button(au_core::i18n::tr_ui("Cancel")).clicked() { choice = Some(2); }
                 });
             });
         match choice {
@@ -1383,26 +1423,26 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         }
         let mut open = true;
         let st = &mut self.spectrogram_settings;
-        egui::Window::new("Spectrogram Settings").open(&mut open).show(ctx, |ui| {
+        egui::Window::new(au_core::i18n::tr_ui("Spectrogram Settings")).open(&mut open).show(ctx, |ui| {
             const ALGS: [&str; 3] = ["Frequencies", "Reassignment", "Pitch (EAC)"];
-            egui::ComboBox::from_label("Algorithm").selected_text(ALGS[usize::from(st.algorithm.min(2))]).show_ui(ui, |ui| {
+            egui::ComboBox::from_label(au_core::i18n::tr_ui("Algorithm")).selected_text(ALGS[usize::from(st.algorithm.min(2))]).show_ui(ui, |ui| {
                 for (i, a) in ALGS.iter().enumerate() {
                     ui.selectable_value(&mut st.algorithm, i as u8, *a);
                 }
             });
             const WINS: [&str; 10] = ["Rectangular", "Bartlett", "Hamming", "Hann", "Blackman", "Blackman-Harris", "Welch", "Gaussian(a=2.5)", "Gaussian(a=3.5)", "Gaussian(a=4.5)"];
-            egui::ComboBox::from_label("Window type").selected_text(WINS[usize::from(st.window_type.min(9))]).show_ui(ui, |ui| {
+            egui::ComboBox::from_label(au_core::i18n::tr_ui("Window type")).selected_text(WINS[usize::from(st.window_type.min(9))]).show_ui(ui, |ui| {
                 for (i, w) in WINS.iter().enumerate() {
                     ui.selectable_value(&mut st.window_type, i as u8, *w);
                 }
             });
-            egui::ComboBox::from_label("Window size").selected_text(st.window_size.to_string()).show_ui(ui, |ui| {
+            egui::ComboBox::from_label(au_core::i18n::tr_ui("Window size")).selected_text(st.window_size.to_string()).show_ui(ui, |ui| {
                 for k in 3..=15 {
                     ui.selectable_value(&mut st.window_size, 1usize << k, (1usize << k).to_string());
                 }
             });
             if st.algorithm != 2 {
-                egui::ComboBox::from_label("Zero padding factor").selected_text(st.zero_padding.to_string()).show_ui(ui, |ui| {
+                egui::ComboBox::from_label(au_core::i18n::tr_ui("Zero padding factor")).selected_text(st.zero_padding.to_string()).show_ui(ui, |ui| {
                     for z in [1u8, 2, 4, 8, 16] {
                         ui.selectable_value(&mut st.zero_padding, z, z.to_string());
                     }
@@ -1832,7 +1872,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     fn effect_windows(&mut self, ctx: &egui::Context) {
         if let Some(mut state) = self.plugin_manager.take() {
             let mut open = true;
-            egui::Window::new("Plugin Manager").open(&mut open).default_size([760.0, 420.0]).show(ctx, |ui| {
+            egui::Window::new(au_core::i18n::tr_ui("Plugin Manager")).open(&mut open).default_size([760.0, 420.0]).show(ctx, |ui| {
                 crate::plugin_manager::plugin_manager_ui(ui, &mut self.plugins, &mut state);
             });
             if open {
@@ -1963,17 +2003,17 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 let mut open_editor = false;
                 let mut close_editor = false;
 
-                egui::Window::new("Plugin editor").show(ctx, |ui| {
+                egui::Window::new(au_core::i18n::tr_ui("Plugin editor")).show(ctx, |ui| {
                     if editor_open {
-                        if ui.button("Close editor").clicked() {
+                        if ui.button(au_core::i18n::tr_ui("Close editor")).clicked() {
                             close_editor = true;
                         }
-                        ui.label("Editor process active");
+                        ui.label(au_core::i18n::tr_ui("Editor process active"));
                     } else {
-                        if ui.button("Open editor").clicked() {
+                        if ui.button(au_core::i18n::tr_ui("Open editor")).clicked() {
                             open_editor = true;
                         }
-                        ui.label("Editor is not running");
+                        ui.label(au_core::i18n::tr_ui("Editor is not running"));
                     }
                 });
 
@@ -2067,7 +2107,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             let mut changed = false;
             let plugins = std::mem::take(&mut self.plugins);
 
-            egui::Window::new("Realtime Effects")
+            egui::Window::new(au_core::i18n::tr_ui("Realtime Effects"))
                 .open(&mut open)
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
@@ -2225,7 +2265,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
 
     fn import_labels(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("Audacity label track", &["txt"])
+            .add_filter(au_core::i18n::tr_ui("Audacity label track"), &["txt"])
             .pick_file()
         {
             match std::fs::read_to_string(&path) {
@@ -2257,7 +2297,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             .collect::<Vec<_>>()
             .join("\n");
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("Audacity label track", &["txt"])
+            .add_filter(au_core::i18n::tr_ui("Audacity label track"), &["txt"])
             .save_file()
         {
             self.status = match std::fs::write(path, contents) {
@@ -2268,25 +2308,57 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        let shortcuts = ctx.input(|input| {
-            let ctrl = input.modifiers.ctrl;
-            (
-                ctrl && input.key_pressed(egui::Key::X),
-                ctrl && input.key_pressed(egui::Key::C),
-                ctrl && input.key_pressed(egui::Key::V),
-                ctrl && !input.modifiers.shift && input.key_pressed(egui::Key::Z),
-                (ctrl && input.modifiers.shift && input.key_pressed(egui::Key::Z))
-                    || (ctrl && input.key_pressed(egui::Key::Y)),
-                input.key_pressed(egui::Key::Delete),
-                input.key_pressed(egui::Key::Space),
-                ctrl && input.key_pressed(egui::Key::I),
-                ctrl && input.key_pressed(egui::Key::J),
-                ctrl && input.key_pressed(egui::Key::B),
-                ctrl && input.key_pressed(egui::Key::Num1),
-                ctrl && input.key_pressed(egui::Key::Num3),
-                ctrl && input.key_pressed(egui::Key::F),
-            )
+        if ctx.wants_keyboard_input() {
+            return;
+        }
+        // Pressed keys as Audacity key strings, resolved through the (remappable) key map.
+        let pressed: Vec<String> = ctx.input(|input| {
+            input
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    egui::Event::Key { key, pressed: true, repeat: false, modifiers, .. } => {
+                        egui_key_to_audacity(*key, *modifiers)
+                    }
+                    _ => None,
+                })
+                .collect()
         });
+        let mut commands: Vec<String> = pressed
+            .iter()
+            .filter_map(|k| crate::shortcuts::KeyCombo::parse(k))
+            .filter_map(|combo| self.keymap.command_for(&combo).map(str::to_owned))
+            .collect();
+        let mut take = |ids: &[&str]| {
+            let hit = commands.iter().position(|c| ids.contains(&c.as_str()));
+            hit.map(|i| commands.remove(i)).is_some()
+        };
+        let shortcuts = (
+            take(&["Cut"]),
+            take(&["Copy"]),
+            take(&["Paste"]),
+            take(&["Undo"]),
+            take(&["Redo"]),
+            take(&["Delete", "DeleteKey", "DeleteKey2"]),
+            take(&["DefaultPlayStop", "PlayStop"]),
+            take(&["Split"]),
+            take(&["Join"]),
+            take(&["AddLabel"]),
+            take(&["ZoomIn"]),
+            take(&["ZoomOut"]),
+            take(&["FitInWindow"]),
+        );
+        let preferences = take(&["Preferences"]);
+        if preferences {
+            self.prefs_dialog.open_with(&self.prefs);
+        }
+        // Everything else goes through the scripting layer under its Audacity command id.
+        for id in commands {
+            let (message, ok) = self.execute_script(&format!("{id}:"));
+            if !ok {
+                self.status = message;
+            }
+        }
 
         let (
             cut,
@@ -2957,12 +3029,12 @@ fn draw_note_tracks(&mut self, ui: &mut egui::Ui) {
         let mut velocity = initial_velocity;
         let mut remove = false;
         ui.horizontal(|ui| {
-            ui.checkbox(&mut mute, "Mute");
-            ui.checkbox(&mut solo, "Solo");
-            ui.label("Velocity dB");
+            ui.checkbox(&mut mute, au_core::i18n::tr_ui("Mute"));
+            ui.checkbox(&mut solo, au_core::i18n::tr_ui("Solo"));
+            ui.label(au_core::i18n::tr_ui("Velocity dB"));
             ui.add(egui::DragValue::new(&mut velocity));
             velocity = velocity.clamp(-36.0, 36.0);
-            remove = ui.button("Remove").clicked();
+            remove = ui.button(au_core::i18n::tr_ui("Remove")).clicked();
         });
 
         if remove {
@@ -3337,7 +3409,7 @@ fn draw_note_tracks(&mut self, ui: &mut egui::Ui) {
     fn draw_windows(&mut self, ctx: &egui::Context) {
 if self.ffmpeg_window {
     let mut retry_requested = false;
-    egui::Window::new("FFmpeg")
+    egui::Window::new(au_core::i18n::tr_ui("FFmpeg"))
         .open(&mut self.ffmpeg_window)
         .show(ctx, |ui| match &self.ffmpeg_status {
             au_io::ffmpeg::FfmpegStatus::Available { version } => {
@@ -3348,7 +3420,7 @@ if self.ffmpeg_window {
             au_io::ffmpeg::FfmpegStatus::Missing { message } => {
                 ui.label(egui::RichText::new(message).monospace());
                 ui.label(format!("Required: {}", au_io::ffmpeg::SUPPORTED));
-                if ui.button("Retry detection").clicked() {
+                if ui.button(au_core::i18n::tr_ui("Retry detection")).clicked() {
                     retry_requested = true;
                 }
             }
@@ -3360,16 +3432,16 @@ if self.ffmpeg_window {
         if self.speed_window {
             let mut open = self.speed_window;
             let mut apply = false;
-            egui::Window::new("Change Clip Speed")
+            egui::Window::new(au_core::i18n::tr_ui("Change Clip Speed"))
                 .open(&mut open)
                 .show(ctx, |ui| {
-                    ui.label("Speed:");
+                    ui.label(au_core::i18n::tr_ui("Speed:"));
                     ui.add(
                         egui::DragValue::new(&mut self.speed_percent)
                             .speed(1.0)
                             .suffix("%"),
                     );
-                    if ui.button("Apply").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Apply")).clicked() {
                         apply = true;
                     }
                 });
@@ -3383,10 +3455,10 @@ if self.ffmpeg_window {
             let mut open = self.record_opts_window;
             let mut start_recording = false;
             let mut capture_noise = false;
-            egui::Window::new("Recording options")
+            egui::Window::new(au_core::i18n::tr_ui("Recording options"))
                 .open(&mut open)
                 .show(ctx, |ui| {
-                    egui::ComboBox::from_label("Mode")
+                    egui::ComboBox::from_label(au_core::i18n::tr_ui("Mode"))
                         .selected_text(match self.record_mode {
                             RecordModeUi::NewTrack => "New track",
                             RecordModeUi::Overdub => "Overdub",
@@ -3416,7 +3488,7 @@ if self.ffmpeg_window {
                                 .range(0.0..=60.0)
                                 .suffix(" s preroll"),
                         );
-                        ui.label("Punch uses the current selection on the selected track.");
+                        ui.label(au_core::i18n::tr_ui("Punch uses the current selection on the selected track."));
                     }
                     ui.add(
                         egui::DragValue::new(&mut self.record_latency_ms)
@@ -3432,7 +3504,7 @@ if self.ffmpeg_window {
                     );
 
                     ui.separator();
-                    egui::ComboBox::from_label("Trigger")
+                    egui::ComboBox::from_label(au_core::i18n::tr_ui("Trigger"))
                         .selected_text(match self.record_trigger {
                             RecordTriggerUi::Immediate => "Immediate",
                             RecordTriggerUi::Timer => "Timer",
@@ -3487,7 +3559,7 @@ if self.ffmpeg_window {
                         }
                     }
 
-                    egui::ComboBox::from_label("Input")
+                    egui::ComboBox::from_label(au_core::i18n::tr_ui("Input"))
                         .selected_text(match self.input_kind {
                             InputKind::Default => "Default input",
                             InputKind::Loopback => "System audio loopback",
@@ -3508,13 +3580,13 @@ if self.ffmpeg_window {
                         "Windows only; on Linux pick a Monitor source; macOS unsupported",
                     );
                     ui.separator();
-                    ui.label("Room noise profile");
+                    ui.label(au_core::i18n::tr_ui("Room noise profile"));
                     let key = self.input_device_key();
                     if self.room_noise.ui(ui, &key) && self.noise_capture.is_none() && self.recorder.is_none() {
                         capture_noise = true;
                     }
                     ui.separator();
-                    if ui.button("Start Recording").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Start Recording")).clicked() {
                         start_recording = true;
                     }
                 });
@@ -3536,20 +3608,20 @@ if self.ffmpeg_window {
 
         if self.export_options_window {
             let mut open = self.export_options_window;
-            egui::Window::new("Export options")
+            egui::Window::new(au_core::i18n::tr_ui("Export options"))
                 .open(&mut open)
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label("Bits:");
+                        ui.label(au_core::i18n::tr_ui("Bits:"));
                         egui::ComboBox::from_id_salt("export-bits")
                             .selected_text(self.export_bits.to_string())
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut self.export_bits, 16, "16");
-                                ui.selectable_value(&mut self.export_bits, 24, "24");
-                                ui.selectable_value(&mut self.export_bits, 32, "32");
+                                ui.selectable_value(&mut self.export_bits, 16, au_core::i18n::tr_ui("16"));
+                                ui.selectable_value(&mut self.export_bits, 24, au_core::i18n::tr_ui("24"));
+                                ui.selectable_value(&mut self.export_bits, 32, au_core::i18n::tr_ui("32"));
                             });
                     });
-                    egui::ComboBox::from_label("Dither")
+                    egui::ComboBox::from_label(au_core::i18n::tr_ui("Dither"))
                         .selected_text(match self.export_dither {
                             Dither::None => "None",
                             Dither::Rectangle => "Rectangle",
@@ -3557,7 +3629,7 @@ if self.ffmpeg_window {
                             Dither::Shaped => "Shaped",
                         })
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.export_dither, Dither::None, "None");
+                            ui.selectable_value(&mut self.export_dither, Dither::None, au_core::i18n::tr_ui("None"));
                             ui.selectable_value(
                                 &mut self.export_dither,
                                 Dither::Rectangle,
@@ -3568,7 +3640,7 @@ if self.ffmpeg_window {
                                 Dither::Triangle,
                                 "Triangle",
                             );
-                            ui.selectable_value(&mut self.export_dither, Dither::Shaped, "Shaped");
+                            ui.selectable_value(&mut self.export_dither, Dither::Shaped, au_core::i18n::tr_ui("Shaped"));
                         });
                 });
             self.export_options_window = open;
@@ -3577,7 +3649,7 @@ if self.ffmpeg_window {
         if self.label_edit.is_some() {
             let mut open = true;
             let mut apply = false;
-            egui::Window::new("Edit Label")
+            egui::Window::new(au_core::i18n::tr_ui("Edit Label"))
                 .open(&mut open)
                 .show(ctx, |ui| {
                     if let Some(edit) = self.label_edit.as_mut() {
@@ -3589,7 +3661,7 @@ if self.ffmpeg_window {
                         {
                             apply = true;
                         }
-                        if ui.button("Apply").clicked() {
+                        if ui.button(au_core::i18n::tr_ui("Apply")).clicked() {
                             apply = true;
                         }
                     }
@@ -3621,7 +3693,7 @@ if self.ffmpeg_window {
             .default_width(250.0)
             .resizable(true)
             .show(ctx, |ui| {
-                ui.heading("Mixer");
+                ui.heading(au_core::i18n::tr_ui("Mixer"));
                 ui.separator();
                 for (index, name) in track_info.iter().enumerate() {
                     let mut params = self.track_mix[index];
@@ -3658,8 +3730,8 @@ if self.ffmpeg_window {
                             commit = true;
                         }
 
-                        let mute_changed = ui.checkbox(&mut params.mute, "Mute").changed();
-                        let solo_changed = ui.checkbox(&mut params.solo, "Solo").changed();
+                        let mute_changed = ui.checkbox(&mut params.mute, au_core::i18n::tr_ui("Mute")).changed();
+                        let solo_changed = ui.checkbox(&mut params.solo, au_core::i18n::tr_ui("Solo")).changed();
                         if mute_changed || solo_changed {
                             commit = true;
                         }
@@ -3770,7 +3842,7 @@ if self.ffmpeg_window {
 
         let mut update = None;
         ui.horizontal(|ui| {
-            ui.label("Start");
+            ui.label(au_core::i18n::tr_ui("Start"));
             let start_response = ui.add(
                 egui::TextEdit::singleline(&mut self.selection_start_text)
                     .id(start_id)
@@ -3788,7 +3860,7 @@ if self.ffmpeg_window {
                 }
             }
 
-            ui.label("End");
+            ui.label(au_core::i18n::tr_ui("End"));
             let end_response = ui.add(
                 egui::TextEdit::singleline(&mut self.selection_end_text)
                     .id(end_id)
@@ -3806,7 +3878,7 @@ if self.ffmpeg_window {
                 }
             }
 
-            ui.label("Length");
+            ui.label(au_core::i18n::tr_ui("Length"));
             let length_response = ui.add(
                 egui::TextEdit::singleline(&mut self.selection_length_text)
                     .id(length_id)
@@ -3856,6 +3928,10 @@ impl eframe::App for AudacityApp {
 
 impl AudacityApp {
     fn update_frame(&mut self, ctx: &egui::Context) {
+        if !self.prefs_applied {
+            self.prefs_applied = true;
+            self.apply_prefs();
+        }
         if !self.theme_applied {
             crate::theme::apply(&self.theme, ctx);
             self.theme_applied = true;
@@ -3914,29 +3990,30 @@ if let Some(pipe) = self.script_pipe.as_mut() {
         self.effect_windows(ctx);
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
+            self.menu_titles.clear();
             egui::menu::bar(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("Import audio…").clicked() {
+                ui.menu_button({ let t = au_core::i18n::tr_ui("File"); self.menu_titles.push(t.clone()); t }, |ui| {
+                    if ui.button(au_core::i18n::tr_ui("Import audio…")).clicked() {
                         ui.close_menu();
                         self.import_file();
                     }
-                    if ui.button("Open… (.aup3 / .aurs)").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Open… (.aup3 / .aurs)")).clicked() {
                         ui.close_menu();
                         self.open_project();
                     }
-                    if ui.button("Save Project").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Save Project")).clicked() {
                         ui.close_menu();
                         self.save_project();
                     }
-                    if ui.button("Save Project As…").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Save Project As…")).clicked() {
                         ui.close_menu();
                         self.save_project_as();
                     }
-                    if ui.button("Export WAV…").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Export WAV…")).clicked() {
                         ui.close_menu();
                         self.export(false);
                     }
-                    if ui.button("Export FLAC…").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Export FLAC…")).clicked() {
                         ui.close_menu();
                         self.export(true);
                     }
@@ -3961,64 +4038,66 @@ for format in au_io::ffmpeg::ExportFormat::all() {
 
 let has_note_tracks = !self.editor.state().note_tracks.is_empty();
 if ui
-    .add_enabled(has_note_tracks, egui::Button::new("Export MIDI…"))
+    .add_enabled(has_note_tracks, egui::Button::new(au_core::i18n::tr_ui("Export MIDI…")))
     .clicked()
 {
     ui.close_menu();
     self.export_midi();
 }
 
-if ui.button("FFmpeg status…").clicked() {
+if ui.button(au_core::i18n::tr_ui("FFmpeg status…")).clicked() {
     ui.close_menu();
     self.ffmpeg_window = true;
 }
-                    if ui.button("Export Audio…").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Export Audio…")).clicked() {
                         ui.close_menu();
-                        self.export_audio_dialog = Some(crate::export_glue::ExportAudioDialog::new(self.aup3_extras.tags.clone()));
+                        let mut dlg = crate::export_glue::ExportAudioDialog::new(self.aup3_extras.tags.clone());
+                        apply_export_dither(&mut dlg.chooser.format, &self.prefs);
+                        self.export_audio_dialog = Some(dlg);
                     }
-                    if ui.button("Export Multiple…").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Export Multiple…")).clicked() {
                         ui.close_menu();
                         self.export_multi_dialog = Some(crate::export_ui::ExportMultipleDialog::new(self.aup3_extras.tags.clone()));
                     }
-                    if ui.button("Metadata Editor…").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Metadata Editor…")).clicked() {
                         ui.close_menu();
                         self.metadata_editor = Some(crate::export_ui::MetadataEditor::new(self.aup3_extras.tags.clone()));
                     }
-                    if ui.button("Export options…").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Export options…")).clicked() {
                         ui.close_menu();
                         self.export_options_window = true;
                     }
                     ui.separator();
-                    if ui.button("Import Labels…").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Import Labels…")).clicked() {
                         ui.close_menu();
                         self.import_labels();
                     }
-                    if ui.button("Export Labels…").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Export Labels…")).clicked() {
                         ui.close_menu();
                         self.export_labels();
                     }
                 });
-                ui.menu_button("View", |ui| {
+                ui.menu_button({ let t = au_core::i18n::tr_ui("View"); self.menu_titles.push(t.clone()); t }, |ui| {
                     self.toolbars_menu(ui);
-                    if ui.button("Spectrogram Settings…").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Spectrogram Settings…")).clicked() {
                         self.spectrogram_settings_open = true;
                         ui.close_menu();
                     }
-                    ui.menu_button("Theme", |ui| {
+                    ui.menu_button(au_core::i18n::tr_ui("Theme"), |ui| {
                         if let Some(message) = crate::theme::theme_menu(ui, &mut self.theme, &mut self.custom_theme) {
                             self.status = message;
                         }
                     });
 
 let response = ui
-    .checkbox(&mut self.script_pipe_enabled, "mod-script-pipe")
+    .checkbox(&mut self.script_pipe_enabled, au_core::i18n::tr_ui("mod-script-pipe"))
     .on_hover_text(
         "Enable the mod-script-pipe server at /tmp/audacity_script_pipe.to.<uid> and /tmp/audacity_script_pipe.from.<uid>",
     );
 if response.changed() && self.script_pipe_enabled {
     self.script_pipe_failed = false;
 }
-                    ui.menu_button("Spectrogram scale", |ui| {
+                    ui.menu_button(au_core::i18n::tr_ui("Spectrogram scale"), |ui| {
                         use crate::spectrogram_view::FreqScale;
                         let before = self.spectrogram_settings.scale;
                         for (scale, name) in [(FreqScale::Linear, "Linear"), (FreqScale::Logarithmic, "Logarithmic"), (FreqScale::Mel, "Mel")] {
@@ -4029,22 +4108,22 @@ if response.changed() && self.script_pipe_enabled {
                         }
                     });
                     if ui
-                        .selectable_label(self.mixer_visible, "Mixer")
+                        .selectable_label(self.mixer_visible, au_core::i18n::tr_ui("Mixer"))
                         .clicked()
                     {
                         self.mixer_visible = !self.mixer_visible;
                         ui.close_menu();
                     }
                 });
-                ui.menu_button("Edit", |ui| {
-                    if ui.button("Cut").clicked() {
+                ui.menu_button({ let t = au_core::i18n::tr_ui("Edit"); self.menu_titles.push(t.clone()); t }, |ui| {
+                    if ui.button(au_core::i18n::tr_ui("Cut")).clicked() {
                         ui.close_menu();
                         if let Some(index) = self.selected_track {
                             let selection = self.selection_for_track(index);
                             self.edit_selection(|editor| editor.cut(selection));
                         }
                     }
-                    if ui.button("Copy").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Copy")).clicked() {
                         ui.close_menu();
                         if let Some(index) = self.selected_track {
                             let selection = self.selection_for_track(index);
@@ -4052,14 +4131,14 @@ if response.changed() && self.script_pipe_enabled {
                             self.report(result);
                         }
                     }
-                    if ui.button("Paste").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Paste")).clicked() {
                         ui.close_menu();
                         if let Some(index) = self.selected_track {
                             let at = self.selection_for_track(index).start;
                             self.edit_selection(|editor| editor.paste(index, at));
                         }
                     }
-                    if ui.button("Delete").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Delete")).clicked() {
                         ui.close_menu();
                         if let Some(index) = self.selected_track {
                             let selection = self.selection_for_track(index);
@@ -4067,57 +4146,62 @@ if response.changed() && self.script_pipe_enabled {
                         }
                     }
                     ui.separator();
-                    if ui.button("Split  (Ctrl+I)").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Split  (Ctrl+I)")).clicked() {
                         ui.close_menu();
                         self.split_selection();
                     }
-                    if ui.button("Join  (Ctrl+J)").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Join  (Ctrl+J)")).clicked() {
                         ui.close_menu();
                         self.join_selection();
                     }
-                    if ui.button("Change Clip Speed…").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Change Clip Speed…")).clicked() {
                         ui.close_menu();
                         self.speed_window = true;
                     }
                     ui.separator();
-                    if ui.button("Undo").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Undo")).clicked() {
                         ui.close_menu();
                         let result = self.editor.undo();
                         self.report(result);
                     }
-                    if ui.button("Redo").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Redo")).clicked() {
                         ui.close_menu();
                         let result = self.editor.redo();
                         self.report(result);
                     }
+                    ui.separator();
+                    if ui.button(au_core::i18n::tr_ui("Preferences…")).clicked() {
+                        ui.close_menu();
+                        self.prefs_dialog.open_with(&self.prefs);
+                    }
                 });
-                ui.menu_button("Tools", |ui| {
-                    if ui.button("Macros…").clicked() {
+                ui.menu_button({ let t = au_core::i18n::tr_ui("Tools"); self.menu_titles.push(t.clone()); t }, |ui| {
+                    if ui.button(au_core::i18n::tr_ui("Macros…")).clicked() {
                         self.macros.open();
                         ui.close_menu();
                     }
                 });
-                ui.menu_button("Tracks", |ui| {
-                    if ui.button("Add Label Track").clicked() {
+                ui.menu_button({ let t = au_core::i18n::tr_ui("Tracks"); self.menu_titles.push(t.clone()); t }, |ui| {
+                    if ui.button(au_core::i18n::tr_ui("Add Label Track")).clicked() {
                         ui.close_menu();
                         self.editor.add_label_track("Labels");
                         self.status = "Label track added".to_owned();
                     }
-                    if ui.button("Add Label at Selection  (Ctrl+B)").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Add Label at Selection  (Ctrl+B)")).clicked() {
                         ui.close_menu();
                         self.add_label_at_selection();
                     }
-                    if ui.button("Import Labels…").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Import Labels…")).clicked() {
                         ui.close_menu();
                         self.import_labels();
                     }
-                    if ui.button("Export Labels…").clicked() {
+                    if ui.button(au_core::i18n::tr_ui("Export Labels…")).clicked() {
                         ui.close_menu();
                         self.export_labels();
                     }
                     ui.separator();
                     let mut sync_lock = self.sync_lock;
-                    if ui.checkbox(&mut sync_lock, "Sync-Lock").changed() {
+                    if ui.checkbox(&mut sync_lock, au_core::i18n::tr_ui("Sync-Lock")).changed() {
                         self.sync_lock = sync_lock;
                         self.editor.set_sync_lock(sync_lock);
                     }
@@ -4130,7 +4214,7 @@ if response.changed() && self.script_pipe_enabled {
                 ] {
                     ui.menu_button(menu, |ui| {
                         if kind == EffectKind::Process
-                            && ui.button("Realtime Effects…").clicked()
+                            && ui.button(au_core::i18n::tr_ui("Realtime Effects…")).clicked()
                         {
                             ui.close_menu();
                             self.rt_window = true;
@@ -4164,7 +4248,7 @@ if response.changed() && self.script_pipe_enabled {
                                     if self.plugins.is_scanning() {
                                         ui.add_enabled(
                                             false,
-                                            egui::Button::new("Scanning plugins…"),
+                                            egui::Button::new(au_core::i18n::tr_ui("Scanning plugins…")),
                                         );
                                     } else {
                                         for d in self.plugins.enabled() {
@@ -4188,11 +4272,11 @@ if response.changed() && self.script_pipe_enabled {
                                             }
                                         }
 
-                                        if ui.button("Plugin Manager…").clicked() {
+                                        if ui.button(au_core::i18n::tr_ui("Plugin Manager…")).clicked() {
                                             self.plugin_manager = Some(Default::default());
                                             ui.close_menu();
                                         }
-                                        if ui.button("Rescan plugins").clicked() {
+                                        if ui.button(au_core::i18n::tr_ui("Rescan plugins")).clicked() {
                                             self.plugins.start_scan();
                                             ui.close_menu();
                                         }
@@ -4210,7 +4294,7 @@ if response.changed() && self.script_pipe_enabled {
                 let visible = ui.available_width() as f64 / self.zoom.pixels_per_sec.max(0.1);
                 let max_offset = (duration - visible).max(0.0);
                 self.zoom.h_offset = self.zoom.h_offset.clamp(0.0, max_offset);
-                ui.label("Horizontal scroll:");
+                ui.label(au_core::i18n::tr_ui("Horizontal scroll:"));
                 ui.add(
                     egui::Slider::new(&mut self.zoom.h_offset, 0.0..=max_offset)
                         .show_value(false),
@@ -4324,7 +4408,7 @@ if response.changed() && self.script_pipe_enabled {
                 self.draw_labels(ui);
                 if count == 0 && self.editor.state().labels.is_empty() && self.editor.state().note_tracks.is_empty() {
                     ui.centered_and_justified(|ui| {
-                        ui.label("Open or import audio to begin.");
+                        ui.label(au_core::i18n::tr_ui("Open or import audio to begin."));
                     });
                 }
             });
@@ -4339,7 +4423,7 @@ if response.changed() && self.script_pipe_enabled {
                     ui.label(format!("Label {}:{}", track + 1, label + 1));
                 }
                 if self.player.is_some() {
-                    ui.label("Playhead active");
+                    ui.label(au_core::i18n::tr_ui("Playhead active"));
                 }
             });
 
@@ -4358,6 +4442,7 @@ if response.changed() && self.script_pipe_enabled {
                 true
             }
         });
+        self.show_preferences(ctx);
         self.poll_io_jobs();
         if !self.io_jobs.is_empty() { ctx.request_repaint_after(std::time::Duration::from_millis(50)); }
         self.progress.show(ctx);
@@ -4605,7 +4690,7 @@ impl AudacityApp {
         let mut open = true;
         let mut apply: Option<bool> = None; // Some(false)=project, Some(true)=files
         let d = &mut self.macros;
-        egui::Window::new("Macros").open(&mut open).default_width(520.0).show(ctx, |ui| {
+        egui::Window::new(au_core::i18n::tr_ui("Macros")).open(&mut open).default_width(520.0).show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     for n in d.names.clone() {
@@ -4615,7 +4700,7 @@ impl AudacityApp {
                     }
                     ui.horizontal(|ui| {
                         ui.text_edit_singleline(&mut d.new_name);
-                        if ui.button("New").clicked() && !d.new_name.trim().is_empty() {
+                        if ui.button(au_core::i18n::tr_ui("New")).clicked() && !d.new_name.trim().is_empty() {
                             if let Some(mc) = d.mc.as_ref() {
                                 mc.add_macro(d.new_name.trim());
                                 d.names = mc.get_names();
@@ -4625,7 +4710,7 @@ impl AudacityApp {
                         }
                     });
                     let fixed = au_script::macros::MacroCommands::is_fixed(&d.current);
-                    if ui.add_enabled(!fixed && !d.current.is_empty(), egui::Button::new("Remove")).clicked() {
+                    if ui.add_enabled(!fixed && !d.current.is_empty(), egui::Button::new(au_core::i18n::tr_ui("Remove"))).clicked() {
                         if let Some(mc) = d.mc.as_ref() {
                             mc.delete_macro(&d.current);
                             d.names = mc.get_names();
@@ -4638,7 +4723,7 @@ impl AudacityApp {
                     ui.label(format!("Macro: {}", d.current));
                     ui.add(egui::TextEdit::multiline(&mut d.text).code_editor().desired_rows(10));
                     ui.horizontal(|ui| {
-                        if ui.button("Save").clicked() {
+                        if ui.button(au_core::i18n::tr_ui("Save")).clicked() {
                             let lines = d.lines();
                             if let Some(mc) = d.mc.as_mut() {
                                 mc.set_commands(lines);
@@ -4648,10 +4733,10 @@ impl AudacityApp {
                                 };
                             }
                         }
-                        if ui.button("Apply to Project").clicked() {
+                        if ui.button(au_core::i18n::tr_ui("Apply to Project")).clicked() {
                             apply = Some(false);
                         }
-                        if ui.button("Apply to Files…").clicked() {
+                        if ui.button(au_core::i18n::tr_ui("Apply to Files…")).clicked() {
                             apply = Some(true);
                         }
                     });
@@ -4695,4 +4780,213 @@ enum IoJob {
 enum IoDone {
     Import(Result<Result<au_core::AudioBuffer, String>, au_runtime::JobError>),
     Export(Result<String, au_runtime::JobError>),
+}
+
+/// egui key event -> Audacity NormalizedKeyString (e.g. "Ctrl+Shift+Z", "Space", "Return").
+pub(crate) fn egui_key_to_audacity(key: egui::Key, m: egui::Modifiers) -> Option<String> {
+    use egui::Key as K;
+    let name = match key {
+        K::Enter => "Return".to_owned(),
+        K::ArrowLeft => "Left".to_owned(),
+        K::ArrowRight => "Right".to_owned(),
+        K::ArrowUp => "Up".to_owned(),
+        K::ArrowDown => "Down".to_owned(),
+        K::Comma => ",".to_owned(),
+        K::Period => ".".to_owned(),
+        K::OpenBracket => "[".to_owned(),
+        K::CloseBracket => "]".to_owned(),
+        K::Slash => "/".to_owned(),
+        K::Backslash => "\\".to_owned(),
+        K::Minus => "-".to_owned(),
+        K::Equals => "=".to_owned(),
+        K::Semicolon => ";".to_owned(),
+        other => {
+            let n = other.name();
+            n.strip_prefix("Num").filter(|d| d.len() == 1).unwrap_or(n).to_owned()
+        }
+    };
+    let mut s = String::new();
+    if m.command || m.ctrl { s.push_str("Ctrl+"); }
+    if m.alt { s.push_str("Alt+"); }
+    if m.shift { s.push_str("Shift+"); }
+    s.push_str(&name);
+    Some(s)
+}
+
+/// Where this app keeps its audacity.cfg (AU_PREFS_PATH overrides). It never writes
+/// Audacity's own file; on first run Audacity's ~/.config/audacity/audacity.cfg is imported.
+fn prefs_path() -> PathBuf {
+    if let Some(p) = std::env::var_os("AU_PREFS_PATH") {
+        return PathBuf::from(p);
+    }
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("audacity-rs").join("audacity.cfg")
+}
+
+fn load_prefs() -> au_core::prefs::Prefs {
+    let path = prefs_path();
+    if let Ok(p) = au_core::prefs::Prefs::load(&path) {
+        return p;
+    }
+    if std::env::var_os("AU_PREFS_PATH").is_none() {
+        if let Ok(p) = au_core::prefs::Prefs::load(au_core::prefs::default_cfg_path()) {
+            return p;
+        }
+    }
+    au_core::prefs::Prefs::new()
+}
+
+/// Quality > High-quality conversion dither (Audacity uses it for export).
+fn apply_export_dither(format: &mut au_io::export::ExportFormat, prefs: &au_core::prefs::Prefs) {
+    use au_io::export::intfmt::AudDither;
+    use au_io::export::ExportFormat as F;
+    let kind = match prefs.high_quality_dither_kind().as_str() {
+        "None" => AudDither::None,
+        "Rectangle" => AudDither::Rectangle,
+        "Triangle" => AudDither::Triangle,
+        _ => AudDither::Shaped,
+    };
+    match format {
+        F::Pcm(o) => o.dither = kind,
+        F::Flac(o) => o.dither = kind,
+        F::WavPack(o) => o.dither = kind,
+        _ => {}
+    }
+}
+
+impl AudacityApp {
+    /// Applies preferences to the running app: language, shortcuts, default project rate.
+    fn apply_prefs(&mut self) {
+        let lang = self.prefs.language();
+        let code = match lang.as_str() {
+            "" | "English" | "en" => "en".to_owned(),
+            other => other.to_owned(),
+        };
+        if let Err(e) = au_core::i18n::set_language(&code, &au_core::i18n::default_search_dirs()) {
+            self.status = e;
+        }
+        self.keymap = crate::shortcuts::KeyMap::load_from_prefs(&self.prefs);
+        // Quality > Default Sample Rate for a still-empty project (Audacity's ProjectRate default).
+        let rate = self.prefs.quality_default_rate();
+        let empty = au_core::ProjectState { sample_rate: self.editor.state().sample_rate, ..Default::default() };
+        if *self.editor.state() == empty && rate != empty.sample_rate {
+            self.editor = au_core::Editor::new(au_core::ProjectState { sample_rate: rate, ..Default::default() });
+        }
+    }
+
+    fn show_preferences(&mut self, ctx: &egui::Context) {
+        if !self.prefs_dialog.open {
+            return;
+        }
+        let devices = crate::prefs_dialog::DeviceLists::default();
+        let keymap = &mut self.keymap;
+        let filter = &mut self.keys_filter;
+        let xml_path = &mut self.keys_xml_path;
+        let mut keys_status = String::new();
+        let result = self.prefs_dialog.show(ctx, &devices, &mut |ui: &mut egui::Ui| {
+            keyboard_page(ui, keymap, filter, xml_path, &mut keys_status);
+        });
+        if !keys_status.is_empty() {
+            self.status = keys_status;
+        }
+        match result {
+            Some(Some(mut new_prefs)) => {
+                self.keymap.save_to_prefs(&mut new_prefs);
+                let changed = crate::prefs_dialog::changed_keys(&self.prefs, &new_prefs).len();
+                self.prefs = new_prefs;
+                self.status = format!("{changed} preference(s) changed");
+                if let Some(dir) = prefs_path().parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                if let Err(e) = self.prefs.save(prefs_path()) {
+                    self.status = format!("Could not save preferences: {e}");
+                }
+                self.apply_prefs();
+            }
+            Some(None) => self.keymap = crate::shortcuts::KeyMap::load_from_prefs(&self.prefs),
+            None => {}
+        }
+    }
+}
+
+/// Preferences > Keyboard (KeyConfigPrefs): filterable list, set/clear, Import/Export XML, Defaults.
+fn keyboard_page(
+    ui: &mut egui::Ui,
+    keymap: &mut crate::shortcuts::KeyMap,
+    filter: &mut String,
+    xml_path: &mut String,
+    status: &mut String,
+) {
+    use au_core::i18n::tr_ui;
+    ui.horizontal(|ui| {
+        ui.label(tr_ui("Searc&h:").replace('&', ""));
+        ui.text_edit_singleline(filter);
+    });
+    let rows: Vec<(String, String)> = keymap
+        .iter()
+        .map(|(id, k)| (id.to_owned(), k.map(|k| k.to_audacity_string()).unwrap_or_default()))
+        .filter(|(id, k)| {
+            filter.is_empty()
+                || id.to_lowercase().contains(&filter.to_lowercase())
+                || k.to_lowercase().contains(&filter.to_lowercase())
+        })
+        .collect();
+    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+        egui::Grid::new("keys_grid").striped(true).show(ui, |ui| {
+            for (id, key) in rows {
+                ui.label(&id);
+                let mut text = key.clone();
+                if ui.text_edit_singleline(&mut text).lost_focus() && text != key {
+                    if text.trim().is_empty() {
+                        keymap.set(&id, None);
+                    } else if let Some(combo) = crate::shortcuts::KeyCombo::parse(&text) {
+                        let clash = keymap.conflicts(&combo, &id);
+                        if !clash.is_empty() {
+                            *status = format!("{} is already used by {}", combo.to_audacity_string(), clash.join(", "));
+                        }
+                        keymap.set(&id, Some(combo));
+                    } else {
+                        *status = format!("Not a valid key: {text}");
+                    }
+                }
+                ui.end_row();
+            }
+        });
+    });
+    ui.horizontal(|ui| {
+        if ui.button(tr_ui("Clear")).clicked() {
+            *filter = String::new();
+        }
+        ui.menu_button(tr_ui("Defaults"), |ui| {
+            if ui.button(tr_ui("Standard")).clicked() {
+                keymap.reset_standard();
+                ui.close_menu();
+            }
+            if ui.button(tr_ui("Full")).clicked() {
+                keymap.reset_full();
+                ui.close_menu();
+            }
+        });
+    });
+    ui.horizontal(|ui| {
+        ui.label(au_core::i18n::tr_ui("XML:"));
+        ui.text_edit_singleline(xml_path);
+        if ui.button(tr_ui("Import...")).clicked() {
+            match std::fs::read_to_string(&*xml_path).map_err(|e| e.to_string()).and_then(|t| keymap.import_xml(&t)) {
+                Ok(n) => *status = format!("Loaded {n} keyboard shortcuts"),
+                Err(e) => *status = format!("Import failed: {e}"),
+            }
+        }
+        if ui.button(tr_ui("Export...")).clicked() {
+            let ids: Vec<String> = keymap.iter().map(|(id, _)| id.to_owned()).collect();
+            let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+            *status = match std::fs::write(&*xml_path, keymap.to_xml(&ids)) {
+                Ok(()) => format!("Exported shortcuts to {xml_path}"),
+                Err(e) => format!("Export failed: {e}"),
+            };
+        }
+    });
 }
