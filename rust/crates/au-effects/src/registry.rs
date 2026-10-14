@@ -10,6 +10,10 @@ pub fn all() -> Vec<Box<dyn BuiltinEffect>> {
     v.extend(fx::fix_distortion::all());
     v.extend(fx::fix_nyqfilters::all());
     v.extend(fx::fix_dynamics::all());
+    v.extend(fx::fix_speedpitch::all());
+    v.extend(fx::fix_paulstretch::all());
+    v.extend(fx::fix_loudness::all());
+    v.extend(fx::fix_findclipping::all());
     v.extend(fx::simple::all());
     v.extend(fx::filters::all());
     v.extend(fx::modulation::all());

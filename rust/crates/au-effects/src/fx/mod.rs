@@ -16,3 +16,7 @@ pub mod stretch;
 pub mod fix_distortion;
 pub mod fix_nyqfilters;
 pub mod fix_dynamics;
+pub mod fix_speedpitch;
+pub mod fix_paulstretch;
+pub mod fix_loudness;
+pub mod fix_findclipping;
