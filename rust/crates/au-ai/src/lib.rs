@@ -3,7 +3,8 @@
 //! - Instrumental / karaoke export
 //! - Pluggable text-to-music (`MusicGenerator`): offline procedural, OpenRouter Lyria 3, fal ACE-Step
 //! Initial code generated with openai/gpt-6-luna via OpenRouter, reviewed by hand. See docs/AI_MUSIC.md.
-use base64::Engine;
+pub mod openrouter;
+pub use openrouter::{load_openrouter_key, parse_lyria_sse, sniff_audio_mime};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -204,6 +205,11 @@ impl OpenRouterLyria {
     pub fn new_clip(api_key: impl Into<String>) -> Self {
         Self { api_key: api_key.into(), model: "google/lyria-3-clip-preview".into() }
     }
+    /// Clip backend using `load_openrouter_key()` (~/.config/openrouter/env, then env var).
+    pub fn from_config(pro: bool) -> Result<Self, AiError> {
+        let k = load_openrouter_key().ok_or_else(|| AiError::Backend("no OpenRouter API key found".into()))?;
+        Ok(if pro { Self::new_pro(k) } else { Self::new_clip(k) })
+    }
     pub fn new_pro(api_key: impl Into<String>) -> Self {
         Self { api_key: api_key.into(), model: "google/lyria-3-pro-preview".into() }
     }
@@ -225,34 +231,19 @@ impl MusicGenerator for OpenRouterLyria {
                 None => format!("{} With vocals.", req.prompt),
             }
         };
-        let resp: Value = ureq::post("https://openrouter.ai/api/v1/chat/completions")
+        // OpenRouter requires stream=true for audio output; audio arrives as base64 in SSE deltas.
+        let resp = ureq::post("https://openrouter.ai/api/v1/chat/completions")
             .set("Authorization", &format!("Bearer {}", self.api_key))
             .send_json(json!({
                 "model": self.model,
+                "stream": true,
                 "modalities": ["audio", "text"],
                 "messages": [{"role": "user", "content": content}]
             }))
-            .map_err(|e| AiError::Http(e.to_string()))?
-            .into_json()
             .map_err(|e| AiError::Http(e.to_string()))?;
-        let msg = &resp["choices"][0]["message"];
-        let audio = &msg["audio"];
-        let encoded = audio["data"]
-            .as_str()
-            .or_else(|| audio.as_array().and_then(|a| a.first()).and_then(|v| v["data"].as_str()))
-            .ok_or_else(|| AiError::Backend("response did not contain audio data".into()))?;
-        let encoded = encoded
-            .split_once(',')
-            .filter(|(p, _)| p.starts_with("data:"))
-            .map_or(encoded, |(_, d)| d);
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .map_err(|e| AiError::Backend(format!("invalid audio base64: {e}")))?;
-        let mime = audio["format"]
-            .as_str()
-            .map(|f| if f.starts_with("audio/") { f.to_owned() } else { format!("audio/{f}") })
-            .unwrap_or_else(|| "audio/mpeg".into());
-        Ok(GeneratedAudio { bytes, mime, est_cost_usd: self.estimate_cost_usd(req) })
+        let (bytes, _format, cost, _text) = parse_lyria_sse(std::io::BufReader::new(resp.into_reader()))?;
+        let mime = sniff_audio_mime(&bytes).to_owned();
+        Ok(GeneratedAudio { bytes, mime, est_cost_usd: cost.unwrap_or_else(|| self.estimate_cost_usd(req)) })
     }
 }
 

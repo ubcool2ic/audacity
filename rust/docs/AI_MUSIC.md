@@ -63,3 +63,9 @@ Reference: Audacity's official **OpenVINO AI plugins** (Intel, Windows/Linux) pr
 | Generate via Lyria 3 Pro | $0.08 |
 | Generate via ElevenLabs | ≈$0.53 |
 | Full remake (local stems + ACE-Step cover) | ≈$0.04 |
+
+## 6. Live test results (Oct 14 2026)
+- **Lyria 3 Clip via OpenRouter works.** OpenRouter requires `"stream": true` for audio output; audio arrives as base64 MP3 in SSE `delta.audio.data` chunks, cost in the final `usage.cost`. `OpenRouterLyria` now streams and parses this (`openrouter::parse_lyria_sse`).
+- Key loading: `load_openrouter_key()` reads `~/.config/openrouter/env`, falling back to `$OPENROUTER_API_KEY`.
+- 2 calls: instrumental lo-fi clip + indie-pop clip with lyrics; each 30.8 s 48 kHz MP3, **$0.04 each ($0.08 total)**, ~8–9 s latency.
+- HTDemucs on the vocal clip (Rust `instrumental` example, CPU): 13.9 s for 30.8 s (~2.2× realtime). Stem levels: vocals −20.5 dB, drums −22.1, bass −23.5, other −18.9 (mix −14.3); vocals active in 35/61 half-second windows. On the instrumental clip the vocals stem was −45 dB (no false vocals).
