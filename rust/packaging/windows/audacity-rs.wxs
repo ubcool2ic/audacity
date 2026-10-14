@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="Audacity-RS"
+      Manufacturer="audacity-rs developers"
+      Version="$(var.Version)"
+      UpgradeCode="{8C63AC10-3B77-4E89-B8A2-746C7849E851}"
+      Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Audacity-RS is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Feature Id="MainFeature" Title="Audacity-RS" Level="1">
+      <ComponentRef Id="MainApplication" />
+      <ComponentRef Id="NyquistWorker" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Audacity-RS">
+        <Component Id="MainApplication" Guid="*">
+          <File Id="AudacityRSExe" Source="$(var.BinDir)\audacity-rs.exe" KeyPath="yes">
+            <ProgId Id="Audacity-RS.Project" Description="Audacity-RS Project">
+              <Extension Id="aup3" ContentType="application/x-audacity-project">
+                <Verb Id="open" Command="Open" TargetFile="AudacityRSExe" Argument="&quot;%1&quot;" />
+              </Extension>
+            </ProgId>
+          </File>
+        </Component>
+        <Component Id="NyquistWorker" Guid="*">
+          <File Id="NyquistWorkerExe" Source="$(var.BinDir)\au-nyquist-worker.exe" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AudacityRSProgramsFolder" Name="Audacity-RS">
+        <Component Id="StartMenuShortcut" Guid="*">
+          <Shortcut Id="AudacityRSStartMenuShortcut"
+                    Name="Audacity-RS"
+                    Description="Launch Audacity-RS"
+                    Target="[INSTALLFOLDER]audacity-rs.exe"
+                    WorkingDirectory="INSTALLFOLDER" />
+          <RegistryValue Root="HKLM"
+                         Key="Software\audacity-rs"
+                         Name="StartMenuShortcut"
+                         Type="integer"
+                         Value="1"
+                         KeyPath="yes" />
+          <RemoveFolder Id="RemoveAudacityRSProgramsFolder" On="uninstall" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+  </Package>
+</Wix>

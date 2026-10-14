@@ -1,0 +1,151 @@
+name: audacity-rs packages
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust-packaging.yml'
+  pull_request:
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust-packaging.yml'
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libgl1-mesa-dev libx11-dev libxkbcommon-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev xvfb librsvg2-bin python3 ffmpeg lv2-dev lilv-utils swh-plugins
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build all targets
+        working-directory: rust
+        run: cargo build --all-targets --features au-app/gui
+      - name: Test
+        working-directory: rust
+        env:
+          AU_PIPE_TEST_PY: ${{ github.workspace }}/au3/scripts/piped-work/pipe_test.py
+        run: xvfb-run -a cargo test --features au-app/gui
+      - name: Build Debian package
+        run: bash rust/packaging/linux/build-deb.sh
+      - name: Build AppImage
+        run: bash rust/packaging/linux/build-appimage.sh --skip-build
+      - name: Smoke-test packages
+        run: |
+          bash rust/packaging/linux/smoke-test.sh rust/target/packages/*.deb
+          bash rust/packaging/linux/smoke-test.sh rust/target/packages/*.AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audacity-rs-linux
+          path: |
+            rust/target/packages/*.deb
+            rust/target/packages/*.AppImage
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Test workspace
+        working-directory: rust
+        run: cargo test --workspace
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Build MSI
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: pwsh rust/packaging/windows/build-msi.ps1
+      - name: Smoke-test executables and MSI
+        shell: pwsh
+        run: |
+          & rust/target/release/audacity-rs.exe --help
+          if ($LASTEXITCODE -ne 0) { throw "audacity-rs --help failed" }
+          & rust/target/release/audacity-rs.exe --selftest
+          if ($LASTEXITCODE -ne 0) { throw "audacity-rs --selftest failed" }
+          $Extract = Join-Path $env:RUNNER_TEMP "audacity-rs-msi-extract"
+          New-Item -ItemType Directory -Force -Path $Extract | Out-Null
+          msiexec /a (Resolve-Path "rust/target/packages/Audacity-RS-*-x64.msi") /qn "TARGETDIR=$Extract"
+          if ($LASTEXITCODE -ne 0) { throw "Administrative MSI extraction failed" }
+          $Exe = Get-ChildItem -Path $Extract -Recurse -Filter audacity-rs.exe | Select-Object -First 1
+          if (-not $Exe) { throw "Could not find extracted audacity-rs.exe" }
+          & $Exe.FullName --help
+          if ($LASTEXITCODE -ne 0) { throw "Extracted audacity-rs --help failed" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audacity-rs-windows
+          path: rust/target/packages/*.msi
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-14
+    env:
+      MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+      MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Test workspace
+        working-directory: rust
+        run: cargo test --workspace
+      - name: Install icon tools
+        run: brew install librsvg
+      - name: Import signing certificate
+        if: env.MACOS_CERT_P12_BASE64 != ''
+        shell: bash
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/audacity-rs-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+          echo "$MACOS_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/signing.p12" -k "$KEYCHAIN_PATH" -P "$MACOS_CERT_PASSWORD" -A -t cert -f pkcs12
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+      - name: Build universal DMG
+        run: bash rust/packaging/macos/build-dmg.sh --universal
+      - name: Smoke-test DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          DMG="$(echo rust/target/packages/Audacity-RS-*-universal.dmg)"
+          MOUNT="$RUNNER_TEMP/audacity-rs-mounted"
+          mkdir -p "$MOUNT"
+          hdiutil attach "$DMG" -nobrowse -mountpoint "$MOUNT"
+          cleanup() { hdiutil detach "$MOUNT" -quiet || true; }
+          trap cleanup EXIT
+          APP="$MOUNT/Audacity-RS.app"
+          "$APP/Contents/MacOS/audacity-rs" --help
+          "$APP/Contents/MacOS/audacity-rs" --selftest
+          if [[ -n "$MACOS_SIGN_IDENTITY" ]]; then
+            codesign --verify --deep --strict "$APP"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audacity-rs-macos
+          path: rust/target/packages/*.dmg
+          if-no-files-found: error
