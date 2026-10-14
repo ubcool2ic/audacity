@@ -26,28 +26,64 @@ pub enum IoError {
     Unsupported(String),
     #[error("{0}")]
     FfmpegMissing(String),
+    /// The progress callback asked to stop (user pressed Cancel).
+    #[error("cancelled")]
+    Cancelled,
 }
 
 pub fn import_file(path: &Path) -> Result<AudioBuffer, IoError> {
+    let mut progress = |_: u64, _: u64| true;
+    import_file_with_progress(path, &mut progress)
+}
+
+/// Imports an audio file, reporting progress and allowing the import to be cancelled.
+pub fn import_file_with_progress(
+    path: &Path,
+    progress: crate::export::ProgressFn,
+) -> Result<AudioBuffer, IoError> {
     let ext = path
         .extension()
         .and_then(|ext| ext.to_str())
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
     if ffmpeg::handles_extension(&ext) {
-        return ffmpeg::get()?.import(path);
+        if !progress(0, 0) {
+            return Err(IoError::Cancelled);
+        }
+        let buffer = ffmpeg::get()?.import(path)?;
+        if !progress(1, 1) {
+            return Err(IoError::Cancelled);
+        }
+        return Ok(buffer);
     }
-    match import_native(path) {
+    match import_native_with_progress(path, progress) {
         Ok(buffer) => Ok(buffer),
+        Err(IoError::Cancelled) => Err(IoError::Cancelled),
         // Like Audacity, fall back to FFmpeg for anything the built-in importers reject.
         Err(error) => match ffmpeg::get() {
-            Ok(ffmpeg) => ffmpeg.import(path).map_err(|_| error),
+            Ok(ffmpeg) => {
+                if !progress(0, 0) {
+                    return Err(IoError::Cancelled);
+                }
+                let buffer = match ffmpeg.import(path) {
+                    Ok(buffer) => buffer,
+                    Err(_) => return Err(error),
+                };
+                if !progress(1, 1) {
+                    return Err(IoError::Cancelled);
+                }
+                Ok(buffer)
+            }
             Err(_) => Err(error),
         },
     }
 }
 
-fn import_native(path: &Path) -> Result<AudioBuffer, IoError> {
+
+fn import_native_with_progress(
+    path: &Path,
+    progress: &mut dyn FnMut(u64, u64) -> bool,
+) -> Result<AudioBuffer, IoError> {
     use symphonia::core::{
         audio::SampleBuffer,
         codecs::DecoderOptions,
@@ -78,6 +114,7 @@ fn import_native(path: &Path) -> Result<AudioBuffer, IoError> {
         .default_track()
         .ok_or_else(|| IoError::Decode("no default audio track".to_owned()))?;
     let track_id = track.id;
+    let total_frames = track.codec_params.n_frames.unwrap_or(0);
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
         .map_err(|error| IoError::Decode(error.to_string()))?;
@@ -86,6 +123,7 @@ fn import_native(path: &Path) -> Result<AudioBuffer, IoError> {
         .sample_rate
         .ok_or_else(|| IoError::Decode("missing sample rate".to_owned()))?;
     let mut channels: Vec<Vec<f32>> = Vec::new();
+    let mut decoded_frames = 0_u64;
 
     loop {
         let packet = match format.next_packet() {
@@ -93,33 +131,35 @@ fn import_native(path: &Path) -> Result<AudioBuffer, IoError> {
             Err(SymphoniaError::ResetRequired) => continue,
             Err(_) => break,
         };
-        if packet.track_id() != track_id {
-            continue;
-        }
-
-        match decoder.decode(&packet) {
-            Ok(decoded) => {
-                let channel_count = decoded.spec().channels.count();
-                if channels.is_empty() {
-                    channels.resize_with(channel_count, Vec::new);
-                }
-                let mut samples =
-                    SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
-                samples.copy_interleaved_ref(decoded);
-                for (frame_index, frame) in samples.samples().chunks(channel_count).enumerate() {
-                    for channel in 0..channel_count {
-                        if let Some(output) = channels.get_mut(channel) {
-                            if let Some(&sample) = frame.get(channel) {
-                                let _ = frame_index;
-                                output.push(sample);
+        if packet.track_id() == track_id {
+            match decoder.decode(&packet) {
+                Ok(decoded) => {
+                    let channel_count = decoded.spec().channels.count();
+                    if channels.is_empty() {
+                        channels.resize_with(channel_count, Vec::new);
+                    }
+                    let mut samples =
+                        SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
+                    samples.copy_interleaved_ref(decoded);
+                    for (frame_index, frame) in samples.samples().chunks(channel_count).enumerate() {
+                        for channel in 0..channel_count {
+                            if let Some(output) = channels.get_mut(channel) {
+                                if let Some(&sample) = frame.get(channel) {
+                                    let _ = frame_index;
+                                    output.push(sample);
+                                }
                             }
                         }
+                        decoded_frames += 1;
                     }
                 }
+                Err(SymphoniaError::DecodeError(_)) => {}
+                Err(SymphoniaError::ResetRequired) => {}
+                Err(error) => return Err(IoError::Decode(error.to_string())),
             }
-            Err(SymphoniaError::DecodeError(_)) => continue,
-            Err(SymphoniaError::ResetRequired) => continue,
-            Err(error) => return Err(IoError::Decode(error.to_string())),
+        }
+        if !progress(decoded_frames, total_frames) {
+            return Err(IoError::Cancelled);
         }
     }
 
@@ -214,6 +254,37 @@ pub fn export_flac(path: &Path, buffer: &AudioBuffer, bits: usize) -> Result<(),
         .map_err(|error| IoError::Encode(format!("{error:?}")))?;
     std::fs::write(path, sink.as_slice())?;
     Ok(())
+}
+
+/// Exports planar float audio in the given format with metadata tags and progress reporting.
+pub fn export_any_with_progress(
+    path: &Path,
+    channels: &[Vec<f32>],
+    sample_rate: u32,
+    format: &export::ExportFormat,
+    tags: &au_core::tags::Tags,
+    progress: export::ProgressFn,
+) -> Result<(), IoError> {
+    match format {
+        export::ExportFormat::Pcm(o) => {
+            export::intfmt::export_pcm_with_progress(path, channels, sample_rate, o, tags, progress)
+        }
+        export::ExportFormat::Flac(o) => {
+            export::intfmt::export_flac_with_progress(path, channels, sample_rate, o, tags, progress)
+        }
+        export::ExportFormat::WavPack(o) => {
+            export::intfmt::export_wavpack_with_progress(path, channels, sample_rate, o, tags, progress)
+        }
+        export::ExportFormat::Mp3(o) => {
+            export::mp3::export_mp3_with_progress(path, channels, sample_rate, o, tags, progress)
+        }
+        export::ExportFormat::Vorbis(o) => {
+            export::ogg_opus::export_vorbis_with_progress(path, channels, sample_rate, o, tags, progress)
+        }
+        export::ExportFormat::Opus(o) => {
+            export::ogg_opus::export_opus_with_progress(path, channels, sample_rate, o, tags, progress)
+        }
+    }
 }
 
 #[cfg(feature = "device")]
@@ -486,6 +557,38 @@ mod tests {
         for (a, b) in original.interleaved().iter().zip(decoded.interleaved()) {
             assert!((a - b).abs() <= 1.0e-5);
         }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn wav_import_progress_and_samples() {
+        let path = path("wav");
+        let original = sample_buffer();
+        export_wav(&path, &original, 32).unwrap();
+        let expected = import_file(&path).unwrap();
+        let mut updates = Vec::new();
+        let mut callback = |done, total| {
+            updates.push((done, total));
+            true
+        };
+        let imported = import_file_with_progress(&path, &mut callback).unwrap();
+        assert!(!updates.is_empty());
+        assert!(updates.windows(2).all(|pair| pair[0].0 <= pair[1].0));
+        let &(done, total) = updates.last().unwrap();
+        assert_eq!(done, total);
+        assert_eq!(imported, expected);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn wav_import_progress_can_cancel() {
+        let path = path("wav");
+        export_wav(&path, &sample_buffer(), 32).unwrap();
+        let mut callback = |_, _| false;
+        assert!(matches!(
+            import_file_with_progress(&path, &mut callback),
+            Err(IoError::Cancelled)
+        ));
         let _ = std::fs::remove_file(path);
     }
 

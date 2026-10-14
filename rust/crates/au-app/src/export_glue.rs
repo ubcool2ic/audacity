@@ -10,7 +10,6 @@ use crate::fx_bridge;
 use au_core::tags::Tags;
 use au_core::{AudioBuffer, ProjectState};
 use au_io::export::{
-    export_any,
     intfmt::{
         FlacOptions, PcmOptions, WavPackOptions, SF_FORMAT_AIFF, SF_FORMAT_ALAW,
         SF_FORMAT_FLOAT, SF_FORMAT_PCM_16, SF_FORMAT_PCM_24, SF_FORMAT_PCM_32,
@@ -482,6 +481,7 @@ pub fn mixdown(
 }
 
 /// Exports a mixed project range to `path`.
+#[allow(dead_code)] // library API (CLI/tests)
 pub fn export_range(
     path: &Path,
     state: &ProjectState,
@@ -492,17 +492,47 @@ pub fn export_range(
     fmt: &ExportFormat,
     tags: &Tags,
 ) -> Result<(), String> {
-    let channels = mixdown(state, extras, t0, t1, tracks);
-    export_any(path, &channels, state.sample_rate.max(1), fmt, tags)
+    export_range_with_progress(path, state, extras, t0, t1, tracks, fmt, tags, &mut |_, _| true)
         .map_err(|error| error.to_string())
 }
 
+/// [`export_range`] with encoder progress `(frames done, frames total) -> keep going`.
+#[allow(clippy::too_many_arguments)]
+pub fn export_range_with_progress(
+    path: &Path,
+    state: &ProjectState,
+    extras: &au_project::aup3::Aup3Extras,
+    t0: f64,
+    t1: f64,
+    tracks: Option<&[usize]>,
+    fmt: &ExportFormat,
+    tags: &Tags,
+    progress: au_io::export::ProgressFn,
+) -> Result<(), au_io::IoError> {
+    let channels = mixdown(state, extras, t0, t1, tracks);
+    au_io::export_any_with_progress(path, &channels, state.sample_rate.max(1), fmt, tags, progress)
+}
+
 /// Plans, renders, and exports a label- or track-split batch in parallel.
+#[allow(dead_code)] // library API (CLI/tests)
 pub fn export_multiple(
     state: &ProjectState,
     extras: &au_project::aup3::Aup3Extras,
     req: &ExportMultipleRequest,
     fmt: &ExportFormat,
+) -> Result<Vec<PathBuf>, String> {
+    export_multiple_with(state, extras, req, fmt, &au_runtime::CancelToken::new(), &au_runtime::pool::Progress::new(0))
+}
+
+/// [`export_multiple`] reporting one progress unit per finished file and stopping
+/// (also inside an encoder) when `cancel` is set.
+pub fn export_multiple_with(
+    state: &ProjectState,
+    extras: &au_project::aup3::Aup3Extras,
+    req: &ExportMultipleRequest,
+    fmt: &ExportFormat,
+    cancel: &au_runtime::CancelToken,
+    progress: &au_runtime::pool::Progress,
 ) -> Result<Vec<PathBuf>, String> {
     let mut items: Vec<ExportItem> = match req.split_mode {
         SplitMode::Labels => {
@@ -565,27 +595,33 @@ pub fn export_multiple(
         jobs.push((item, path));
     }
 
-    let count = jobs.len();
-    let cancel = au_runtime::CancelToken::new();
-    let progress = au_runtime::pool::Progress::new(count as u64);
+    progress.set_total(jobs.len() as u64);
     au_effects::offline::runtime()
         .pool()
         .install(|| {
             au_runtime::compute::map_items(
                 au_runtime::compute::Exec::Parallel,
                 &jobs,
-                &cancel,
-                &progress,
+                cancel,
+                progress,
                 |(item, path)| {
                     let channels =
                         mixdown(state, extras, item.t0, item.t1, Some(&item.tracks));
-                    export_any(path, &channels, state.sample_rate.max(1), fmt, &item.tags)
-                        .map_err(|error| au_runtime::JobError::Failed(error.to_string()))?;
+                    let mut keep_going = |_: u64, _: u64| !cancel.is_cancelled();
+                    au_io::export_any_with_progress(path, &channels, state.sample_rate.max(1), fmt, &item.tags, &mut keep_going)
+                        .map_err(|error| match error {
+                            au_io::IoError::Cancelled => au_runtime::JobError::Cancelled,
+                            error => au_runtime::JobError::Failed(error.to_string()),
+                        })?;
                     Ok(path.clone())
                 },
             )
         })
-        .map_err(|error| format!("{error:?}"))
+        .map_err(|error| match error {
+            au_runtime::JobError::Cancelled => "cancelled".to_owned(),
+            au_runtime::JobError::Failed(m) => m,
+            error => format!("{error:?}"),
+        })
 }
 
 /// Dialog state for a single-range audio export.

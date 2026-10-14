@@ -538,12 +538,14 @@ fn import_path_background(&mut self, path: PathBuf) {
         return self.import_path(path);
     }
     let p = path.clone();
-    let handle = self.io_runtime.submit(1, move |ctx: &au_runtime::pool::JobCtx| {
+    let handle = self.io_runtime.submit(0, move |ctx: &au_runtime::pool::JobCtx| {
         ctx.cancel.check()?;
-        let r = au_io::import_file(&p).map_err(|e| format!("{e:?}"));
-        ctx.cancel.check()?;
-        ctx.progress.add(1);
-        Ok(r)
+        let mut last = 0;
+        let mut report = io_progress(ctx, &mut last);
+        match au_io::import_file_with_progress(&p, &mut report) {
+            Err(au_io::IoError::Cancelled) => Err(au_runtime::JobError::Cancelled),
+            r => Ok(r.map_err(|e| format!("{e:?}"))),
+        }
     });
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_owned();
     let ticket = self.progress.register("Import", format!("Importing {name}"), &handle, false);
@@ -1478,11 +1480,12 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 self.aup3_extras.tags = tags.clone();
                 let (state, extras) = (self.editor.state().clone(), self.aup3_extras.clone());
                 let shown = path.display().to_string();
-                let handle = self.io_runtime.submit(1, move |ctx: &au_runtime::pool::JobCtx| {
+                let handle = self.io_runtime.submit(0, move |ctx: &au_runtime::pool::JobCtx| {
                     ctx.cancel.check()?;
-                    crate::export_glue::export_range(&path, &state, &extras, t0, t1, None, &fmt, &tags)
-                        .map_err(au_runtime::JobError::Failed)?;
-                    ctx.progress.add(1);
+                    let mut last = 0;
+                    let mut report = io_progress(ctx, &mut last);
+                    crate::export_glue::export_range_with_progress(&path, &state, &extras, t0, t1, None, &fmt, &tags, &mut report)
+                        .map_err(io_job_error)?;
                     Ok(format!("Exported {}", path.display()))
                 });
                 let ticket = self.progress.register("Export Audio", format!("Exporting {shown}"), &handle, false);
@@ -1494,11 +1497,10 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 self.export_multi_dialog = None;
                 let fmt = crate::export_glue::FormatChooser::from_name(&req.format).format;
                 let (state, extras) = (self.editor.state().clone(), self.aup3_extras.clone());
-                let handle = self.io_runtime.submit(1, move |ctx: &au_runtime::pool::JobCtx| {
+                let handle = self.io_runtime.submit(0, move |ctx: &au_runtime::pool::JobCtx| {
                     ctx.cancel.check()?;
-                    let files = crate::export_glue::export_multiple(&state, &extras, &req, &fmt)
-                        .map_err(au_runtime::JobError::Failed)?;
-                    ctx.progress.add(1);
+                    let files = crate::export_glue::export_multiple_with(&state, &extras, &req, &fmt, &ctx.cancel, &ctx.progress)
+                        .map_err(|e| if ctx.cancel.is_cancelled() { au_runtime::JobError::Cancelled } else { au_runtime::JobError::Failed(e) })?;
                     Ok(format!("Exported {} files", files.len()))
                 });
                 let ticket = self.progress.register("Export Multiple", "Exporting files", &handle, false);
@@ -4989,4 +4991,25 @@ fn keyboard_page(
             };
         }
     });
+}
+
+/// Bridges an au_io progress callback (frames done/total) to a pool job's Progress and CancelToken.
+fn io_progress<'a>(ctx: &'a au_runtime::pool::JobCtx, last: &'a mut u64) -> impl FnMut(u64, u64) -> bool + 'a {
+    move |done, total| {
+        if total > 0 && ctx.progress.total() != total {
+            ctx.progress.set_total(total);
+        }
+        if done > *last {
+            ctx.progress.add(done - *last);
+            *last = done;
+        }
+        !ctx.cancel.is_cancelled()
+    }
+}
+
+fn io_job_error(error: au_io::IoError) -> au_runtime::JobError {
+    match error {
+        au_io::IoError::Cancelled => au_runtime::JobError::Cancelled,
+        error => au_runtime::JobError::Failed(error.to_string()),
+    }
 }

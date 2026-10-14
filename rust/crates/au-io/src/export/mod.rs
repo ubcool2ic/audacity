@@ -39,6 +39,10 @@ impl ExportFormat {
     }
 }
 
+/// Progress callback for long imports/exports: `(frames_done, frames_total) -> keep_going`.
+/// Returning `false` aborts with [`crate::IoError::Cancelled`]. `frames_total` is 0 when unknown.
+pub type ProgressFn<'a> = &'a mut dyn FnMut(u64, u64) -> bool;
+
 /// Exports planar float audio in the given format with metadata tags.
 pub fn export_any(path: &Path, channels: &[Vec<f32>], sample_rate: u32, format: &ExportFormat, tags: &Tags) -> Result<(), crate::IoError> {
     match format {

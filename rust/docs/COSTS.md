@@ -250,3 +250,18 @@ Luna 2 calls, $0.0189. Sol: none. **Batch total: $0.0189**
 Hand edits: language combo type fix; 12 menu commands that Audacity 3.7.3 shows without a shortcut (GetInfo Type=Menus) moved from the Standard to the Full set; i18n `tr_ui` (accelerator-free lookup); app glue (prefs load/save, apply, Keyboard page, keymap dispatch, Get/SetPreference, mechanical `tr_ui()` wrapping of 249 UI literals).
 
 **Running total (ubcool2ic): $1.9578**
+
+## Stage 10 batch 3 (ubcool2ic): au_io progress callbacks with cancel
+
+| Output | Model | USD |
+|---|---|---|
+| au-io/src/export/intfmt.rs (PCM/FLAC/WavPack _with_progress) | openai/gpt-6-luna | 0.0094 |
+| au-io/src/export/mp3.rs (_with_progress) | openai/gpt-6-luna | 0.0050 |
+| au-io/src/export/ogg_opus.rs (Vorbis/Opus _with_progress) | openai/gpt-6-luna | 0.0071 |
+| au-io/src/lib.rs (import_file_with_progress, export_any_with_progress) | openai/gpt-6-luna | 0.0052 |
+
+Luna 4 calls, $0.0267. Sol: none. **Batch total: $0.0267**
+
+Hand edits: `ProgressFn` type + `IoError::Cancelled`; removed 3 now-unused helpers; app glue (pool job Progress/CancelToken bridge, export_range_with_progress, export_multiple_with). Exports still 27/27 vs Audacity 3.7.3 (compare_exports.py).
+
+**Running total (ubcool2ic): $1.9845**

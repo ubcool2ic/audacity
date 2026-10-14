@@ -199,11 +199,14 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
-fn prepare_export(
+
+fn prepare_export_with_progress(
     path: &Path,
     channels: &[Vec<f32>],
     sample_rate: u32,
     tags: &Tags,
+    mut progress: Option<&mut dyn FnMut(u64, u64) -> bool>,
+    progress_block_frames: usize,
 ) -> Result<(CString, Vec<f32>, Vec<CString>, Vec<CString>, Vec<NativeTag>), crate::IoError> {
     if channels.is_empty() || channels.len() > u8::MAX as usize {
         return Err(crate::IoError::Unsupported(
@@ -233,9 +236,27 @@ fn prepare_export(
         .checked_mul(channels.len())
         .ok_or_else(|| crate::IoError::Unsupported("Audio buffer is too large".into()))?;
     let mut interleaved = Vec::with_capacity(sample_count);
+    let block_frames = progress_block_frames.max(1);
     for frame in 0..frames {
         for channel in channels {
             interleaved.push(channel[frame]);
+        }
+
+        if let Some(callback) = progress.as_deref_mut() {
+            let done = frame + 1;
+            if done % block_frames == 0 || done == frames {
+                if !callback(done as u64, frames as u64) {
+                    return Err(crate::IoError::Cancelled);
+                }
+            }
+        }
+    }
+
+    if frames == 0 {
+        if let Some(callback) = progress.as_deref_mut() {
+            if !callback(0, 0) {
+                return Err(crate::IoError::Cancelled);
+            }
         }
     }
 
@@ -278,6 +299,10 @@ fn native_error(code: c_int, message: &[c_char]) -> Result<(), crate::IoError> {
     }))
 }
 
+fn remove_cancelled_output(path: &Path) {
+    let _ = std::fs::remove_file(path);
+}
+
 /// Exports planar floating-point audio as Ogg Vorbis.
 ///
 /// The input channels must have equal frame counts. Vorbis quality follows
@@ -289,8 +314,30 @@ pub fn export_vorbis(
     opts: &VorbisOptions,
     tags: &Tags,
 ) -> Result<(), crate::IoError> {
-    let (path, interleaved, _names, _values, native_tags) =
-        prepare_export(path, channels, sample_rate, tags)?;
+    let mut no_progress = |_: u64, _: u64| true;
+    export_vorbis_with_progress(path, channels, sample_rate, opts, tags, &mut no_progress)
+}
+
+/// Exports planar floating-point audio as Ogg Vorbis, reporting progress as
+/// input blocks are prepared. Returning `false` from the callback cancels the
+/// export and removes any partial output file.
+pub fn export_vorbis_with_progress(
+    path: &Path,
+    channels: &[Vec<f32>],
+    sample_rate: u32,
+    opts: &VorbisOptions,
+    tags: &Tags,
+    progress: crate::export::ProgressFn<'_>,
+) -> Result<(), crate::IoError> {
+    let (path_c, interleaved, _names, _values, native_tags) =
+        match prepare_export_with_progress(path, channels, sample_rate, tags, Some(progress), 1024) {
+            Ok(prepared) => prepared,
+            Err(crate::IoError::Cancelled) => {
+                remove_cancelled_output(path);
+                return Err(crate::IoError::Cancelled);
+            }
+            Err(error) => return Err(error),
+        };
     let native_options = NativeVorbisOptions {
         quality: opts.quality.clamp(0, 10),
     };
@@ -300,7 +347,7 @@ pub fn export_vorbis(
     // for the duration of the call. The shim reads but does not retain them.
     let result = unsafe {
         audacity_export_vorbis(
-            path.as_ptr(),
+            path_c.as_ptr(),
             sample_rate,
             channels.len() as u32,
             interleaved.as_ptr(),
@@ -326,14 +373,46 @@ pub fn export_opus(
     opts: &OpusOptions,
     tags: &Tags,
 ) -> Result<(), crate::IoError> {
+    let mut no_progress = |_: u64, _: u64| true;
+    export_opus_with_progress(path, channels, sample_rate, opts, tags, &mut no_progress)
+}
+
+/// Exports planar floating-point audio as Ogg Opus, reporting progress as
+/// input blocks are prepared. Returning `false` from the callback cancels the
+/// export and removes any partial output file.
+pub fn export_opus_with_progress(
+    path: &Path,
+    channels: &[Vec<f32>],
+    sample_rate: u32,
+    opts: &OpusOptions,
+    tags: &Tags,
+    progress: crate::export::ProgressFn<'_>,
+) -> Result<(), crate::IoError> {
     if !matches!(sample_rate, 8_000 | 12_000 | 16_000 | 24_000 | 48_000) {
         return Err(crate::IoError::Unsupported(
             "Unsupported sample rate".into(),
         ));
     }
 
-    let (path, interleaved, _names, _values, native_tags) =
-        prepare_export(path, channels, sample_rate, tags)?;
+    let frame_duration_tenths_ms = opts.frame_duration as usize;
+    let frame_block_frames =
+        ((sample_rate as u64 * frame_duration_tenths_ms as u64) / 10_000).max(1) as usize;
+    let (path_c, interleaved, _names, _values, native_tags) =
+        match prepare_export_with_progress(
+            path,
+            channels,
+            sample_rate,
+            tags,
+            Some(progress),
+            frame_block_frames,
+        ) {
+            Ok(prepared) => prepared,
+            Err(crate::IoError::Cancelled) => {
+                remove_cancelled_output(path);
+                return Err(crate::IoError::Cancelled);
+            }
+            Err(error) => return Err(error),
+        };
     let native_options = NativeOpusOptions {
         bitrate: opts.bitrate as i32,
         quality: opts.quality.clamp(0, 10),
@@ -348,7 +427,7 @@ pub fn export_opus(
     // for the duration of the call. The shim reads but does not retain them.
     let result = unsafe {
         audacity_export_opus(
-            path.as_ptr(),
+            path_c.as_ptr(),
             sample_rate,
             channels.len() as u32,
             interleaved.as_ptr(),
@@ -558,5 +637,122 @@ mod tests {
             &Tags::new()
         )
         .is_err());
+    }
+
+    #[test]
+    fn vorbis_progress_is_monotonic_and_bytes_match() {
+        let audio = sine();
+        let tags = Tags::new();
+        let legacy_path = temp_path("ogg");
+        let progress_path = temp_path("ogg");
+
+        if export_vorbis(
+            &legacy_path,
+            &audio,
+            48_000,
+            &VorbisOptions::default(),
+            &tags,
+        )
+        .is_err()
+        {
+            let _ = fs::remove_file(legacy_path);
+            return;
+        }
+
+        let mut reports = Vec::new();
+        let result = export_vorbis_with_progress(
+            &progress_path,
+            &audio,
+            48_000,
+            &VorbisOptions::default(),
+            &tags,
+            &mut |done, total| {
+                reports.push((done, total));
+                true
+            },
+        );
+        if result.is_err() {
+            let _ = fs::remove_file(legacy_path);
+            let _ = fs::remove_file(progress_path);
+            return;
+        }
+
+        assert!(!reports.is_empty());
+        assert_eq!(reports.last().copied(), Some((48_000, 48_000)));
+        assert!(reports.windows(2).all(|w| w[0].0 <= w[1].0));
+        assert!(reports.iter().all(|&(done, total)| done <= total));
+        assert_eq!(fs::read(&legacy_path).unwrap(), fs::read(&progress_path).unwrap());
+        fs::remove_file(legacy_path).unwrap();
+        fs::remove_file(progress_path).unwrap();
+    }
+
+    #[test]
+    fn opus_progress_is_monotonic_and_bytes_match() {
+        let audio = sine();
+        let tags = Tags::new();
+        let legacy_path = temp_path("opus");
+        let progress_path = temp_path("opus");
+        let options = OpusOptions::default();
+
+        if export_opus(&legacy_path, &audio, 48_000, &options, &tags).is_err() {
+            let _ = fs::remove_file(legacy_path);
+            return;
+        }
+
+        let mut reports = Vec::new();
+        let result = export_opus_with_progress(
+            &progress_path,
+            &audio,
+            48_000,
+            &options,
+            &tags,
+            &mut |done, total| {
+                reports.push((done, total));
+                true
+            },
+        );
+        if result.is_err() {
+            let _ = fs::remove_file(legacy_path);
+            let _ = fs::remove_file(progress_path);
+            return;
+        }
+
+        assert!(!reports.is_empty());
+        assert_eq!(reports.last().copied(), Some((48_000, 48_000)));
+        assert!(reports.windows(2).all(|w| w[0].0 <= w[1].0));
+        assert!(reports.iter().all(|&(done, total)| done <= total));
+        assert_eq!(fs::read(&legacy_path).unwrap(), fs::read(&progress_path).unwrap());
+        fs::remove_file(legacy_path).unwrap();
+        fs::remove_file(progress_path).unwrap();
+    }
+
+    #[test]
+    fn progress_cancellation_leaves_no_output_file() {
+        let audio = sine();
+        let tags = Tags::new();
+        let vorbis_path = temp_path("ogg");
+        let opus_path = temp_path("opus");
+
+        let vorbis_result = export_vorbis_with_progress(
+            &vorbis_path,
+            &audio,
+            48_000,
+            &VorbisOptions::default(),
+            &tags,
+            &mut |_, _| false,
+        );
+        assert!(matches!(vorbis_result, Err(crate::IoError::Cancelled)));
+        assert!(!vorbis_path.exists());
+
+        let opus_result = export_opus_with_progress(
+            &opus_path,
+            &audio,
+            48_000,
+            &OpusOptions::default(),
+            &tags,
+            &mut |_, _| false,
+        );
+        assert!(matches!(opus_result, Err(crate::IoError::Cancelled)));
+        assert!(!opus_path.exists());
     }
 }

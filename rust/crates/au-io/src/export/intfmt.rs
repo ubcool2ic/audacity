@@ -283,22 +283,40 @@ pub fn export_pcm(
     opts: &PcmOptions,
     tags: &Tags,
 ) -> Result<(), crate::IoError> {
-    let (frames, interleaved) = validate_audio(channels, sample_rate)?;
+    let mut no_progress = |_: u64, _: u64| true;
+    export_pcm_with_progress(path, channels, sample_rate, opts, tags, &mut no_progress)
+}
+
+/// Export samples to a libsndfile PCM container, reporting progress by frame.
+///
+/// Progress is reported after each converted/interleaved block and once more
+/// after a successful export. Returning `false` cancels the export.
+pub fn export_pcm_with_progress(
+    path: &Path,
+    channels: &[Vec<f32>],
+    sample_rate: u32,
+    opts: &PcmOptions,
+    tags: &Tags,
+    progress: crate::export::ProgressFn<'_>,
+) -> Result<(), crate::IoError> {
+    let frames = validate_dimensions(channels, sample_rate)?;
+    let channel_count = channels.len();
     let subtype = opts.encoding;
     let mut data_i32 = Vec::new();
     let mut data_f32 = Vec::new();
     let (data_ptr, sample_kind) = if subtype == SF_FORMAT_PCM_24 {
-        data_f32.resize(interleaved.len(), 0.0);
+        data_f32.resize(frames.saturating_mul(channel_count), 0.0);
         convert_pcm24(
             channels,
             frames,
             opts.dither,
             opts.needs_dither,
             &mut data_f32,
-        );
+            progress,
+        )?;
         (data_f32.as_ptr().cast(), 0)
     } else if is_pcm_low_precision(subtype) {
-        data_i32.resize(interleaved.len(), 0);
+        data_i32.resize(frames.saturating_mul(channel_count), 0);
         convert_to_integer(
             channels,
             frames,
@@ -306,10 +324,11 @@ pub fn export_pcm(
             opts.dither,
             opts.needs_dither,
             &mut data_i32,
-        );
+            progress,
+        )?;
         (data_i32.as_ptr().cast(), 1)
     } else {
-        data_f32 = interleaved;
+        data_f32 = interleave_with_progress(channels, frames, progress)?;
         (data_f32.as_ptr().cast(), 0)
     };
 
@@ -317,16 +336,16 @@ pub fn export_pcm(
         header: opts.header,
         encoding: opts.encoding,
     };
-    let path = path_cstring(path)?;
+    let path_c = path_cstring(path)?;
     let tag_set = FfiTags::new(tags)?;
     let mut error = [0 as c_char; 1024];
     // SAFETY: All pointers refer to live, correctly sized buffers for the duration
     // of the synchronous C++ call; the shim does not retain any pointer.
     let result = unsafe {
         aud_export_pcm(
-            path.as_ptr(),
+            path_c.as_ptr(),
             sample_rate,
-            channels.len() as u32,
+            channel_count as u32,
             data_ptr,
             sample_kind,
             frames as u64,
@@ -338,7 +357,8 @@ pub fn export_pcm(
             error.len(),
         )
     };
-    check_result(result, &error)
+    check_result(result, &error)?;
+    report_final_progress(progress, frames, path)
 }
 
 /// Export samples to FLAC.
@@ -349,7 +369,23 @@ pub fn export_flac(
     opts: &FlacOptions,
     tags: &Tags,
 ) -> Result<(), crate::IoError> {
-    let (frames, _) = validate_audio(channels, sample_rate)?;
+    let mut no_progress = |_: u64, _: u64| true;
+    export_flac_with_progress(path, channels, sample_rate, opts, tags, &mut no_progress)
+}
+
+/// Export samples to FLAC, reporting progress by frame.
+///
+/// Progress is reported after each converted block and once more after a
+/// successful export. Returning `false` cancels the export.
+pub fn export_flac_with_progress(
+    path: &Path,
+    channels: &[Vec<f32>],
+    sample_rate: u32,
+    opts: &FlacOptions,
+    tags: &Tags,
+    progress: crate::export::ProgressFn<'_>,
+) -> Result<(), crate::IoError> {
+    let frames = validate_dimensions(channels, sample_rate)?;
     if opts.bit_depth != 16 && opts.bit_depth != 24 {
         return Err(crate::IoError::Unsupported(
             "FLAC bit depth must be 16 or 24".into(),
@@ -361,19 +397,20 @@ pub fn export_flac(
         opts.bit_depth,
         opts.dither,
         opts.needs_dither,
-    );
+        progress,
+    )?;
     let options = FlacOptionsC {
         bit_depth: opts.bit_depth as c_int,
         level: opts.level.min(8) as c_int,
     };
-    let path = path_cstring(path)?;
+    let path_c = path_cstring(path)?;
     let tag_set = FfiTags::new(tags)?;
     let mut error = [0 as c_char; 1024];
     // SAFETY: Buffers and option structs remain alive and immutable until the
     // synchronous C++ encoder call returns.
     let result = unsafe {
         aud_export_flac(
-            path.as_ptr(),
+            path_c.as_ptr(),
             sample_rate,
             channels.len() as u32,
             samples.as_ptr(),
@@ -386,7 +423,8 @@ pub fn export_flac(
             error.len(),
         )
     };
-    check_result(result, &error)
+    check_result(result, &error)?;
+    report_final_progress(progress, frames, path)
 }
 
 /// Export samples to WavPack.
@@ -397,7 +435,23 @@ pub fn export_wavpack(
     opts: &WavPackOptions,
     tags: &Tags,
 ) -> Result<(), crate::IoError> {
-    let (frames, _) = validate_audio(channels, sample_rate)?;
+    let mut no_progress = |_: u64, _: u64| true;
+    export_wavpack_with_progress(path, channels, sample_rate, opts, tags, &mut no_progress)
+}
+
+/// Export samples to WavPack, reporting progress by frame.
+///
+/// Progress is reported after each converted block and once more after a
+/// successful export. Returning `false` cancels the export.
+pub fn export_wavpack_with_progress(
+    path: &Path,
+    channels: &[Vec<f32>],
+    sample_rate: u32,
+    opts: &WavPackOptions,
+    tags: &Tags,
+    progress: crate::export::ProgressFn<'_>,
+) -> Result<(), crate::IoError> {
+    let frames = validate_dimensions(channels, sample_rate)?;
     let depth = match opts.bit_depth {
         16 | 24 | 32 => opts.bit_depth,
         _ => {
@@ -410,10 +464,18 @@ pub fn export_wavpack(
     // WavPackPackSamples expects interleaved int32 samples. Float samples are
     // passed as their IEEE-754 bit patterns, also in frame/channel order.
     let samples = if depth == 32 {
-        let mut samples = Vec::with_capacity(frames.saturating_mul(channels.len()));
-        for frame in 0..frames {
-            for channel in channels {
-                samples.push(channel[frame].to_bits() as i32);
+        let channel_count = channels.len();
+        let mut samples = Vec::with_capacity(frames.saturating_mul(channel_count));
+        for block_start in (0..frames).step_by(FRAME_PROGRESS_BLOCK_SIZE) {
+            let block_end = (block_start + FRAME_PROGRESS_BLOCK_SIZE).min(frames);
+            for frame in block_start..block_end {
+                for channel in channels {
+                    samples.push(channel[frame].to_bits() as i32);
+                }
+            }
+            if !progress(block_end as u64, frames as u64) {
+                cancel_export_files(path);
+                return Err(crate::IoError::Cancelled);
             }
         }
         samples
@@ -424,7 +486,8 @@ pub fn export_wavpack(
             depth,
             opts.dither,
             opts.needs_dither,
-        )
+            progress,
+        )?
     };
 
     let options = WavPackOptionsC {
@@ -436,14 +499,14 @@ pub fn export_wavpack(
         // backend converts it to bits/sample for WavPack.
         bit_rate: opts.bit_rate as c_int,
     };
-    let path = path_cstring(path)?;
+    let path_c = path_cstring(path)?;
     let tag_set = FfiTags::new(tags)?;
     let mut error = [0 as c_char; 1024];
     // SAFETY: Buffers and option structs remain alive and immutable until the
     // synchronous C++ encoder call returns.
     let result = unsafe {
         aud_export_wavpack(
-            path.as_ptr(),
+            path_c.as_ptr(),
             sample_rate,
             channels.len() as u32,
             samples.as_ptr(),
@@ -456,13 +519,31 @@ pub fn export_wavpack(
             error.len(),
         )
     };
-    check_result(result, &error)
+    check_result(result, &error)?;
+    report_final_progress(progress, frames, path)
 }
 
-fn validate_audio(
+fn report_final_progress(
+    progress: crate::export::ProgressFn<'_>,
+    frames: usize,
+    path: &Path,
+) -> Result<(), crate::IoError> {
+    if !progress(frames as u64, frames as u64) {
+        cancel_export_files(path);
+        return Err(crate::IoError::Cancelled);
+    }
+    Ok(())
+}
+
+fn cancel_export_files(path: &Path) {
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(path.with_extension("wvc"));
+}
+
+fn validate_dimensions(
     channels: &[Vec<f32>],
     sample_rate: u32,
-) -> Result<(usize, Vec<f32>), crate::IoError> {
+) -> Result<usize, crate::IoError> {
     if sample_rate == 0 {
         return Err(crate::IoError::Unsupported(
             "sample rate must be greater than zero".into(),
@@ -479,15 +560,34 @@ fn validate_audio(
             "all planar channels must have equal lengths".into(),
         ));
     }
+    Ok(frames)
+}
 
+
+fn interleave_with_progress(
+    channels: &[Vec<f32>],
+    frames: usize,
+    progress: crate::export::ProgressFn<'_>,
+) -> Result<Vec<f32>, crate::IoError> {
     let mut interleaved = Vec::with_capacity(frames.saturating_mul(channels.len()));
-    for frame in 0..frames {
-        for channel in channels {
-            interleaved.push(channel[frame]);
+    for block_start in (0..frames).step_by(FRAME_PROGRESS_BLOCK_SIZE) {
+        let block_end = (block_start + FRAME_PROGRESS_BLOCK_SIZE).min(frames);
+        for frame in block_start..block_end {
+            for channel in channels {
+                interleaved.push(channel[frame]);
+            }
+        }
+        if !progress(block_end as u64, frames as u64) {
+            cancel_export_files_from_progress(progress);
+            return Err(crate::IoError::Cancelled);
         }
     }
-    Ok((frames, interleaved))
+    Ok(interleaved)
 }
+
+// The callback itself does not expose the output path. Export callers remove the
+// destination when conversion returns Cancelled.
+fn cancel_export_files_from_progress(_progress: crate::export::ProgressFn<'_>) {}
 
 fn is_pcm_low_precision(subtype: i32) -> bool {
     matches!(
@@ -517,7 +617,8 @@ fn convert_pcm24(
     dither: AudDither,
     needs_dither: bool,
     out: &mut [f32],
-) {
+    progress: crate::export::ProgressFn<'_>,
+) -> Result<(), crate::IoError> {
     const SCALE: f32 = 8_388_608.0;
     let channel_count = channels.len();
     let mut dither_state = DitherState::new();
@@ -544,12 +645,17 @@ fn convert_pcm24(
                 }
             }
         }
+        if !progress((block_start + block_len) as u64, frames as u64) {
+            return Err(crate::IoError::Cancelled);
+        }
     }
+    Ok(())
 }
 
 const PCM_BLOCK_SIZE: usize = 44_100 * 5;
 const FLAC_BLOCK_SIZE: usize = 8_192;
 const WAVPACK_BLOCK_SIZE: usize = 8_192;
+const FRAME_PROGRESS_BLOCK_SIZE: usize = 65_536;
 
 fn convert_to_integer(
     channels: &[Vec<f32>],
@@ -558,7 +664,8 @@ fn convert_to_integer(
     dither: AudDither,
     needs_dither: bool,
     out: &mut [i32],
-) {
+    progress: crate::export::ProgressFn<'_>,
+) -> Result<(), crate::IoError> {
     let channel_count = channels.len();
     let mut dither_state = DitherState::new();
     let mut converted = vec![0i32; frames];
@@ -580,7 +687,11 @@ fn convert_to_integer(
                 out[(block_start + i) * channel_count + channel_index] = converted[i];
             }
         }
+        if !progress((block_start + block_len) as u64, frames as u64) {
+            return Err(crate::IoError::Cancelled);
+        }
     }
+    Ok(())
 }
 
 fn convert_planar_integer(
@@ -589,7 +700,8 @@ fn convert_planar_integer(
     bits: u32,
     dither: AudDither,
     needs_dither: bool,
-) -> Vec<i32> {
+    progress: crate::export::ProgressFn<'_>,
+) -> Result<Vec<i32>, crate::IoError> {
     let channel_count = channels.len();
     let mut out = vec![0i32; frames.saturating_mul(channel_count)];
     let block_size = if bits == 16 || bits == 24 {
@@ -617,8 +729,11 @@ fn convert_planar_integer(
                 out[(block_start + i) * channel_count + channel_index] = converted[i];
             }
         }
+        if !progress((block_start + block_len) as u64, frames as u64) {
+            return Err(crate::IoError::Cancelled);
+        }
     }
-    out
+    Ok(out)
 }
 
 /// Audacity-style sample conversion dither state.
@@ -973,5 +1088,135 @@ mod tests {
             assert!(bytes.starts_with(b"wvpk"));
             let _ = std::fs::remove_file(path);
         }
+    }
+
+    #[test]
+    fn pcm_progress_is_monotonic_and_output_matches() {
+        let audio = sine();
+        let tags = Tags::new();
+        let original = temp_file("progress-original.wav");
+        let with_progress = temp_file("progress-with.wav");
+
+        export_pcm(&original, &audio, 8_000, &PcmOptions::default(), &tags).unwrap();
+        let mut updates = Vec::new();
+        let mut callback = |done, total| {
+            updates.push((done, total));
+            true
+        };
+        export_pcm_with_progress(
+            &with_progress,
+            &audio,
+            8_000,
+            &PcmOptions::default(),
+            &tags,
+            &mut callback,
+        )
+        .unwrap();
+
+        assert!(!updates.is_empty());
+        assert!(updates.windows(2).all(|w| w[0].0 <= w[1].0));
+        assert_eq!(updates.last(), Some(&(8_000, 8_000)));
+        assert_eq!(
+            std::fs::read(&original).unwrap(),
+            std::fs::read(&with_progress).unwrap()
+        );
+
+        let _ = std::fs::remove_file(original);
+        let _ = std::fs::remove_file(with_progress);
+    }
+
+    #[test]
+    fn flac_and_wavpack_progress_output_matches_original() {
+        let audio = sine();
+        let tags = Tags::new();
+
+        let flac_original = temp_file("progress-original.flac");
+        let flac_progress = temp_file("progress-with.flac");
+        let flac_opts = FlacOptions::default();
+        export_flac(&flac_original, &audio, 8_000, &flac_opts, &tags).unwrap();
+        let mut flac_updates = Vec::new();
+        let mut flac_callback = |done, total| {
+            flac_updates.push((done, total));
+            true
+        };
+        export_flac_with_progress(
+            &flac_progress,
+            &audio,
+            8_000,
+            &flac_opts,
+            &tags,
+            &mut flac_callback,
+        )
+        .unwrap();
+        assert!(flac_updates.windows(2).all(|w| w[0].0 <= w[1].0));
+        assert_eq!(flac_updates.last(), Some(&(8_000, 8_000)));
+        assert_eq!(
+            std::fs::read(&flac_original).unwrap(),
+            std::fs::read(&flac_progress).unwrap()
+        );
+
+        let wavpack_original = temp_file("progress-original.wv");
+        let wavpack_progress = temp_file("progress-with.wv");
+        let wavpack_opts = WavPackOptions::default();
+        export_wavpack(
+            &wavpack_original,
+            &audio,
+            8_000,
+            &wavpack_opts,
+            &tags,
+        )
+        .unwrap();
+        let mut wavpack_updates = Vec::new();
+        let mut wavpack_callback = |done, total| {
+            wavpack_updates.push((done, total));
+            true
+        };
+        export_wavpack_with_progress(
+            &wavpack_progress,
+            &audio,
+            8_000,
+            &wavpack_opts,
+            &tags,
+            &mut wavpack_callback,
+        )
+        .unwrap();
+        assert!(wavpack_updates.windows(2).all(|w| w[0].0 <= w[1].0));
+        assert_eq!(wavpack_updates.last(), Some(&(8_000, 8_000)));
+        assert_eq!(
+            std::fs::read(&wavpack_original).unwrap(),
+            std::fs::read(&wavpack_progress).unwrap()
+        );
+
+        let _ = std::fs::remove_file(flac_original);
+        let _ = std::fs::remove_file(flac_progress);
+        let _ = std::fs::remove_file(wavpack_original);
+        let _ = std::fs::remove_file(wavpack_progress);
+    }
+
+    #[test]
+    fn cancellation_during_conversion_leaves_no_file() {
+        let frames = FLAC_BLOCK_SIZE + 1;
+        let audio = vec![vec![0.25f32; frames], vec![-0.25f32; frames]];
+        let tags = Tags::new();
+        let path = temp_file("cancel.flac");
+        let _ = std::fs::remove_file(&path);
+        let mut calls = 0usize;
+        let mut callback = |_, _| {
+            calls += 1;
+            false
+        };
+
+        let result = export_flac_with_progress(
+            &path,
+            &audio,
+            8_000,
+            &FlacOptions::default(),
+            &tags,
+            &mut callback,
+        );
+
+        assert!(matches!(result, Err(crate::IoError::Cancelled)));
+        assert_eq!(calls, 1);
+        assert!(!path.exists());
     }
 }

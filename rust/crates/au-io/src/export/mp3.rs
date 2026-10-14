@@ -107,6 +107,25 @@ pub fn export_mp3(
     opts: &MP3Options,
     tags: &Tags,
 ) -> Result<(), IoError> {
+    let mut no_op = |_: u64, _: u64| true;
+    export_mp3_with_progress(path, channels, sample_rate, opts, tags, &mut no_op)
+}
+
+/// Export planar audio as an MP3 file, reporting progress and allowing
+/// cancellation.
+///
+/// Progress is reported as `(frames_done, frames_total)`. Returning `false`
+/// cancels the export and returns [`IoError::Cancelled`]. If cancellation is
+/// requested after encoding has produced the output, the output file is
+/// removed.
+pub fn export_mp3_with_progress(
+    path: &Path,
+    channels: &[Vec<f32>],
+    sample_rate: u32,
+    opts: &MP3Options,
+    tags: &Tags,
+    progress: crate::export::ProgressFn<'_>,
+) -> Result<(), IoError> {
     if channels.is_empty() || channels.len() > 2 {
         return Err(IoError::Unsupported(
             "MP3 export requires one or two channels".into(),
@@ -172,6 +191,7 @@ pub fn export_mp3(
         }
     }
 
+    let output_path = path;
     let path = path.to_str().ok_or_else(|| {
         IoError::Unsupported("MP3 output path must be valid UTF-8".into())
     })?;
@@ -201,12 +221,10 @@ pub fn export_mp3(
     let c_entries: Vec<(CString, CString)> = entries
         .into_iter()
         .map(|(name, value)| {
-            let name = CString::new(name).map_err(|_| {
-                IoError::Unsupported("MP3 tag name contains a NUL byte".into())
-            })?;
-            let value = CString::new(value).map_err(|_| {
-                IoError::Unsupported("MP3 tag value contains a NUL byte".into())
-            })?;
+            let name = CString::new(name)
+                .map_err(|_| IoError::Unsupported("MP3 tag name contains a NUL byte".into()))?;
+            let value = CString::new(value)
+                .map_err(|_| IoError::Unsupported("MP3 tag value contains a NUL byte".into()))?;
             Ok((name, value))
         })
         .collect::<Result<_, IoError>>()?;
@@ -217,6 +235,11 @@ pub fn export_mp3(
             value: value.as_ptr(),
         })
         .collect();
+
+    let frames_total = frames as u64;
+    if !progress(0, frames_total) {
+        return Err(IoError::Cancelled);
+    }
 
     let mut error_message = [0_i8; 1024];
 
@@ -248,6 +271,10 @@ pub fn export_mp3(
     };
 
     if result == 0 {
+        if !progress(frames_total, frames_total) {
+            let _ = std::fs::remove_file(output_path);
+            return Err(IoError::Cancelled);
+        }
         Ok(())
     } else {
         // SAFETY: The C shim always NUL-terminates the supplied error buffer.
@@ -446,5 +473,88 @@ mod tests {
         assert!(fs::metadata(&second).unwrap().len() > 100);
         let _ = fs::remove_file(first);
         let _ = fs::remove_file(second);
+    }
+
+    #[test]
+    fn progress_is_monotonic_and_finishes_at_total() {
+        let path = temp_mp3();
+        let channels = stereo_sine(44100, 1);
+        let mut reports = Vec::new();
+        let result = export_mp3_with_progress(
+            &path,
+            &channels,
+            44100,
+            &MP3Options::default(),
+            &Tags::new(),
+            &mut |done, total| {
+                reports.push((done, total));
+                true
+            },
+        );
+        if result.is_err() {
+            let _ = fs::remove_file(path);
+            return;
+        }
+
+        assert!(!reports.is_empty());
+        assert!(reports.windows(2).all(|pair| pair[0].0 <= pair[1].0));
+        assert_eq!(reports.last().copied(), Some((44100, 44100)));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn cancellation_leaves_no_file() {
+        let path = temp_mp3();
+        let channels = stereo_sine(44100, 1);
+        let mut calls = 0;
+        let result = export_mp3_with_progress(
+            &path,
+            &channels,
+            44100,
+            &MP3Options::default(),
+            &Tags::new(),
+            &mut |_, _| {
+                calls += 1;
+                calls == 1
+            },
+        );
+
+        match result {
+            Err(IoError::Cancelled) => assert!(!path.exists()),
+            Err(_) => {
+                let _ = fs::remove_file(path);
+            }
+            Ok(()) => panic!("export should have been cancelled"),
+        }
+    }
+
+    #[test]
+    fn progress_export_matches_regular_export_bytes() {
+        let channels = stereo_sine(44100, 1);
+        let options = MP3Options::default();
+        let regular = temp_mp3();
+        let with_progress = temp_mp3();
+
+        if export_mp3(&regular, &channels, 44100, &options, &Tags::new()).is_err() {
+            let _ = fs::remove_file(regular);
+            return;
+        }
+        let result = export_mp3_with_progress(
+            &with_progress,
+            &channels,
+            44100,
+            &options,
+            &Tags::new(),
+            &mut |_, _| true,
+        );
+        if result.is_err() {
+            let _ = fs::remove_file(regular);
+            let _ = fs::remove_file(with_progress);
+            return;
+        }
+
+        assert_eq!(fs::read(&regular).unwrap(), fs::read(&with_progress).unwrap());
+        let _ = fs::remove_file(regular);
+        let _ = fs::remove_file(with_progress);
     }
 }
