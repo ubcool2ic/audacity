@@ -18,4 +18,16 @@ Model policy: cheapest top-ranked coding model, `openai/gpt-6-luna` ($0.10 / 1M 
 
 Hand fix, no OpenRouter calls: inner doc comment in `au-app/src/gui.rs` and 8 double-borrow errors (`self.report(self.editor...)`). `cargo build -p au-app --features gui` now succeeds. Spend: $0.00.
 
-**Running total: $0.0135**
+## Stage 2 (2026-10-14)
+
+| date | model | file | prompt tok | completion tok | cost |
+|---|---|---|---|---|---|
+| 2026-10-14 | openai/gpt-6-luna (high) | crates/au-core/src/timeline.rs | 2342 | 17536 | $0.00906 |
+| 2026-10-14 | openai/gpt-6-luna (low) | crates/au-project/src/lib.rs | 2975 | 5412 | $0.00308 |
+| 2026-10-14 | openai/gpt-6-luna (high) | crates/au-app/src/gui.rs | 5968 | 21177 | $0.01133 |
+
+Hand fixes (no spend): Track/Editor integration in au-core lib.rs, editor tests, 2 wrong test expectations, v1 sample query, 5 GUI type errors, warnings. No Sol escalation needed.
+
+**Stage 2 total: $0.0235**
+
+**Running total: $0.0370**

@@ -190,7 +190,7 @@ This roadmap describes intended scope, not a claim that planned features are imp
 | Basic effects and native plugin API | Effects/plugins | 1 | Done |
 | `.aurs` project save/load | Projects | 1 | Done |
 | `.aup3` read/write and recovery | Projects | 4 | Planned |
-| Clips, labels, envelopes, sync-lock | Timeline | 2 | Planned |
+| Clips, labels, envelopes, sync-lock | Timeline | 2 | Done (GUI not verified on a display) |
 | Mixer, recording features, resampling, dither | Audio engine | 3 | Planned |
 | Built-in effects parity and realtime stacks | Effects | 5 | Planned |
 | Generators and analyzers | Analyze/generate | 6 | Planned |
@@ -198,6 +198,19 @@ This roadmap describes intended scope, not a claim that planned features are imp
 | Complete codecs, metadata, raw and MIDI import | Import/export | 8 | Planned |
 | Spectral tools, macros, scripting, Nyquist | Analysis/automation | 9 | Planned |
 | Full UI, accessibility, cloud, packaging | Application | 10 | Planned |
+
+## Stage 2 status (2026-10-14)
+
+- [x] Multiple clips per track with gaps (rendered as silence); split (sample-accurate), join (gaps filled with silence), time-shift with overlap rejection
+- [x] Clip-aware cut/copy/paste/delete/apply; sync-lock ripples cuts/pastes across wave and label tracks
+- [x] Zoom (`ZoomInfo`, default 86.13 px/s like Audacity, anchored zoom, fit) and snap (grid, samples, zero crossings, labels)
+- [x] Label tracks: point/region labels, add/edit/move/delete, Audacity label `.txt` import (skips spectral `\` lines) and export
+- [x] Volume envelope (0..2 linear, linear interpolation) applied in render, playback and export
+- [x] Clip time-stretch, pitch preserved, via in-house WSOLA (Hann window ~23 ms, 50% overlap, ±10 ms cross-correlation search; linear-interp fallback for very short clips). `rubato` was not used because it resamples (changes pitch) rather than stretching. A phase vocoder / Audacity's "Staffpad" stretcher is a future quality upgrade.
+- [x] All of the above are undoable and persisted in `.aurs` format v2 (v1 files still load)
+- [x] egui GUI: Selection / Envelope / Time Shift tools, ruler, zoom buttons and Ctrl+wheel, snap combo, sync-lock, Split (Ctrl+I), Join (Ctrl+J), Change Clip Speed, label track drawing/editing (Ctrl+B), label import/export
+- [ ] GUI interaction verified on a real display (compiles only; no display on the build box)
+- [ ] Selection toolbar (typed time fields) and draw tool (sample-accurate draw) are not yet implemented
 
 ## Known Stage 1 gaps
 

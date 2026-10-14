@@ -73,7 +73,7 @@ fn parse_effect(spec: &str) -> Result<Box<dyn Effect>, String> {
 
 fn process(input: &str, output: &str, effects: &[String]) -> Result<String, String> {
     let buf = au_io::import_file(Path::new(input)).map_err(|e| e.to_string())?;
-    let mut editor = Editor::new(ProjectState { tracks: vec![], sample_rate: buf.sample_rate });
+    let mut editor = Editor::new(ProjectState { tracks: vec![], sample_rate: buf.sample_rate, ..Default::default() });
     let frames = buf.len();
     editor.add_track(Track::new("input", buf));
     let sel = Selection { track: 0, start: 0, end: frames };
@@ -81,7 +81,7 @@ fn process(input: &str, output: &str, effects: &[String]) -> Result<String, Stri
         let mut fx = parse_effect(spec)?;
         editor.apply(sel, spec, |b: &mut AudioBuffer| fx.process(b)).map_err(|e| e.to_string())?;
     }
-    let out = &editor.state().tracks[0].buffer;
+    let out = &editor.state().tracks[0].render();
     let lower = output.to_ascii_lowercase();
     if lower.ends_with(".flac") {
         au_io::export_flac(Path::new(output), out, 16).map_err(|e| e.to_string())?;
@@ -94,7 +94,7 @@ fn process(input: &str, output: &str, effects: &[String]) -> Result<String, Stri
 fn selftest() -> Result<String, String> {
     let rate = 44_100;
     let tone: Vec<f32> = (0..rate).map(|i| (i as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin() * 0.25).collect();
-    let mut editor = Editor::new(ProjectState { tracks: vec![], sample_rate: rate as u32 });
+    let mut editor = Editor::new(ProjectState { tracks: vec![], sample_rate: rate as u32, ..Default::default() });
     editor.add_track(Track::new("tone", AudioBuffer::from_channels(rate as u32, vec![tone])));
     let e = |x: au_core::CoreError| x.to_string();
     editor.cut(Selection { track: 0, start: 0, end: 1000 }).map_err(e)?;
@@ -107,7 +107,7 @@ fn selftest() -> Result<String, String> {
     let dir = std::env::temp_dir().join(format!("au-selftest-{}", std::process::id()));
     std::fs::create_dir_all(&dir).map_err(|x| x.to_string())?;
     let wav = dir.join("t.wav");
-    au_io::export_wav(&wav, &editor.state().tracks[0].buffer, 16).map_err(|x| x.to_string())?;
+    au_io::export_wav(&wav, &editor.state().tracks[0].render(), 16).map_err(|x| x.to_string())?;
     let back = au_io::import_file(&wav).map_err(|x| x.to_string())?;
     let proj = dir.join("t.aurs");
     au_project::save_project(&proj, editor.state()).map_err(|x| x.to_string())?;

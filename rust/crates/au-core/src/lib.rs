@@ -3,11 +3,13 @@
 
 //! Core audio data types and editing operations.
 
+pub mod timeline;
+
 /// A single audio sample.
 pub type Sample = f32;
 
 /// Errors returned by core audio and editing operations.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, PartialEq, thiserror::Error)]
 pub enum CoreError {
     /// A frame range is invalid for the requested buffer.
     #[error("invalid range {0}..{1}")]
@@ -174,8 +176,8 @@ impl AudioBuffer {
 pub struct Track {
     /// The track's display name.
     pub name: String,
-    /// The track's audio data.
-    pub buffer: AudioBuffer,
+    /// The track's clips (multiple clips with gaps) and volume envelope.
+    pub clips: timeline::WaveClips,
     /// Linear playback gain.
     pub gain: f32,
     /// Stereo pan, conventionally in the range -1 to 1.
@@ -191,12 +193,32 @@ impl Track {
     pub fn new(name: impl Into<String>, buffer: AudioBuffer) -> Self {
         Self {
             name: name.into(),
-            buffer,
+            clips: timeline::WaveClips::from_buffer("Clip", buffer),
             gain: 1.0,
             pan: 0.0,
             mute: false,
             solo: false,
         }
+    }
+
+    /// Renders the track's clips (gaps as silence, envelope applied).
+    pub fn render(&self) -> AudioBuffer {
+        self.clips.render()
+    }
+
+    /// Returns the track's sample rate.
+    pub fn sample_rate(&self) -> u32 {
+        self.clips.sample_rate
+    }
+
+    /// Returns the timeline length in frames.
+    pub fn len(&self) -> usize {
+        self.clips.end()
+    }
+
+    /// Returns whether the track has no audio.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -238,6 +260,10 @@ pub struct ProjectState {
     pub tracks: Vec<Track>,
     /// The project's sample rate.
     pub sample_rate: u32,
+    /// Label tracks.
+    pub labels: Vec<timeline::LabelTrack>,
+    /// Whether sync-lock is on (edits ripple across all tracks and labels).
+    pub sync_lock: bool,
 }
 
 /// Linear, unlimited snapshot history for project states.
@@ -362,7 +388,8 @@ impl Editor {
             .tracks
             .get_mut(selection.track)
             .ok_or(CoreError::TrackNotFound(selection.track))?;
-        let removed = track.buffer.remove(selection.start, selection.end)?;
+        let removed = track.clips.remove_range(selection.start, selection.end)?;
+        ripple_remove(&mut state, selection);
         self.history.push("Cut", state);
         self.clipboard = Some(removed);
         Ok(())
@@ -376,7 +403,7 @@ impl Editor {
             .tracks
             .get(selection.track)
             .ok_or(CoreError::TrackNotFound(selection.track))?;
-        self.clipboard = Some(track.buffer.slice(selection.start, selection.end)?);
+        self.clipboard = Some(track.clips.render_range(selection.start, selection.end)?);
         Ok(())
     }
 
@@ -392,7 +419,9 @@ impl Editor {
             .tracks
             .get_mut(track)
             .ok_or(CoreError::TrackNotFound(track))?;
-        target.buffer.insert(at, clipboard)?;
+        target.clips.insert(at, clipboard)?;
+        let len = clipboard.len();
+        ripple_insert(&mut state, track, at, len);
         self.history.push("Paste", state);
         Ok(())
     }
@@ -405,7 +434,8 @@ impl Editor {
             .tracks
             .get_mut(selection.track)
             .ok_or(CoreError::TrackNotFound(selection.track))?;
-        track.buffer.remove(selection.start, selection.end)?;
+        track.clips.remove_range(selection.start, selection.end)?;
+        ripple_remove(&mut state, selection);
         self.history.push("Delete", state);
         Ok(())
     }
@@ -432,12 +462,122 @@ impl Editor {
             .tracks
             .get_mut(selection.track)
             .ok_or(CoreError::TrackNotFound(selection.track))?;
-        let mut replacement = track.buffer.slice(selection.start, selection.end)?;
-        f(&mut replacement);
-        track.buffer.remove(selection.start, selection.end)?;
-        track.buffer.insert(selection.start, &replacement)?;
+        track.clips.apply_range(selection.start, selection.end, f)?;
         self.history.push(description, state);
         Ok(())
+    }
+
+    fn edit_track(
+        &mut self,
+        track: usize,
+        description: &str,
+        f: impl FnOnce(&mut Track) -> Result<()>,
+    ) -> Result<()> {
+        let mut state = self.state().clone();
+        let t = state.tracks.get_mut(track).ok_or(CoreError::TrackNotFound(track))?;
+        f(t)?;
+        self.history.push(description, state);
+        Ok(())
+    }
+
+    /// Splits the clip under `frame` (Audacity "Split").
+    pub fn split_clip(&mut self, track: usize, frame: usize) -> Result<()> {
+        self.edit_track(track, "Split", |t| t.clips.split(frame))
+    }
+
+    /// Joins all clips intersecting `start..end` (Audacity "Join").
+    pub fn join_clips(&mut self, track: usize, start: usize, end: usize) -> Result<()> {
+        self.edit_track(track, "Join", |t| t.clips.join(start, end))
+    }
+
+    /// Time-shifts a clip to `new_start` frames; overlaps are rejected.
+    pub fn move_clip(&mut self, track: usize, clip: usize, new_start: i64) -> Result<()> {
+        self.edit_track(track, "Time-Shift", |t| t.clips.move_clip(clip, new_start).map(|_| ()))
+    }
+
+    /// Sets a clip's time-stretch ratio (pitch preserved).
+    pub fn stretch_clip(&mut self, track: usize, clip: usize, ratio: f64) -> Result<()> {
+        self.edit_track(track, "Stretch Clip", |t| t.clips.stretch_clip(clip, ratio))
+    }
+
+    /// Adds or replaces a volume envelope point.
+    pub fn add_envelope_point(&mut self, track: usize, time: f64, value: f64) -> Result<()> {
+        self.edit_track(track, "Adjusted Envelope", |t| {
+            t.clips.envelope.insert(time, value);
+            Ok(())
+        })
+    }
+
+    /// Moves a volume envelope point.
+    pub fn move_envelope_point(&mut self, track: usize, idx: usize, time: f64, value: f64) -> Result<()> {
+        self.edit_track(track, "Adjusted Envelope", |t| t.clips.envelope.move_point(idx, time, value).map(|_| ()))
+    }
+
+    /// Removes a volume envelope point.
+    pub fn remove_envelope_point(&mut self, track: usize, idx: usize) -> Result<()> {
+        self.edit_track(track, "Adjusted Envelope", |t| t.clips.envelope.remove(idx).map(|_| ()))
+    }
+
+    fn edit_labels(
+        &mut self,
+        description: &str,
+        f: impl FnOnce(&mut Vec<timeline::LabelTrack>) -> Result<()>,
+    ) -> Result<()> {
+        let mut state = self.state().clone();
+        f(&mut state.labels)?;
+        self.history.push(description, state);
+        Ok(())
+    }
+
+    /// Adds a label track and returns its index.
+    pub fn add_label_track(&mut self, name: &str) -> usize {
+        let n = self.state().labels.len();
+        let _ = self.edit_labels("New Label Track", |l| {
+            l.push(timeline::LabelTrack::new(name));
+            Ok(())
+        });
+        n
+    }
+
+    /// Adds a point (`start == end`) or region label.
+    pub fn add_label(&mut self, lt: usize, start: f64, end: f64, text: &str) -> Result<()> {
+        self.edit_labels("Added Label", |l| {
+            l.get_mut(lt).ok_or(CoreError::TrackNotFound(lt))?.add(start, end, text);
+            Ok(())
+        })
+    }
+
+    /// Edits a label's text.
+    pub fn edit_label(&mut self, lt: usize, idx: usize, text: &str) -> Result<()> {
+        self.edit_labels("Edited Label", |l| l.get_mut(lt).ok_or(CoreError::TrackNotFound(lt))?.edit_text(idx, text))
+    }
+
+    /// Changes a label's times.
+    pub fn set_label_times(&mut self, lt: usize, idx: usize, start: f64, end: f64) -> Result<()> {
+        self.edit_labels("Moved Label", |l| l.get_mut(lt).ok_or(CoreError::TrackNotFound(lt))?.set_times(idx, start, end).map(|_| ()))
+    }
+
+    /// Deletes a label.
+    pub fn delete_label(&mut self, lt: usize, idx: usize) -> Result<()> {
+        self.edit_labels("Deleted Label", |l| l.get_mut(lt).ok_or(CoreError::TrackNotFound(lt))?.remove(idx).map(|_| ()))
+    }
+
+    /// Imports labels from Audacity's label text format into a new label track.
+    pub fn import_labels(&mut self, name: &str, text: &str) -> Result<usize> {
+        let track = timeline::LabelTrack::from_audacity_txt(name, text)?;
+        let n = self.state().labels.len();
+        self.edit_labels("Imported Labels", |l| {
+            l.push(track);
+            Ok(())
+        })?;
+        Ok(n)
+    }
+
+    /// Turns sync-lock on or off (not an undoable edit in Audacity, but kept in state).
+    pub fn set_sync_lock(&mut self, on: bool) {
+        let mut state = self.state().clone();
+        state.sync_lock = on;
+        self.history.push("Sync-Lock", state);
     }
 
     /// Undoes the most recent edit.
@@ -448,6 +588,41 @@ impl Editor {
     /// Redoes the next edit.
     pub fn redo(&mut self) -> Result<()> {
         self.history.redo().map(|_| ())
+    }
+}
+
+fn ripple_remove(state: &mut ProjectState, sel: Selection) {
+    if !state.sync_lock {
+        return;
+    }
+    let rate = state.tracks[sel.track].sample_rate();
+    let (a, b) = (frames_to_secs(sel.start, rate), frames_to_secs(sel.end, rate));
+    for (i, t) in state.tracks.iter_mut().enumerate() {
+        if i != sel.track {
+            let end = sel.end.min(t.len().max(sel.start));
+            if sel.start < end {
+                let _ = t.clips.remove_range(sel.start, end);
+            }
+        }
+    }
+    for l in &mut state.labels {
+        l.remove_range(a, b);
+    }
+}
+
+fn ripple_insert(state: &mut ProjectState, track: usize, at: usize, len: usize) {
+    if !state.sync_lock || len == 0 {
+        return;
+    }
+    let rate = state.tracks[track].sample_rate();
+    for (i, t) in state.tracks.iter_mut().enumerate() {
+        if i != track && at < t.len() {
+            let silence = AudioBuffer::from_channels(t.sample_rate(), vec![vec![0.0; len]; t.clips.n_channels]);
+            let _ = t.clips.insert(at, &silence);
+        }
+    }
+    for l in &mut state.labels {
+        l.insert_space(frames_to_secs(at, rate), frames_to_secs(len, rate));
     }
 }
 
@@ -477,6 +652,7 @@ mod tests {
         Editor::new(ProjectState {
             tracks: vec![Track::new("track", buffer(samples))],
             sample_rate: 48_000,
+            ..Default::default()
         })
     }
 
@@ -498,10 +674,10 @@ mod tests {
                 end: 3,
             })
             .unwrap();
-        assert_eq!(editor.state().tracks[0].buffer.channels[0], vec![1.0, 4.0]);
+        assert_eq!(editor.state().tracks[0].render().channels[0], vec![1.0, 4.0]);
         editor.paste(0, 1).unwrap();
         assert_eq!(
-            editor.state().tracks[0].buffer.channels[0],
+            editor.state().tracks[0].render().channels[0],
             vec![1.0, 2.0, 3.0, 4.0]
         );
     }
@@ -569,12 +745,12 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            editor.state().tracks[0].buffer.channels[0],
+            editor.state().tracks[0].render().channels[0],
             vec![1.0, 2.0, 3.0, 9.0, 4.0]
         );
         editor.undo().unwrap();
         assert_eq!(
-            editor.state().tracks[0].buffer.channels[0],
+            editor.state().tracks[0].render().channels[0],
             vec![1.0, 2.0, 3.0, 4.0]
         );
     }
@@ -597,5 +773,109 @@ mod tests {
         let mut history = UndoManager::new(ProjectState::default());
         assert!(matches!(history.undo(), Err(CoreError::NothingToUndo)));
         assert!(matches!(history.redo(), Err(CoreError::NothingToRedo)));
+    }
+
+    fn ramp(n: usize) -> Vec<f32> {
+        (0..n).map(|i| i as f32 + 1.0).collect()
+    }
+
+    #[test]
+    fn timeline_golden_undo_redo_restores_clip_label_envelope_state() {
+        let mut editor = Editor::new(ProjectState {
+            tracks: vec![Track::new("t", AudioBuffer::from_channels(10, vec![ramp(10)]))],
+            sample_rate: 10,
+            ..Default::default()
+        });
+        let mut snapshots = vec![editor.state().clone()];
+        editor.split_clip(0, 4).unwrap();
+        snapshots.push(editor.state().clone());
+        editor.move_clip(0, 1, 8).unwrap();
+        snapshots.push(editor.state().clone());
+        editor.add_envelope_point(0, 0.0, 1.0).unwrap();
+        editor.add_envelope_point(0, 1.0, 0.5).unwrap();
+        snapshots.push(editor.state().clone());
+        let lt = editor.add_label_track("Labels");
+        editor.add_label(lt, 0.2, 0.2, "point").unwrap();
+        editor.add_label(lt, 0.5, 0.9, "region").unwrap();
+        editor.edit_label(lt, 1, "renamed").unwrap();
+        snapshots.push(editor.state().clone());
+        editor.join_clips(0, 0, 14).unwrap();
+        editor.stretch_clip(0, 0, 2.0).unwrap();
+        snapshots.push(editor.state().clone());
+        assert_eq!(editor.state().tracks[0].clips.clips.len(), 1);
+        assert_eq!(editor.state().tracks[0].len(), 28);
+        // Undo back to the start, checking each golden snapshot, then redo forward.
+        let undo_steps = [2usize, 4, 2, 1, 1];
+        let mut idx = snapshots.len() - 1;
+        for steps in undo_steps {
+            for _ in 0..steps {
+                editor.undo().unwrap();
+            }
+            idx -= 1;
+            assert_eq!(editor.state(), &snapshots[idx]);
+        }
+        for steps in undo_steps.iter().rev() {
+            for _ in 0..*steps {
+                editor.redo().unwrap();
+            }
+            idx += 1;
+            assert_eq!(editor.state(), &snapshots[idx]);
+        }
+    }
+
+    #[test]
+    fn timeline_gap_renders_silence_and_envelope_applies_in_render() {
+        let mut editor = Editor::new(ProjectState {
+            tracks: vec![Track::new("t", AudioBuffer::from_channels(10, vec![vec![1.0; 4]]))],
+            sample_rate: 10,
+            ..Default::default()
+        });
+        editor.split_clip(0, 2).unwrap();
+        editor.move_clip(0, 1, 5).unwrap();
+        assert_eq!(editor.state().tracks[0].render().channels[0], vec![1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0]);
+        editor.add_envelope_point(0, 0.0, 0.0).unwrap();
+        editor.add_envelope_point(0, 0.6, 0.6).unwrap();
+        let out = editor.state().tracks[0].render().channels[0].clone();
+        assert!((out[0] - 0.0).abs() < 1e-6 && (out[1] - 0.1).abs() < 1e-6);
+        assert!((out[6] - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn timeline_sync_lock_cut_and_paste_ripple_labels_and_tracks() {
+        let mut editor = Editor::new(ProjectState {
+            tracks: vec![
+                Track::new("a", AudioBuffer::from_channels(10, vec![ramp(10)])),
+                Track::new("b", AudioBuffer::from_channels(10, vec![ramp(10)])),
+            ],
+            sample_rate: 10,
+            ..Default::default()
+        });
+        let lt = editor.add_label_track("L");
+        editor.add_label(lt, 0.8, 0.8, "x").unwrap();
+        editor.set_sync_lock(true);
+        editor.cut(Selection { track: 0, start: 2, end: 4 }).unwrap();
+        assert_eq!(editor.state().tracks[1].len(), 8);
+        assert!((editor.state().labels[0].labels[0].start - 0.6).abs() < 1e-9);
+        editor.paste(0, 2).unwrap();
+        assert_eq!(editor.state().tracks[0].render().channels[0], ramp(10));
+        assert_eq!(editor.state().tracks[1].len(), 10);
+        assert!((editor.state().labels[0].labels[0].start - 0.8).abs() < 1e-9);
+        // Without sync-lock other tracks are untouched.
+        editor.set_sync_lock(false);
+        editor.delete(Selection { track: 0, start: 0, end: 1 }).unwrap();
+        assert_eq!(editor.state().tracks[1].len(), 10);
+    }
+
+    #[test]
+    fn timeline_label_import_export_through_editor() {
+        let mut editor = editor_with(&[0.0]);
+        let lt = editor.import_labels("Imported", "1.5\t2.5\tverse\n\\\t100\t200\n3.0\t3.0\tdrop\n").unwrap();
+        let txt = editor.state().labels[lt].to_audacity_txt();
+        assert_eq!(txt, "1.500000\t2.500000\tverse\n3.000000\t3.000000\tdrop\n");
+        editor.delete_label(lt, 0).unwrap();
+        assert_eq!(editor.state().labels[lt].labels.len(), 1);
+        editor.undo().unwrap();
+        assert_eq!(editor.state().labels[lt].labels.len(), 2);
+        assert!(editor.import_labels("bad", "abc\n").is_err());
     }
 }
