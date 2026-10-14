@@ -656,7 +656,10 @@ mod catalog_tests {
             id: id.to_owned(),
             name: "Test plugin".to_owned(),
             vendor: "Test vendor".to_owned(),
-            path: PathBuf::from("/tmp/test-plugin.vst3"),
+            path: Some(PathBuf::from("/tmp/test-plugin.vst3")),
+            params: Vec::new(),
+            n_inputs: 2,
+            n_outputs: 2,
             format: PluginFormat::Vst3,
         }
     }
@@ -675,7 +678,7 @@ mod catalog_tests {
         assert!(!persisted.is_enabled(id));
 
         assert_eq!(
-            catalog.instantiate(id).unwrap_err(),
+            catalog.instantiate(id).err().expect("disabled plugin must not instantiate"),
             "Plugin is disabled: Test plugin"
         );
 
