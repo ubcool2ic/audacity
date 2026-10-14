@@ -193,6 +193,28 @@ This roadmap describes intended scope, not a claim that planned features are imp
 - A Python client compatibility test sends commands over named pipes and checks responses and project changes.
 - Nyquist fixtures verify plugin discovery and deterministic output; FFI failure tests ensure errors are contained.
 
+**BizyBot status (2026-10-14), per docs/SPLIT_stage9.md:**
+- mod-script-pipe (`au-scriptpipe`):
+  - Unix FIFOs `/tmp/audacity_script_pipe.to/from.<uid>`, overridable with `AU_SCRIPT_PIPE_DIR`. Windows `\\.\pipe\ToSrvPipe`/`FromSrvPipe` (not yet compiled or tested).
+  - Threaded server; commands are queued to the UI thread.
+  - Audacity's `pipe_test.py` passes against both the server and the GUI (`AU_SCRIPT_PIPE=1`, or View > mod-script-pipe).
+  - The interim interpreter in `au-app/src/script_bridge.rs` handles Help, Message and GetInfo. The app handles Import2 and SetTrackVisuals/SetTrack (Display, SpecScale) itself. The partner's au-script will replace this interpreter.
+- Nyquist:
+  - `au-plugin-host/src/nyquist.rs` runs each script in the crash-contained `au-nyquist-worker` process, with a timeout and cancel.
+  - Nyquist is a PluginFormat in the registry and in the new Plugin Manager dialog (filter, enable/disable persisted, rescan).
+  - The interpreter plugs in through `nyquist::set_engine`. It is the partner's work and is not on main yet.
+- Spectrogram view (`au-app/src/spectrogram_view.rs`):
+  - Waveform, Spectrogram and Multi-view per track. Spectrograms are computed on the au-runtime pool and uploaded as cached GPU textures (LRU).
+  - Follows zoom and scroll. The frequency ruler supports Linear, Log and Mel (View > Spectrogram scale).
+  - The spectral selection tool drags t0/t1/f0/f1.
+  - Columns come from a replaceable `ColumnFn`. Right now that is an interim Hann STFT, until the partner's SpectrogramSettings computation lands.
+  - The selection is kept in the app until the partner's spectral model lands.
+- Xvfb UI automation: `tests/script_pipe_gui.rs` and `tests/spectrogram_gui.rs` drive the GUI over the pipe.
+- Open:
+  - The Macros manager dialog and Apply Macro menu are blocked on the partner's macro model.
+  - The Windows pipe has not been built or tested.
+  - The waveform_summary cache work is part of Perf.
+
 ### Stage 10 — UI parity and polish
 
 **Scope**

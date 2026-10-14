@@ -179,3 +179,6 @@ openai/gpt-6-luna only (no Sol escalation): vst3 run loop, clap timer/fd, state 
 
 ## BizyBot — Stage 8B FFmpeg / MIDI / LADSPA-LV2 sandbox (2026-10-14)
 openai/gpt-6-luna only (no Sol): sandbox.rs (+1 wasted call from a shell-quoting mistake in the prompt), LADSPA/LV2 tests, ffmpeg.rs, FFmpeg tests, notes.rs, midi.rs + aup3/aurs + tests, MIDI velocity fix, Audacity fixture tests, GUI wiring. Total ≈ $0.044.
+
+## BizyBot — Stage 9 script pipe / Nyquist host / spectrogram view (2026-10-14)
+openai/gpt-6-luna only (no Sol): au-scriptpipe + fix pass, app bridge, Nyquist sandbox host, plugin manager, spectrogram view, app pipe commands, Xvfb spectrogram test. Total ≈ $0.040.

@@ -347,6 +347,7 @@ dependencies = [
  "au-scriptpipe",
  "eframe",
  "rfd",
+ "rustfft",
  "tempfile",
 ]
 

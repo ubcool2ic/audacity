@@ -19,8 +19,14 @@ impl ScriptPipe {
     /// Starts the pipe server and wakes the GUI when a request arrives.
     pub fn start(ctx: &egui::Context) -> std::io::Result<Self> {
         let wake_ctx = ctx.clone();
+        // AU_SCRIPT_PIPE_DIR moves the FIFOs (DIR/audacity_script_pipe.to/.from) so tests
+        // do not collide with a real Audacity using the default /tmp names.
+        let names = match std::env::var_os("AU_SCRIPT_PIPE_DIR") {
+            Some(dir) => PipeNames::in_dir(std::path::Path::new(&dir), "audacity_script_pipe"),
+            None => PipeNames::audacity_default(),
+        };
         let (server, requests) = PipeServer::start(
-            PipeNames::audacity_default(),
+            names,
             Some(Box::new(move || wake_ctx.request_repaint())),
         )?;
 

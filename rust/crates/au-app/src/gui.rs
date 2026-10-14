@@ -149,6 +149,14 @@ struct AudacityApp {
     autosave_at: std::time::Instant,
     tool: Tool,
     zoom: ZoomInfo,
+    /// The selected drawing mode for each track.
+    track_views: Vec<crate::spectrogram_view::TrackView>,
+    /// Spectrogram textures and background computation jobs.
+    spectrogram_cache: crate::spectrogram_view::SpectrogramCache,
+    /// Display settings used by spectrogram tracks.
+    spectrogram_settings: crate::spectrogram_view::ViewSettings,
+    /// Spectral selection retained until it is part of the core model.
+    spectral_selection: Option<crate::spectrogram_view::SpectralSelection>,
     snapper: Snapper,
     sync_lock: bool,
     drag: Option<PointerDrag>,
@@ -233,6 +241,10 @@ impl Default for AudacityApp {
             autosave_sig: (1, None),
             autosave_at: std::time::Instant::now(),
             tool: Tool::Selection,
+            track_views: Vec::new(),
+            spectrogram_cache: crate::spectrogram_view::SpectrogramCache::new(),
+            spectrogram_settings: crate::spectrogram_view::ViewSettings::default(),
+            spectral_selection: None,
             zoom: ZoomInfo {
                 h_offset: 0.0,
                 pixels_per_sec: 100.0,
@@ -388,6 +400,13 @@ fn import_file(&mut self) {
             ],
         )
         .pick_file()
+    {
+        self.import_path(path);
+    }
+}
+
+/// Imports an audio or MIDI file as new track(s) (File > Import and the Import2 pipe command).
+fn import_path(&mut self, path: PathBuf) {
     {
         let is_midi = path
             .extension()
@@ -583,6 +602,104 @@ fn export_midi(&mut self) {
             self.open_path(path);
         }
     }
+
+/// Handles pipe commands that change application state. Returns `None` when the command is not app-level (the caller then uses the read-only interpreter), otherwise `Some((message, ok))`.
+fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
+    let (command, params) = crate::script_bridge::parse_command(line);
+
+    match command.as_str() {
+        "Import2" => {
+            let filename = match params
+                .iter()
+                .find(|(key, _)| key == "Filename")
+                .map(|(_, value)| value.as_str())
+            {
+                Some(filename) if !filename.is_empty() => filename,
+                _ => return Some(("Import2 requires Filename".to_string(), false)),
+            };
+
+            let path = std::path::PathBuf::from(filename);
+            if !path.exists() {
+                return Some((format!("File not found: {filename}"), false));
+            }
+
+            let tracks_before = self.editor.state().tracks.len();
+            let _status_before = self.status.clone();
+            if Self::is_aup3(&path) || path.extension().is_some_and(|e| e.eq_ignore_ascii_case("aurs")) { self.open_path(path); } else { self.import_path(path); }
+
+            let tracks_increased = self.editor.state().tracks.len() > tracks_before;
+            let status_lower = self.status.to_ascii_lowercase();
+            let ok = tracks_increased
+                || (!status_lower.contains("fail") && !status_lower.contains("error"));
+
+            Some((format!("Imported {filename}"), ok))
+        }
+        "SetTrackVisuals" | "SetTrack:" => {
+            let track_text = match params
+                .iter()
+                .find(|(key, _)| key == "Track")
+                .map(|(_, value)| value.as_str())
+            {
+                Some(value) => value,
+                None => return Some(("Track is required".to_string(), false)),
+            };
+            let track_index = match track_text.parse::<usize>() {
+                Ok(index) => index,
+                Err(_) => return Some((format!("Invalid track index: {track_text}"), false)),
+            };
+
+            let display = match params
+                .iter()
+                .find(|(key, _)| key == "Display")
+                .map(|(_, value)| value.as_str())
+            {
+                Some(value) => value,
+                None => return Some(("Display is required".to_string(), false)),
+            };
+            let track_view = match display {
+                "Waveform" => crate::spectrogram_view::TrackView::Waveform,
+                "Spectrogram" => crate::spectrogram_view::TrackView::Spectrogram,
+                "Multiview" => crate::spectrogram_view::TrackView::Multiview,
+                _ => return Some((format!("Unknown Display: {display}"), false)),
+            };
+
+            let scale = match params
+                .iter()
+                .find(|(key, _)| key == "SpecScale")
+                .map(|(_, value)| value.as_str())
+            {
+                None => None,
+                Some("Linear") => {
+                    Some(crate::spectrogram_view::FreqScale::Linear)
+                }
+                Some("Logarithmic") | Some("Log") => {
+                    Some(crate::spectrogram_view::FreqScale::Logarithmic)
+                }
+                Some("Mel") => Some(crate::spectrogram_view::FreqScale::Mel),
+                Some(value) => {
+                    return Some((format!("Unknown SpecScale: {value}"), false));
+                }
+            };
+
+            let track_count = self.editor.state().tracks.len();
+            if track_index >= track_count {
+                return Some((format!("Track index {track_index} out of range"), false));
+            }
+
+            self.track_views
+                .resize_with(track_count, crate::spectrogram_view::TrackView::default);
+
+            if let Some(scale) = scale {
+                self.spectrogram_settings.scale = scale;
+                self.spectrogram_cache.invalidate_all();
+            }
+
+            self.track_views[track_index] = track_view;
+            Some((format!("Track {track_index} display: {display}"), true))
+        }
+        _ => None,
+    }
+}
 
     fn open_path(&mut self, path: PathBuf) {
         if Self::is_aup3(&path) || au_project::is_aup3(&path) {
@@ -3199,7 +3316,10 @@ if !self.script_pipe_enabled {
 }
 if let Some(pipe) = self.script_pipe.as_mut() {
     for request in pipe.drain(32) {
-        let response = crate::script_bridge::execute(self.editor.state(), request.command());
+        let response = match self.execute_app_command(request.command()) {
+            Some((message, ok)) => au_scriptpipe::finished(&message, ok),
+            None => crate::script_bridge::execute(self.editor.state(), request.command()),
+        };
         request.respond(&response);
     }
 }
@@ -3310,6 +3430,16 @@ let response = ui
 if response.changed() && self.script_pipe_enabled {
     self.script_pipe_failed = false;
 }
+                    ui.menu_button("Spectrogram scale", |ui| {
+                        use crate::spectrogram_view::FreqScale;
+                        let before = self.spectrogram_settings.scale;
+                        for (scale, name) in [(FreqScale::Linear, "Linear"), (FreqScale::Logarithmic, "Logarithmic"), (FreqScale::Mel, "Mel")] {
+                            ui.radio_value(&mut self.spectrogram_settings.scale, scale, name);
+                        }
+                        if before != self.spectrogram_settings.scale {
+                            self.spectrogram_cache.invalidate_all();
+                        }
+                    });
                     if ui
                         .selectable_label(self.mixer_visible, "Mixer")
                         .clicked()
@@ -3583,10 +3713,84 @@ if response.changed() && self.script_pipe_enabled {
             self.draw_ruler(ui);
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let count = self.editor.state().tracks.len();
+                self.track_views.resize(count, Default::default());
                 for index in 0..count {
-                    self.draw_track(ui, index);
+                    let mut selected_view = self.track_views[index];
+                    egui::ComboBox::from_id_salt(("track_view", index))
+                        .selected_text(match selected_view {
+                            crate::spectrogram_view::TrackView::Waveform => "Waveform",
+                            crate::spectrogram_view::TrackView::Spectrogram => "Spectrogram",
+                            crate::spectrogram_view::TrackView::Multiview => "Multi-view",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut selected_view,
+                                crate::spectrogram_view::TrackView::Waveform,
+                                "Waveform",
+                            );
+                            ui.selectable_value(
+                                &mut selected_view,
+                                crate::spectrogram_view::TrackView::Spectrogram,
+                                "Spectrogram",
+                            );
+                            ui.selectable_value(
+                                &mut selected_view,
+                                crate::spectrogram_view::TrackView::Multiview,
+                                "Multi-view",
+                            );
+                        });
+                    self.track_views[index] = selected_view;
+
+                    let track = self.editor.state().tracks[index].clone();
+                    match selected_view {
+                        crate::spectrogram_view::TrackView::Waveform => {
+                            self.draw_track(ui, index);
+                        }
+                        crate::spectrogram_view::TrackView::Spectrogram => {
+                            let changed = crate::spectrogram_view::draw_spectrogram_track(
+                                ui,
+                                &mut self.spectrogram_cache,
+                                index,
+                                &track,
+                                &self.zoom,
+                                &self.spectrogram_settings,
+                                140.0,
+                                &mut self.spectral_selection,
+                            );
+                            if changed {
+                                if let Some(selection) = self.spectral_selection {
+                                    self.status = format!(
+                                        "Spectral selection: {:.3}–{:.3} s, {:.0}–{:.0} Hz",
+                                        selection.t0, selection.t1, selection.f0, selection.f1
+                                    );
+                                }
+                            }
+                        }
+                        crate::spectrogram_view::TrackView::Multiview => {
+                            self.draw_track(ui, index);
+                            let changed = crate::spectrogram_view::draw_spectrogram_track(
+                                ui,
+                                &mut self.spectrogram_cache,
+                                index,
+                                &track,
+                                &self.zoom,
+                                &self.spectrogram_settings,
+                                90.0,
+                                &mut self.spectral_selection,
+                            );
+                            if changed {
+                                if let Some(selection) = self.spectral_selection {
+                                    self.status = format!(
+                                        "Spectral selection: {:.3}–{:.3} s, {:.0}–{:.0} Hz",
+                                        selection.t0, selection.t1, selection.f0, selection.f1
+                                    );
+                                }
+                            }
+                        }
+                    }
                     ui.add_space(5.0);
                 }
+
                 self.draw_note_tracks(ui);
                 self.draw_labels(ui);
                 if count == 0 && self.editor.state().labels.is_empty() && self.editor.state().note_tracks.is_empty() {
