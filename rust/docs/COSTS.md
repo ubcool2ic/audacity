@@ -46,3 +46,16 @@ Hand fixes (no spend): mixer test expectations that exceeded clip range, f32-pha
 **Stage 3 total: $0.0296**
 
 **Running total: $0.0666**
+
+## Stage 4 (2026-10-14)
+
+| date | model | file | prompt tok | completion tok | cost |
+|---|---|---|---|---|---|
+| 2026-10-14 | openai/gpt-6-luna (high) | crates/au-project/src/binxml.rs | 1149 | 12026 | $0.00616 |
+| 2026-10-14 | openai/gpt-6-luna (high) | crates/au-project/src/blocks.rs | 985 | 5638 | $0.00292 |
+
+Both compiled and passed their own tests first time; no Sol escalation. Hand-written (no spend): `aup3.rs` (XML ↔ project mapping, SQLite schema, save/autosave/recover/orphans), integration tests, `aup3_tool` example, GUI File menu + recovery dialog + autosave, CLI `aup3-info`, Audacity fixture/verification scripts.
+
+**Stage 4 total: $0.0091**
+
+**Running total: $0.0757**

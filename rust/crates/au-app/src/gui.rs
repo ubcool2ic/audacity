@@ -17,12 +17,18 @@ use std::path::PathBuf;
 
 // egui/eframe desktop UI (feature `gui`).
 
-/// Runs the Audacity-RS desktop application.
-pub fn run() -> eframe::Result<()> {
+/// Runs the app, optionally opening a project (`.aup3` or `.aurs`) at start.
+pub fn run_with(open: Option<PathBuf>) -> eframe::Result<()> {
     eframe::run_native(
         "Audacity-RS",
         eframe::NativeOptions::default(),
-        Box::new(|_cc| Ok(Box::new(AudacityApp::default()))),
+        Box::new(move |_cc| {
+            let mut app = AudacityApp::default();
+            if let Some(path) = open {
+                app.open_path(path);
+            }
+            Ok(Box::new(app))
+        }),
     )
 }
 
@@ -120,6 +126,13 @@ struct AudacityApp {
     sound_hold_secs: f64,
     status: String,
     project_path: Option<PathBuf>,
+    /// `.aup3` data not modelled by the editor (formats, version, selection).
+    aup3_extras: au_project::aup3::Aup3Extras,
+    /// File whose unclean autosave awaits the user's recover/discard choice.
+    recovery_prompt: Option<PathBuf>,
+    /// Signature of the history at the last autosave, and when it happened.
+    autosave_sig: (usize, Option<String>),
+    autosave_at: std::time::Instant,
     tool: Tool,
     zoom: ZoomInfo,
     snapper: Snapper,
@@ -173,6 +186,10 @@ impl Default for AudacityApp {
             sound_hold_secs: 1.0,
             status: "Ready".to_owned(),
             project_path: None,
+            aup3_extras: Default::default(),
+            recovery_prompt: None,
+            autosave_sig: (1, None),
+            autosave_at: std::time::Instant::now(),
             tool: Tool::Selection,
             zoom: ZoomInfo {
                 h_offset: 0.0,
@@ -310,47 +327,179 @@ impl AudacityApp {
         }
     }
 
+    fn is_aup3(path: &std::path::Path) -> bool {
+        path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("aup3"))
+    }
+
+    fn history_sig(&self) -> (usize, Option<String>) {
+        let h = &self.editor.history;
+        (h.len(), h.undo_description().map(str::to_owned))
+    }
+
+    fn current_aup3(&self) -> au_project::aup3::Aup3Project {
+        let mut extras = self.aup3_extras.clone();
+        if let Some(sel) = self.selection {
+            let sel = sel.normalized();
+            let rate = self.editor.state().tracks.get(sel.track).map_or(44100, |t| t.sample_rate()).max(1) as f64;
+            extras.selection = (sel.start as f64 / rate, sel.end as f64 / rate);
+        }
+        extras.track_formats.resize(self.editor.state().tracks.len(), au_project::blocks::SampleFormat::Float);
+        extras.track_selected = (0..self.editor.state().tracks.len()).map(|i| self.selected_track == Some(i)).collect();
+        au_project::aup3::Aup3Project { state: self.editor.state().clone(), extras }
+    }
+
     fn save_project(&mut self) {
-        let path = self.project_path.clone().or_else(|| {
-            rfd::FileDialog::new()
-                .add_filter("Audacity-RS project", &["aurs"])
-                .save_file()
-        });
-        if let Some(path) = path {
-            match au_project::save_project(&path, self.editor.state()) {
-                Ok(()) => {
-                    self.project_path = Some(path);
-                    self.status = "Project saved".to_owned();
-                }
-                Err(error) => self.status = format!("Save failed: {error:?}"),
+        match self.project_path.clone() {
+            Some(path) => self.save_to(path),
+            None => self.save_project_as(),
+        }
+    }
+
+    fn save_project_as(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("Audacity project", &["aup3"])
+            .add_filter("Audacity-RS project (legacy)", &["aurs"])
+            .set_file_name("Untitled.aup3")
+            .save_file()
+        {
+            self.save_to(path);
+        }
+    }
+
+    fn save_to(&mut self, path: PathBuf) {
+        let result = if Self::is_aup3(&path) {
+            au_project::aup3::save(&path, &self.current_aup3())
+        } else {
+            au_project::save_project(&path, self.editor.state())
+        };
+        match result {
+            Ok(()) => {
+                self.status = format!("Saved {}", path.display());
+                self.project_path = Some(path);
+                self.autosave_sig = self.history_sig();
             }
+            Err(error) => self.status = format!("Save failed: {error}"),
+        }
+    }
+
+    /// Journals unsaved edits into the `.aup3` autosave table (at most every
+    /// 2 s), so a crash can be recovered on the next open.
+    fn maybe_autosave(&mut self) {
+        let Some(path) = self.project_path.clone().filter(|p| Self::is_aup3(p)) else { return };
+        let sig = self.history_sig();
+        if sig == self.autosave_sig || self.autosave_at.elapsed().as_secs_f64() < 2.0 {
+            return;
+        }
+        self.autosave_at = std::time::Instant::now();
+        self.autosave_sig = sig;
+        if let Err(e) = au_project::aup3::autosave(&path, &self.current_aup3()) {
+            self.status = format!("Autosave failed: {e}");
         }
     }
 
     fn open_project(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("Audacity-RS project", &["aurs"])
+            .add_filter("All projects", &["aup3", "aurs"])
+            .add_filter("Audacity project", &["aup3"])
+            .add_filter("Audacity-RS project (legacy)", &["aurs"])
             .pick_file()
         {
-            match au_project::load_project(&path) {
-                Ok(state) => {
-                    self.editor = Editor::new(state);
-                    self.selected_track = if self.editor.state().tracks.is_empty() {
-                        None
-                    } else {
-                        Some(0)
-                    };
-                    self.selection = None;
-                    self.selected_label = None;
-                    self.project_path = Some(path);
-                    self.sync_lock = self.editor.state().sync_lock;
-                    self.track_mix.clear();
-                    self.ensure_track_mix();
-                    self.status = "Project opened".to_owned();
-                    self.fit_zoom(1000.0);
+            self.open_path(path);
+        }
+    }
+
+    fn open_path(&mut self, path: PathBuf) {
+        if Self::is_aup3(&path) || au_project::is_aup3(&path) {
+            match au_project::aup3::inspect(&path) {
+                Ok(info) if info.needs_recovery => {
+                    self.recovery_prompt = Some(path);
+                    return;
                 }
-                Err(error) => self.status = format!("Open failed: {error:?}"),
+                Ok(_) => {}
+                Err(e) => {
+                    self.status = format!("Open failed: {e}");
+                    return;
+                }
             }
+            self.open_aup3(path, au_project::aup3::DocSource::Saved);
+            return;
+        }
+        match au_project::load_project(&path) {
+            Ok(state) => {
+                self.aup3_extras = Default::default();
+                self.install_state(state, path);
+            }
+            Err(error) => self.status = format!("Open failed: {error}"),
+        }
+    }
+
+    fn open_aup3(&mut self, path: PathBuf, source: au_project::aup3::DocSource) {
+        match au_project::aup3::load_from(&path, source) {
+            Ok(p) => {
+                let (s0, s1) = p.extras.selection;
+                self.aup3_extras = p.extras;
+                self.install_state(p.state, path);
+                if s1 > s0 && !self.editor.state().tracks.is_empty() {
+                    let rate = self.editor.state().tracks[0].sample_rate() as f64;
+                    self.selection = Some(Selection { track: 0, start: (s0 * rate) as usize, end: (s1 * rate) as usize });
+                }
+                if source == au_project::aup3::DocSource::Autosave {
+                    // Unsaved until the user saves, like Audacity after recovery.
+                    self.autosave_sig = (0, None);
+                    self.status = "Recovered unsaved changes from autosave — save to keep them".to_owned();
+                }
+            }
+            Err(e) => self.status = format!("Open failed: {e}"),
+        }
+    }
+
+    fn install_state(&mut self, state: au_core::ProjectState, path: PathBuf) {
+        self.editor = Editor::new(state);
+        self.selected_track = if self.editor.state().tracks.is_empty() { None } else { Some(0) };
+        self.selection = None;
+        self.selected_label = None;
+        self.project_path = Some(path);
+        self.sync_lock = self.editor.state().sync_lock;
+        self.track_mix.clear();
+        self.ensure_track_mix();
+        self.autosave_sig = self.history_sig();
+        self.status = "Project opened".to_owned();
+        self.fit_zoom(1000.0);
+    }
+
+    fn recovery_dialog(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.recovery_prompt.clone() else { return };
+        let mut choice = None;
+        egui::Window::new("Automatic Crash Recovery")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "{} was not saved properly the last time it was open.\n\
+                     Recover the unsaved changes from its autosave?",
+                    path.display()
+                ));
+                ui.horizontal(|ui| {
+                    if ui.button("Recover").clicked() { choice = Some(0); }
+                    if ui.button("Discard changes").clicked() { choice = Some(1); }
+                    if ui.button("Cancel").clicked() { choice = Some(2); }
+                });
+            });
+        match choice {
+            Some(0) => {
+                self.recovery_prompt = None;
+                self.open_aup3(path, au_project::aup3::DocSource::Autosave);
+            }
+            Some(1) => {
+                self.recovery_prompt = None;
+                match au_project::aup3::discard_autosave(&path) {
+                    Ok(()) => self.open_aup3(path, au_project::aup3::DocSource::Saved),
+                    Err(e) => self.status = format!("Discard failed: {e}"),
+                }
+            }
+            Some(_) => self.recovery_prompt = None,
+            None => {}
         }
     }
 
@@ -2267,6 +2416,8 @@ impl eframe::App for AudacityApp {
             self.player = None;
         }
         self.ensure_track_mix();
+        self.maybe_autosave();
+        self.recovery_dialog(ctx);
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
@@ -2275,13 +2426,17 @@ impl eframe::App for AudacityApp {
                         ui.close_menu();
                         self.import_file();
                     }
-                    if ui.button("Open project…").clicked() {
+                    if ui.button("Open… (.aup3 / .aurs)").clicked() {
                         ui.close_menu();
                         self.open_project();
                     }
-                    if ui.button("Save project…").clicked() {
+                    if ui.button("Save Project").clicked() {
                         ui.close_menu();
                         self.save_project();
+                    }
+                    if ui.button("Save Project As…").clicked() {
+                        ui.close_menu();
+                        self.save_project_as();
                     }
                     if ui.button("Export WAV…").clicked() {
                         ui.close_menu();

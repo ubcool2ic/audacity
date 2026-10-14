@@ -230,12 +230,35 @@ This roadmap describes intended scope, not a claim that planned features are imp
 - [ ] Not verified on real audio hardware (box has no sound device): cpal output/input streams, loopback, real latency values
 - [ ] Punch-and-roll flattens that track's clips into one clip; per-clip punch is a later refinement
 
+## Stage 4 status (2026-10-14)
+
+Verified against **real Audacity 3.7.3** (Debian package, run headlessly under Xvfb via mod-script-pipe). See `docs/AUP3_FORMAT.md`.
+
+- [x] `.aup3` SQLite layout identical to Audacity 3.x: `application_id` = `AUDY`, `user_version` packed version, `project`/`autosave`/`sampleblocks` tables (schema SQL compared byte-for-byte with an Audacity-made file)
+- [x] ProjectSerializer binary XML: dict + doc decode/encode, char sizes 1/2/4, all field types incl. Push/Pop and Blob (`au-project::binxml`)
+- [x] Sample blocks: int16 / int24 / float, Audacity block sizes, min/max/rms + summary256 + summary64k — summaries **byte-identical** to Audacity's for every block in the fixtures (`au-project::blocks`)
+- [x] Tracks (mono + linked stereo), clips (offset, trims applied on read, name), per-clip envelopes (relative times ↔ track envelope), labels (UTF-8), project rate, track rate, gain/pan, mute/solo, selection, sample format per track, clip `clipStretchRatio` (writes format 3.4 when used), silent blocks (negative ids)
+- [x] Real Audacity fixtures (`tests/fixtures/aup3`, regenerate with `tools/make_aup3_fixtures.sh`): int16 mono 2 clips + envelope + labels + selection, float stereo 48 kHz muted/panned, int24 7 s multi-block, killed-session file with an orphan block
+- [x] Round trip: Audacity file → Rust save → Rust reopen equals; stored sample bytes identical; `PRAGMA integrity_check` ok
+- [x] Reopen in Audacity (`tools/verify_in_audacity.sh`): for every fixture, Audacity's WAV export of the Rust-saved copy is byte-identical to its export of the original, and Audacity's GetInfo (clips, labels, envelopes) is identical
+- [x] Rust-built project (stereo, int24, gain 0.5, pan −0.3, stretched clip, envelope point, UTF-8 label) opens in Audacity with the right values; Audacity re-saves it and Rust reads back an identical state
+- [x] Autosave journal into the `autosave` table (saved doc untouched, orphan blocks pruned); temporary (never-saved) projects
+- [x] Crash recovery: `inspect()` reports pending autosave and orphan blocks; recover / discard; real Audacity 3.7.3 opens a Rust-written autosave and shows "recovered to the last snapshot" with the recovered content
+- [x] GUI: File ▸ Open (.aup3/.aurs), Save Project, Save Project As (.aup3 default); autosave every edit (≤ once / 2 s) for .aup3 projects; Automatic Crash Recovery dialog (Recover / Discard / Cancel) — exercised under Xvfb with a real click
+- [x] CLI: `audacity-rs <file>` opens a project; `audacity-rs aup3-info <file>`
+- [x] `.aurs` v2 path kept (chosen by extension)
+- [ ] Not modelled (dropped on save): tags/metadata, realtime effect stacks, time/note tracks, track colors/heights, spectrogram settings, clip pitch (`centShift`), `rawAudioTempo`, project tempo/time signature
+- [ ] Trims are applied destructively on read (Audacity's hidden trimmed audio is not kept)
+- [ ] Audacity's own autosave rows were not captured in a fixture (scripted edits did not journal before SIGKILL); autosave fixtures are Rust-written and verified by opening them in Audacity
+- [ ] Older formats: pre-3.0 `.aup` + `_data` folders not imported; files > 3.7 rejected
+- [ ] Not tested against Audacity on Windows/macOS (char size 2 is supported by the decoder but no real Windows file was tested)
+
 ## Known Stage 1 gaps
 
 - The GUI has not been built or verified on the current CI box because it has no display and insufficient disk space.
 - ~~Playback resampling is still TODO.~~ Done in Stage 3.
 - MP3 and Ogg import compile, but automated coverage currently exercises only WAV and FLAC.
-- `.aup3` is detected but is not yet readable or writable.
+- ~~`.aup3` is detected but is not yet readable or writable.~~ Done in Stage 4.
 
 ## License
 

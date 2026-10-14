@@ -20,13 +20,39 @@ fn main() {
     let code = match args.first().map(String::as_str) {
         Some("--selftest") => report(selftest()),
         Some("process") if args.len() >= 3 => report(process(&args[1], &args[2], &args[3..])),
+        Some("aup3-info") if args.len() == 2 => report(aup3_info(&args[1])),
         Some("--help") | Some("-h") => {
-            println!("usage: audacity-rs [--selftest | process <in> <out.wav|out.flac> [amplify:<dB>|normalize:<dB>|fadein|fadeout|reverse]...]");
+            println!("usage: audacity-rs [--selftest | aup3-info <file.aup3> | process <in> <out.wav|out.flac> [amplify:<dB>|normalize:<dB>|fadein|fadeout|reverse]...]");
             0
         }
+        Some(f) if !f.starts_with('-') && std::path::Path::new(f).exists() => run_gui_with(Some(f.into())),
         _ => run_gui(),
     };
     std::process::exit(code);
+}
+
+/// Prints what is in an Audacity `.aup3` project and whether it needs recovery.
+fn aup3_info(path: &str) -> Result<String, String> {
+    use au_project::aup3;
+    let p = std::path::Path::new(path);
+    let info = aup3::inspect(p).map_err(|e| e.to_string())?;
+    let src = if info.needs_recovery { aup3::DocSource::Autosave } else { aup3::DocSource::Saved };
+    let proj = aup3::load_from(p, src).map_err(|e| e.to_string())?;
+    let mut out = format!(
+        "format {}.{}.{}  rate {}  needs_recovery {}  integrity {}\n",
+        info.user_version >> 24, (info.user_version >> 16) & 0xff, (info.user_version >> 8) & 0xff,
+        proj.state.sample_rate, info.needs_recovery, aup3::integrity_check(p).map_err(|e| e.to_string())?
+    );
+    for (i, t) in proj.state.tracks.iter().enumerate() {
+        out += &format!(
+            "track {i} {:?}: {} ch, {} clips, {:?}, gain {} pan {} mute {} solo {}\n",
+            t.name, t.clips.n_channels, t.clips.clips.len(), proj.extras.track_formats[i], t.gain, t.pan, t.mute, t.solo
+        );
+    }
+    for l in &proj.state.labels {
+        out += &format!("labels {:?}: {}\n", l.name, l.labels.len());
+    }
+    Ok(out.trim_end().to_owned())
 }
 
 fn report(r: Result<String, String>) -> i32 {
@@ -44,13 +70,23 @@ fn report(r: Result<String, String>) -> i32 {
 
 #[cfg(feature = "gui")]
 fn run_gui() -> i32 {
-    match gui::run() {
+    run_gui_with(None)
+}
+
+#[cfg(feature = "gui")]
+fn run_gui_with(open: Option<std::path::PathBuf>) -> i32 {
+    match gui::run_with(open) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("error: {e}");
             1
         }
     }
+}
+
+#[cfg(not(feature = "gui"))]
+fn run_gui_with(_open: Option<std::path::PathBuf>) -> i32 {
+    run_gui()
 }
 
 #[cfg(not(feature = "gui"))]

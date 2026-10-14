@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Part of the Audacity Rust port. Derived from Audacity (c) Audacity Team, GPLv3.
 
-//! Native `.aurs` project storage.
+//! Native `.aurs` project storage plus Audacity 3.x `.aup3` support.
+
+pub mod aup3;
+pub mod binxml;
+pub mod blocks;
 
 use au_core::{
     timeline::{Clip, EnvPoint, Envelope, Label, LabelTrack, WaveClips},
