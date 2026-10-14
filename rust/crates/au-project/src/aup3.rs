@@ -100,6 +100,9 @@ fn effects_to_xml(l: &RealtimeEffectList) -> XmlNode {
 pub struct Aup3Extras {
     /// Time selection `(sel0, sel1)` in seconds.
     pub selection: (f64, f64),
+    /// Spectral selection `(selLow, selHigh)` in Hz; negative = undefined
+    /// (Audacity's SelectedRegion::UndefinedFrequency).
+    pub frequencies: (f64, f64),
     /// Storage format per wave track (index matches `ProjectState::tracks`).
     pub track_formats: Vec<SampleFormat>,
     /// Per wave track `isSelected`.
@@ -120,6 +123,7 @@ impl Default for Aup3Extras {
     fn default() -> Self {
         Self {
             selection: (0.0, 0.0),
+            frequencies: (-1.0, -1.0),
             track_formats: Vec::new(),
             track_selected: Vec::new(),
             audacity_version: "3.7.3".into(),
@@ -334,6 +338,7 @@ fn from_xml(root: &XmlNode, c: &Connection) -> Result<Aup3Project> {
     let proj_rate = root.f64("rate").unwrap_or(44100.0);
     let mut extras = Aup3Extras {
         selection: (root.f64("sel0").unwrap_or(0.0), root.f64("sel1").unwrap_or(0.0)),
+        frequencies: (root.f64("selLow").unwrap_or(-1.0), root.f64("selHigh").unwrap_or(-1.0)),
         audacity_version: root.str("audacityversion").unwrap_or("").to_string(),
         ..Default::default()
     };
@@ -500,7 +505,15 @@ fn build_xml(c: &Connection, p: &Aup3Project) -> Result<XmlNode> {
         .attr("rate", d(rate, -1))
         .attr("snapto", V::Str("off".into()))
         .attr("sel0", d(p.extras.selection.0, 10))
-        .attr("sel1", d(p.extras.selection.1, 10))
+        .attr("sel1", d(p.extras.selection.1, 10));
+    // SelectedRegion::WriteXMLAttributes: selLow/selHigh only when defined.
+    if p.extras.frequencies.0 >= 0.0 {
+        root = root.attr("selLow", d(p.extras.frequencies.0, 10));
+    }
+    if p.extras.frequencies.1 >= 0.0 {
+        root = root.attr("selHigh", d(p.extras.frequencies.1, 10));
+    }
+    let mut root = root
         .attr("vpos", V::Int(0))
         .attr("h", d(0.0, 10))
         .attr("zoom", d(86.1328125, 10));
@@ -764,4 +777,26 @@ pub fn dump_xml(path: &Path, source: DocSource) -> Result<String> {
 pub fn integrity_check(path: &Path) -> Result<String> {
     let c = Connection::open(path)?;
     Ok(c.query_row("PRAGMA integrity_check", [], |r| r.get(0))?)
+}
+
+#[cfg(test)]
+mod spectral_selection_tests {
+    use super::*;
+
+    #[test]
+    fn sel_low_high_round_trip_and_omitted_when_undefined() {
+        let dir = std::env::temp_dir().join(format!("aup3-spec-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut p = Aup3Project { state: au_core::ProjectState::default(), extras: Aup3Extras::default() };
+        p.state.sample_rate = 44_100;
+        p.extras.selection = (0.5, 1.5);
+        p.extras.frequencies = (250.0, 4000.0);
+        let path = dir.join("a.aup3");
+        save(&path, &p).unwrap();
+        assert_eq!(load(&path).unwrap().extras.frequencies, (250.0, 4000.0));
+        p.extras.frequencies = (-1.0, -1.0);
+        let path2 = dir.join("b.aup3");
+        save(&path2, &p).unwrap();
+        assert_eq!(load(&path2).unwrap().extras.frequencies, (-1.0, -1.0));
+    }
 }

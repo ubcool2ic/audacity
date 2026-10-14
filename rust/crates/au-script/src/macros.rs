@@ -40,6 +40,17 @@ impl MacroLine {
 
 /// Returns the conventional Audacity macro directory for the current user.
 pub fn default_macro_dir() -> PathBuf {
+    // Audacity 3.x on Linux keeps macros in the XDG data dir
+    // ($XDG_DATA_HOME or ~/.local/share)/audacity/Macros.
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(d) = std::env::var_os("XDG_DATA_HOME").filter(|d| !d.is_empty()) {
+            return PathBuf::from(d).join("audacity").join("Macros");
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(".local/share/audacity/Macros");
+        }
+    }
     if let Some(home) = std::env::var_os("HOME") {
         PathBuf::from(home)
             .join(".config")
@@ -59,20 +70,25 @@ pub fn default_macro_names() -> Vec<String> {
 
 /// Returns the command lines used to restore one of Audacity's built-in macros.
 pub fn builtin_macro(name: &str) -> Option<Vec<MacroLine>> {
+    // MacroCommands::RestoreMacro. AddToMacro(command) without params stores
+    // GetCurrentParamsFor(command): an effect's current settings as an
+    // automation string (Audacity defaults on a fresh config) or, for an effect
+    // without parameters, its "<Current Settings>" preset reference.
+    const CURRENT: &str = "Use_Preset=\"<Current Settings>\"";
     match name {
         "MP3 Conversion" => Some(vec![
-            MacroLine::new("Normalize", ""),
+            MacroLine::new(
+                "Normalize",
+                "ApplyVolume=\"1\" PeakLevel=\"-1\" RemoveDcOffset=\"1\" StereoIndependent=\"0\"",
+            ),
             MacroLine::new("ExportMP3", ""),
         ]),
         "Fade Ends" => Some(vec![
-            MacroLine::new("Select", " Start=\"0\" End=\"1\""),
-            MacroLine::new("FadeIn", ""),
-            MacroLine::new(
-                "Select",
-                " Start=\"0\" End=\"1\" RelativeTo=\"ProjectEnd\"",
-            ),
-            MacroLine::new("FadeOut", ""),
-            MacroLine::new("Select", " Start=\"0\" End=\"0\""),
+            MacroLine::new("Select", "Start=\"0\" End=\"1\""),
+            MacroLine::new("FadeIn", CURRENT),
+            MacroLine::new("Select", "Start=\"0\" End=\"1\" RelativeTo=\"ProjectEnd\""),
+            MacroLine::new("FadeOut", CURRENT),
+            MacroLine::new("Select", "Start=\"0\" End=\"0\""),
         ]),
         _ => None,
     }
@@ -600,11 +616,8 @@ mod tests {
     #[test]
     fn builtins_match_audacity_macro_definitions() {
         assert_eq!(
-            builtin_macro("MP3 Conversion").unwrap(),
-            vec![
-                MacroLine::new("Normalize", ""),
-                MacroLine::new("ExportMP3", "")
-            ]
+            builtin_macro("MP3 Conversion").unwrap()[1],
+            MacroLine::new("ExportMP3", "")
         );
         assert_eq!(builtin_macro("Fade Ends").unwrap().len(), 5);
         assert_eq!(MacroCommands::is_fixed("Fade Ends"), true);

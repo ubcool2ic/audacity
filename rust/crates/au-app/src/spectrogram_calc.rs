@@ -913,6 +913,10 @@ pub fn audacity_columns(
 ) -> Option<Vec<Vec<f32>>> {
     let mut settings = AudSpectrogramSettings::default();
     settings.window_size = view.window_size;
+    settings.algorithm = usize::from(view.algorithm.min(2));
+    settings.window_type = usize::from(view.window_type.min(9));
+    settings.zero_padding_factor = usize::from(view.zero_padding.max(1));
+    settings.frequency_gain = i32::from(view.frequency_gain.max(0));
     settings.scale_type = match view.scale {
         FreqScale::Linear => 0,
         FreqScale::Logarithmic => 1,

@@ -47,6 +47,14 @@ pub struct ViewSettings {
     pub gain_db: f32,
     /// Display range in decibels.
     pub range_db: f32,
+    /// Audacity algorithm: 0 Frequencies, 1 Reassignment, 2 Pitch (EAC).
+    pub algorithm: u8,
+    /// Audacity window type index (3 = Hann).
+    pub window_type: u8,
+    /// Zero-padding factor (Audacity default 2).
+    pub zero_padding: u8,
+    /// Frequency gain in dB/decade.
+    pub frequency_gain: i8,
 }
 
 impl Default for ViewSettings {
@@ -58,6 +66,10 @@ impl Default for ViewSettings {
             max_freq: 20_000.0,
             gain_db: 20.0,
             range_db: 80.0,
+            algorithm: 0,
+            window_type: 3,
+            zero_padding: 2,
+            frequency_gain: 0,
         }
     }
 }
@@ -424,6 +436,7 @@ struct CacheKey {
     max_freq: u32,
     gain_db: u32,
     range_db: u32,
+    algorithm: (u8, u8, u8, i8),
 }
 
 impl CacheKey {
@@ -455,6 +468,7 @@ impl CacheKey {
             max_freq: settings.max_freq.to_bits(),
             gain_db: settings.gain_db.to_bits(),
             range_db: settings.range_db.to_bits(),
+            algorithm: (settings.algorithm, settings.window_type, settings.zero_padding, settings.frequency_gain),
         }
     }
 }

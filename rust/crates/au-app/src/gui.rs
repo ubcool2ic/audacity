@@ -171,6 +171,8 @@ struct AudacityApp {
     spectrogram_cache: crate::spectrogram_view::SpectrogramCache,
     /// Display settings used by spectrogram tracks.
     spectrogram_settings: crate::spectrogram_view::ViewSettings,
+    spectrogram_settings_open: bool,
+    macros: MacrosDialog,
     /// Spectral selection retained until it is part of the core model.
     spectral_selection: Option<crate::spectrogram_view::SpectralSelection>,
     snapper: Snapper,
@@ -263,6 +265,8 @@ impl Default for AudacityApp {
             track_views: Vec::new(),
             spectrogram_cache: crate::spectrogram_view::SpectrogramCache::new(),
             spectrogram_settings: crate::spectrogram_view::ViewSettings::default(),
+            spectrogram_settings_open: false,
+            macros: MacrosDialog::default(),
             spectral_selection: None,
             toolbars: toolbars::ToolbarLayout::load(),
             theme: crate::theme::load_saved(),
@@ -561,6 +565,7 @@ fn export_midi(&mut self) {
             let rate = self.editor.state().tracks.get(sel.track).map_or(44100, |t| t.sample_rate()).max(1) as f64;
             extras.selection = (sel.start as f64 / rate, sel.end as f64 / rate);
         }
+        extras.frequencies = self.spectral_selection.map_or((-1.0, -1.0), |sp| (sp.f0, sp.f1));
         extras.track_formats.resize(self.editor.state().tracks.len(), au_project::blocks::SampleFormat::Float);
         extras.track_selected = (0..self.editor.state().tracks.len()).map(|i| self.selected_track == Some(i)).collect();
         au_project::aup3::Aup3Project { state: self.editor.state().clone(), extras }
@@ -1006,6 +1011,8 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     let rate = self.editor.state().tracks[0].sample_rate() as f64;
                     self.selection = Some(Selection { track: 0, start: (s0 * rate) as usize, end: (s1 * rate) as usize });
                 }
+                let (f0, f1) = self.aup3_extras.frequencies;
+                self.spectral_selection = (f0 >= 0.0 || f1 >= 0.0).then_some(crate::spectrogram_view::SpectralSelection { track: 0, t0: s0, t1: s1, f0, f1 });
                 if source == au_project::aup3::DocSource::Autosave {
                     // Unsaved until the user saves, like Audacity after recovery.
                     self.autosave_sig = (0, None);
@@ -1143,6 +1150,45 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     }
 
     /// Export Audio / Export Multiple / Metadata Editor windows (Stage 8).
+    /// Audacity's Spectrogram Settings (Spectrograms preferences page, algorithm part).
+    fn show_spectrogram_settings(&mut self, ctx: &egui::Context) {
+        if !self.spectrogram_settings_open {
+            return;
+        }
+        let mut open = true;
+        let st = &mut self.spectrogram_settings;
+        egui::Window::new("Spectrogram Settings").open(&mut open).show(ctx, |ui| {
+            const ALGS: [&str; 3] = ["Frequencies", "Reassignment", "Pitch (EAC)"];
+            egui::ComboBox::from_label("Algorithm").selected_text(ALGS[usize::from(st.algorithm.min(2))]).show_ui(ui, |ui| {
+                for (i, a) in ALGS.iter().enumerate() {
+                    ui.selectable_value(&mut st.algorithm, i as u8, *a);
+                }
+            });
+            const WINS: [&str; 10] = ["Rectangular", "Bartlett", "Hamming", "Hann", "Blackman", "Blackman-Harris", "Welch", "Gaussian(a=2.5)", "Gaussian(a=3.5)", "Gaussian(a=4.5)"];
+            egui::ComboBox::from_label("Window type").selected_text(WINS[usize::from(st.window_type.min(9))]).show_ui(ui, |ui| {
+                for (i, w) in WINS.iter().enumerate() {
+                    ui.selectable_value(&mut st.window_type, i as u8, *w);
+                }
+            });
+            egui::ComboBox::from_label("Window size").selected_text(st.window_size.to_string()).show_ui(ui, |ui| {
+                for k in 3..=15 {
+                    ui.selectable_value(&mut st.window_size, 1usize << k, (1usize << k).to_string());
+                }
+            });
+            if st.algorithm != 2 {
+                egui::ComboBox::from_label("Zero padding factor").selected_text(st.zero_padding.to_string()).show_ui(ui, |ui| {
+                    for z in [1u8, 2, 4, 8, 16] {
+                        ui.selectable_value(&mut st.zero_padding, z, z.to_string());
+                    }
+                });
+            }
+            ui.add(egui::Slider::new(&mut st.gain_db, 0.0..=100.0).text("Gain (dB)"));
+            ui.add(egui::Slider::new(&mut st.range_db, 1.0..=300.0).text("Range (dB)"));
+            ui.add(egui::Slider::new(&mut st.frequency_gain, 0..=60).text("Frequency gain (dB/dec)"));
+        });
+        self.spectrogram_settings_open = open;
+    }
+
     fn show_export_dialogs(&mut self, ctx: &egui::Context) {
         if let Some(ed) = self.metadata_editor.as_mut() {
             if let Some(result) = ed.show(ctx) {
@@ -3236,6 +3282,8 @@ if self.ffmpeg_window {
         }
 
         self.show_export_dialogs(ctx);
+        self.show_spectrogram_settings(ctx);
+        self.show_macros(ctx);
 
         if self.export_options_window {
             let mut open = self.export_options_window;
@@ -3702,6 +3750,10 @@ if ui.button("FFmpeg status…").clicked() {
                 });
                 ui.menu_button("View", |ui| {
                     self.toolbars_menu(ui);
+                    if ui.button("Spectrogram Settings…").clicked() {
+                        self.spectrogram_settings_open = true;
+                        ui.close_menu();
+                    }
                     ui.menu_button("Theme", |ui| {
                         if let Some(message) = crate::theme::theme_menu(ui, &mut self.theme, &mut self.custom_theme) {
                             self.status = message;
@@ -3787,6 +3839,12 @@ if response.changed() && self.script_pipe_enabled {
                         ui.close_menu();
                         let result = self.editor.redo();
                         self.report(result);
+                    }
+                });
+                ui.menu_button("Tools", |ui| {
+                    if ui.button("Macros…").clicked() {
+                        self.macros.open();
+                        ui.close_menu();
                     }
                 });
                 ui.menu_button("Tracks", |ui| {
@@ -4235,5 +4293,136 @@ impl AudacityApp {
         let r = au_script::execute(&mut host, line);
         host.finish();
         r
+    }
+}
+
+/// Tools > Macros… (Audacity's Macros Manager: list, edit, apply to project / files).
+#[derive(Default)]
+struct MacrosDialog {
+    open: bool,
+    mc: Option<au_script::macros::MacroCommands>,
+    names: Vec<String>,
+    current: String,
+    text: String,
+    new_name: String,
+    report: String,
+}
+
+impl MacrosDialog {
+    fn open(&mut self) {
+        let mc = au_script::macros::MacroCommands::new(au_script::macros::default_macro_dir());
+        self.names = mc.get_names();
+        self.mc = Some(mc);
+        self.open = true;
+        if let Some(first) = self.names.first().cloned() {
+            self.select(&first);
+        }
+    }
+    fn select(&mut self, name: &str) {
+        let Some(mc) = self.mc.as_mut() else { return };
+        self.current = name.to_string();
+        let _ = mc.read_macro(name);
+        self.text = mc.commands().iter().map(|l| l.serialize()).collect::<Vec<_>>().join("\n");
+    }
+    fn lines(&self) -> Vec<au_script::macros::MacroLine> {
+        self.text
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| {
+                let (c, p) = l.split_once(':').unwrap_or((l, ""));
+                au_script::macros::MacroLine::new(c.trim(), p.trim())
+            })
+            .collect()
+    }
+}
+
+impl AudacityApp {
+    fn show_macros(&mut self, ctx: &egui::Context) {
+        if !self.macros.open {
+            return;
+        }
+        let mut open = true;
+        let mut apply: Option<bool> = None; // Some(false)=project, Some(true)=files
+        let d = &mut self.macros;
+        egui::Window::new("Macros").open(&mut open).default_width(520.0).show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    for n in d.names.clone() {
+                        if ui.selectable_label(n == d.current, &n).clicked() {
+                            d.select(&n);
+                        }
+                    }
+                    ui.horizontal(|ui| {
+                        ui.text_edit_singleline(&mut d.new_name);
+                        if ui.button("New").clicked() && !d.new_name.trim().is_empty() {
+                            if let Some(mc) = d.mc.as_ref() {
+                                mc.add_macro(d.new_name.trim());
+                                d.names = mc.get_names();
+                            }
+                            let n = d.new_name.trim().to_string();
+                            d.select(&n);
+                        }
+                    });
+                    let fixed = au_script::macros::MacroCommands::is_fixed(&d.current);
+                    if ui.add_enabled(!fixed && !d.current.is_empty(), egui::Button::new("Remove")).clicked() {
+                        if let Some(mc) = d.mc.as_ref() {
+                            mc.delete_macro(&d.current);
+                            d.names = mc.get_names();
+                        }
+                        d.current.clear();
+                        d.text.clear();
+                    }
+                });
+                ui.vertical(|ui| {
+                    ui.label(format!("Macro: {}", d.current));
+                    ui.add(egui::TextEdit::multiline(&mut d.text).code_editor().desired_rows(10));
+                    ui.horizontal(|ui| {
+                        if ui.button("Save").clicked() {
+                            let lines = d.lines();
+                            if let Some(mc) = d.mc.as_mut() {
+                                mc.set_commands(lines);
+                                d.report = match mc.write_macro(&d.current) {
+                                    Ok(_) => "Saved".into(),
+                                    Err(e) => format!("Save failed: {e}"),
+                                };
+                            }
+                        }
+                        if ui.button("Apply to Project").clicked() {
+                            apply = Some(false);
+                        }
+                        if ui.button("Apply to Files…").clicked() {
+                            apply = Some(true);
+                        }
+                    });
+                    ui.label(&d.report);
+                });
+            });
+        });
+        self.macros.open = open;
+        if let Some(files) = apply {
+            let mut runner = au_script::macros::MacroRunner::new(self.macros.lines());
+            if files {
+                let picked = rfd::FileDialog::new().pick_files().unwrap_or_default();
+                if picked.is_empty() {
+                    return;
+                }
+                let out_dir = picked[0].parent().map(|p| p.to_path_buf()).unwrap_or_default();
+                let mut host = AppScriptHost::new(self);
+                let r = runner.apply_to_files(&mut host, &picked, &out_dir, "wav", 2);
+                host.finish();
+                self.macros.report = match r {
+                    Ok(paths) => format!("Exported {} file(s) to {}", paths.len(), out_dir.join("macro-output").display()),
+                    Err(e) => e,
+                };
+            } else {
+                let mut host = AppScriptHost::new(self);
+                let r = runner.apply(&mut host);
+                host.finish();
+                self.macros.report = match r {
+                    Ok(()) => format!("Applied macro {}", self.macros.current),
+                    Err(e) => e,
+                };
+            }
+        }
     }
 }
