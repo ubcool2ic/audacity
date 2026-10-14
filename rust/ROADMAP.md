@@ -390,3 +390,28 @@ Exporters link the same system libraries Audacity 3.7.3's export modules use (LA
 - [x] CLI `process` batch form (`process <files|dirs> --out-dir D [--format wav|flac] [--jobs N] effects…`) on au-runtime; output byte-identical to single-file runs
 - [x] Comparison vs Audacity 3.7.3 Export2 (`tools/compare_exports.py`, `docs/export-compare-3.7.3.txt`): **27/27** — decoded audio bit-identical (−240 dB) and tags equal field by field for MP3 ×8, Ogg ×3, Opus ×4, WavPack ×4, FLAC ×3, WAV ×3, AIFF ×2. Files differ in bytes only by tag order (Audacity iterates an unordered_map)
 - Notes/gaps: AIFF reference is Audacity's WAV export at the same depth because 3.7.3's scripted Export2 cannot write AIFF on Linux (typed-PCM editor drops the header option); Export Multiple naming compared against ExportAudioDialog.cpp logic by unit tests, not by running Audacity's dialog; MP3/Opus comparisons used default channel mode only
+
+**BizyBot status (2026-10-14), per docs/SPLIT_stage10.md:**
+- Toolbars (`au-app/src/gui/toolbars.rs`):
+  - 13 Audacity bars: Transport, Tools, Edit, Cut/Copy/Paste, Meter, Mixer, Play-at-Speed, Spectral Selection, Time, Selection, Snapping, Audio Setup, Share Audio.
+  - Bars dock at the top or bottom or float. They can be reordered or put on a new row, and wrap to extra lines in narrow windows.
+  - View > Toolbars has show/hide and Reset. The layout persists in `toolbars.cfg` (`AU_TOOLBARS_CFG` overrides the path).
+- Themes (`au-app/src/theme.rs`):
+  - Light, Dark, High Contrast and Classic, taken from Audacity's own `Colors.txt` tables.
+  - Custom themes through Load/Save Theme Components (Colors.txt) and an `ImageCache.png` theme cache. This cache is our own colour-swatch PNG, not byte-compatible with Audacity's packed ImageCache.
+  - View > Theme. The track panel uses theme colours.
+- Accessibility:
+  - AccessKit is enabled. The track panel exposes Audacity-style names ("Track 1 Audio Track, Mono, 1.00 seconds, Select On").
+  - Up/Down/Home/End move track focus, Enter toggles selection, and the focus ring uses TrackFocus1.
+  - Tests run headless against the AccessKit tree. Not yet tested with a real screen reader (AT-SPI/NVDA/VoiceOver).
+- Localization layout tests: headless runs at 1.0× and 1.4× text size, plus the Plugin Manager dialog. They check for clipping and overlapping controls, and they caught a real toolbar overflow, which is now fixed.
+- UI automation under Xvfb (`tests/ui_automation.rs`, `script_pipe_gui.rs`, `spectrogram_gui.rs`):
+  - Workflows: editing, import/export, save + kill -9 + crash recovery, recording (skipped when there is no input device), and error reporting.
+  - The pipe gained Select, SelectAll, Cut, Copy, Paste, Delete, Undo, Redo, Export2, SaveProject2, OpenProject2, Recover, Play, Stop and Record1stChoice.
+- Packaging (`rust/packaging/`):
+  - Linux .deb and AppImage, plus smoke tests. These were built and smoke-tested locally, including the GUI under Xvfb.
+  - Windows .msi (WiX v5, optional signtool) and macOS .app/.dmg (codesign, notarytool, stapler). Neither has been run yet.
+  - The CI workflow is at `rust/packaging/ci/rust-packaging.yml`. A maintainer needs to copy it to `.github/workflows/`, because the agent token lacks the `workflow` scope.
+- Open:
+  - Preferences workflows in the automation suite are waiting on the partner's preferences model.
+  - Translated-catalog layout runs are waiting on the partner's gettext work.

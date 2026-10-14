@@ -202,3 +202,6 @@ Luna 10 calls, $0.0810 (API change part: $0.0089). Sol: none. **Total: $0.0810**
 Hand edits: trivial compile fixes (FLAC vorbiscomment helper, WavPack writer ids, two corrupted literals in generated Rust, egui borrow, includes), the glibc rand() seeding in the dither port, the mechanical `id()`→`Cow` signature migration across effect files (script), gui.rs menu wiring.
 
 **Running total (ubcool2ic): $1.8653**
+
+## BizyBot — Stage 10 toolbars / themes / AccessKit / layout tests / UI automation / packaging (2026-10-14)
+openai/gpt-6-luna: script_pipe_gui temp-dir fix, toolbars, themes, AccessKit, layout tests (2 Luna attempts, then 1 Sol escalation for the dialog-check fix), toolbar wrapping, pipe edit commands, UI automation suite, packaging. Luna ≈ $0.0359, Sol $0.0279. **Total ≈ $0.064.**
