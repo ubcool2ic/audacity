@@ -78,6 +78,7 @@ fn selftest() -> eframe::Result<()> {
 mod accessibility;
 #[cfg(test)]
 mod layout_tests;
+mod progress;
 mod toolbars;
 mod waveform_cache;
 
@@ -175,6 +176,12 @@ struct AudacityApp {
     autosave_at: std::time::Instant,
     tool: Tool,
     zoom: ZoomInfo,
+    /// Shared progress dialog / cancel UI for long jobs.
+    progress: progress::ProgressCenter,
+    /// Jobs started by the `ProgressTest` scripting hook.
+    test_jobs: Vec<(progress::JobTicket, au_runtime::JobHandle<()>)>,
+    /// Pool for scripting test jobs.
+    runtime_for_tests: au_runtime::Runtime,
     /// Waveform min/max summaries computed on the au-runtime pool.
     waveform_cache: waveform_cache::WaveformCache,
     /// Track with keyboard focus in the track panel.
@@ -296,6 +303,9 @@ impl Default for AudacityApp {
             theme_applied: false,
             focused_track: None,
             waveform_cache: waveform_cache::WaveformCache::new(),
+            progress: progress::ProgressCenter::new(),
+            test_jobs: Vec::new(),
+            runtime_for_tests: au_runtime::Runtime::new(1, 4),
             zoom: ZoomInfo {
                 h_offset: 0.0,
                 pixels_per_sec: 100.0,
@@ -991,6 +1001,133 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                         self.status.clone()
                     };
                     Some((message, false))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Executes test and diagnostic commands exposed by the mod-script pipe.
+    ///
+    /// `ProgressTest` and `CrashTest` are available only when
+    /// `AU_ALLOW_TEST_HOOKS=1`.
+    fn execute_diagnostic_command(&mut self, line: &str) -> Option<(String, bool)> {
+        let (command, args) = crate::script_bridge::parse_command(line);
+        let value = |key: &str| {
+            args.iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value.as_str())
+        };
+
+        match command.as_str() {
+            "ProgressTest" => {
+                if !std::env::var("AU_ALLOW_TEST_HOOKS")
+                    .map(|value| value == "1")
+                    .unwrap_or(false)
+                {
+                    return Some(("Test hooks are disabled".to_string(), false));
+                }
+
+                let seconds = match value("Seconds").and_then(|value| value.parse::<f64>().ok()) {
+                    Some(seconds) if seconds.is_finite() && seconds >= 0.0 => seconds,
+                    _ => {
+                        return Some((
+                            "ProgressTest requires a non-negative Seconds value".to_string(),
+                            false,
+                        ));
+                    }
+                };
+                let title = match value("Title") {
+                    Some(title) if !title.is_empty() => title.to_string(),
+                    _ => {
+                        return Some(("ProgressTest requires a Title value".to_string(), false));
+                    }
+                };
+
+                let delay = std::time::Duration::from_secs_f64(seconds / 100.0);
+                let handle = self.runtime_for_tests.submit(
+                    100,
+                    move |ctx: &au_runtime::pool::JobCtx| -> Result<(), au_runtime::JobError> {
+                        for _ in 0..100 {
+                            ctx.cancel.check()?;
+                            std::thread::sleep(delay);
+                            ctx.progress.add(1);
+                        }
+                        Ok(())
+                    },
+                );
+                let ticket = self.progress.register(&title, "Running test job", &handle, false);
+                self.test_jobs.push((ticket, handle));
+                Some((format!("Started {title}"), true))
+            }
+            "GetProgress" => {
+                let snapshot = self.progress.snapshot();
+                if snapshot.is_empty() {
+                    return Some(("none".to_string(), true));
+                }
+
+                let lines = snapshot
+                    .into_iter()
+                    .map(|(title, fraction, outcome)| {
+                        let status = match outcome {
+                            progress::Outcome::Running => "Running",
+                            progress::Outcome::Cancelled => "Cancelled",
+                            progress::Outcome::Stopped => "Stopped",
+                        };
+                        format!("{title}\t{:.0}\t{status}", fraction * 100.0)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Some((lines, true))
+            }
+            "CancelProgress" => {
+                let count = self.progress.len();
+                self.progress.cancel_all();
+                Some((format!("Cancelled {count} job(s)"), true))
+            }
+            "CrashTest" => {
+                if !std::env::var("AU_ALLOW_TEST_HOOKS")
+                    .map(|value| value == "1")
+                    .unwrap_or(false)
+                {
+                    return Some(("Test hooks are disabled".to_string(), false));
+                }
+                panic!("CrashTest requested over mod-script-pipe");
+            }
+            "GetDialogs" => {
+                let mut lines = Vec::new();
+                lines.extend(
+                    self.crash_reports
+                        .iter()
+                        .map(|report| format!("crash_report\t{}", report.path.display())),
+                );
+                if let Some(path) = &self.recovery_prompt {
+                    lines.push(format!("recovery\t{}", path.display()));
+                }
+                lines.extend(
+                    self.progress
+                        .snapshot()
+                        .into_iter()
+                        .map(|(title, _, _)| format!("progress\t{title}")),
+                );
+
+                if lines.is_empty() {
+                    Some(("none".to_string(), true))
+                } else {
+                    Some((lines.join("\n"), true))
+                }
+            }
+            "DismissCrashReport" => {
+                if self.crash_reports.is_empty() {
+                    return Some(("No crash report to dismiss".to_string(), false));
+                }
+
+                match au_runtime::crash::dismiss(&self.crash_reports[0]) {
+                    Ok(()) => {
+                        self.crash_reports.remove(0);
+                        Some(("Crash report dismissed".to_string(), true))
+                    }
+                    Err(error) => Some((format!("Failed to dismiss crash report: {error}"), false)),
                 }
             }
             _ => None,
@@ -3667,6 +3804,7 @@ if let Some(pipe) = self.script_pipe.as_mut() {
         let response = match self
             .execute_app_command(request.command())
             .or_else(|| self.execute_edit_command(request.command()))
+            .or_else(|| self.execute_diagnostic_command(request.command()))
         {
             Some((message, ok)) => au_scriptpipe::finished(&message, ok),
             None => {
@@ -4137,6 +4275,16 @@ if response.changed() && self.script_pipe_enabled {
         self.floating_toolbars(ctx);
         self.draw_windows(ctx);
         self.waveform_cache.end_frame();
+        let progress = &mut self.progress;
+        self.test_jobs.retain(|(ticket, handle)| {
+            if handle.try_result().is_some() {
+                progress.finish(*ticket);
+                false
+            } else {
+                true
+            }
+        });
+        self.progress.show(ctx);
 
         if self.player.is_some() || self.recorder.is_some() {
             ctx.request_repaint();
