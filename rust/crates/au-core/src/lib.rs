@@ -369,6 +369,57 @@ impl Editor {
         self.history.push("Add Track", state);
     }
 
+    /// Sets a track's mixer parameters (gain, pan, mute, solo) with undo.
+    pub fn set_track_mix(&mut self, idx: usize, gain: f32, pan: f32, mute: bool, solo: bool) -> Result<()> {
+        let mut state = self.state().clone();
+        let t = state.tracks.get_mut(idx).ok_or(CoreError::TrackNotFound(idx))?;
+        if (t.gain, t.pan, t.mute, t.solo) == (gain, pan.clamp(-1.0, 1.0), mute, solo) {
+            return Ok(());
+        }
+        t.gain = gain.max(0.0);
+        t.pan = pan.clamp(-1.0, 1.0);
+        t.mute = mute;
+        t.solo = solo;
+        self.history.push("Track Mix", state);
+        Ok(())
+    }
+
+    /// Replaces a track's audio with a single clip (used by punch-and-roll
+    /// recording), keeping its name and mixer settings; one undo entry.
+    pub fn replace_track_audio(&mut self, idx: usize, buffer: AudioBuffer, description: &str) -> Result<()> {
+        let mut state = self.state().clone();
+        let t = state.tracks.get_mut(idx).ok_or(CoreError::TrackNotFound(idx))?;
+        t.clips = timeline::WaveClips::from_buffer("Clip", buffer);
+        self.history.push(description, state);
+        Ok(())
+    }
+
+    /// Draw tool: sets samples `frame..frame+values.len()` on every channel of
+    /// the clip under `frame` (clamped to that clip and to [-1, 1]). Clips that
+    /// are time-stretched are refused, matching Audacity. One undo entry.
+    pub fn draw_samples(&mut self, track: usize, frame: usize, values: &[Sample]) -> Result<()> {
+        let mut state = self.state().clone();
+        let t = state.tracks.get_mut(track).ok_or(CoreError::TrackNotFound(track))?;
+        let clip = t
+            .clips
+            .clips
+            .iter_mut()
+            .find(|c| frame >= c.start && frame < c.start + c.buffer.len())
+            .ok_or(CoreError::InvalidRange(frame, frame + values.len()))?;
+        if (clip.stretch_ratio - 1.0).abs() > 1e-9 {
+            return Err(CoreError::InvalidRange(frame, frame + values.len()));
+        }
+        let off = frame - clip.start;
+        let n = values.len().min(clip.buffer.len() - off);
+        for ch in &mut clip.buffer.channels {
+            for (i, v) in values[..n].iter().enumerate() {
+                ch[off + i] = v.clamp(-1.0, 1.0);
+            }
+        }
+        self.history.push("Draw", state);
+        Ok(())
+    }
+
     /// Removes a track and records an undo entry.
     pub fn remove_track(&mut self, idx: usize) -> Result<()> {
         if idx >= self.state().tracks.len() {
@@ -642,6 +693,20 @@ pub fn frames_to_secs(frames: usize, rate: u32) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn draw_samples_sets_and_undoes() {
+        let mut ed = Editor::new(ProjectState {
+            tracks: vec![Track::new("t", AudioBuffer::from_channels(10, vec![vec![0.0; 5]]))],
+            sample_rate: 10,
+            ..Default::default()
+        });
+        ed.draw_samples(0, 3, &[0.5, 2.0, 0.7]).unwrap();
+        assert_eq!(ed.state().tracks[0].render().channels[0], vec![0.0, 0.0, 0.0, 0.5, 1.0]);
+        assert!(ed.draw_samples(0, 9, &[0.1]).is_err());
+        ed.undo().unwrap();
+        assert_eq!(ed.state().tracks[0].render().channels[0], vec![0.0; 5]);
+    }
+
     use super::*;
 
     fn buffer(samples: &[f32]) -> AudioBuffer {

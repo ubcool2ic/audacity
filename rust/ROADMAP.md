@@ -191,7 +191,7 @@ This roadmap describes intended scope, not a claim that planned features are imp
 | `.aurs` project save/load | Projects | 1 | Done |
 | `.aup3` read/write and recovery | Projects | 4 | Planned |
 | Clips, labels, envelopes, sync-lock | Timeline | 2 | Done (GUI not verified on a display) |
-| Mixer, recording features, resampling, dither | Audio engine | 3 | Planned |
+| Mixer, recording features, resampling, dither | Audio engine | 3 | Done (no real-device test yet) |
 | Built-in effects parity and realtime stacks | Effects | 5 | Planned |
 | Generators and analyzers | Analyze/generate | 6 | Planned |
 | CLAP/VST3/LV2/LADSPA hosting | Plugins | 7 | Scanner stubs only |
@@ -209,13 +209,31 @@ This roadmap describes intended scope, not a claim that planned features are imp
 - [x] Clip time-stretch, pitch preserved, via in-house WSOLA (Hann window ~23 ms, 50% overlap, ±10 ms cross-correlation search; linear-interp fallback for very short clips). `rubato` was not used because it resamples (changes pitch) rather than stretching. A phase vocoder / Audacity's "Staffpad" stretcher is a future quality upgrade.
 - [x] All of the above are undoable and persisted in `.aurs` format v2 (v1 files still load)
 - [x] egui GUI: Selection / Envelope / Time Shift tools, ruler, zoom buttons and Ctrl+wheel, snap combo, sync-lock, Split (Ctrl+I), Join (Ctrl+J), Change Clip Speed, label track drawing/editing (Ctrl+B), label import/export
-- [ ] GUI interaction verified on a real display (compiles only; no display on the build box)
-- [ ] Selection toolbar (typed time fields) and draw tool (sample-accurate draw) are not yet implemented
+- [ ] GUI interaction verified on a real display (launches and renders under Xvfb; clicks not exercised)
+- [x] Selection toolbar (Start/End/Length typed `hh:mm:ss.mmm` fields) and Draw tool (sample draw at ≥1 px/sample, one undo per stroke; refused on stretched clips) — added in Stage 3 pass
+
+## Stage 3 status (2026-10-14)
+
+- [x] Lock-free engine (`au-io::engine`): audio callback drains an `rtrb` SPSC command ring, mixes preallocated buffers, publishes meters/position via atomics; no locks or allocation in the callback
+- [x] Multitrack mixer: per-track gain, constant-power pan (mono) / balance (stereo), mute, solo, master gain, clamp + clip counter (`mixer_*` tests)
+- [x] Peak/RMS meters per track and master; record input peak meter
+- [x] Offline render matches reference fixtures (tolerance 1e-6; 1e-5 where constant-power pan rounding applies)
+- [x] Playback resampling with `rubato` (sinc 256, BlackmanHarris2) when device rate ≠ project rate; tests: passband within 0.1 dB, alias rejection ≥ 60 dB (23 kHz → 32 kHz), impulse alignment ±2 frames. Tracks are resampled before the stream starts; `StreamResampler` exists for streaming use
+- [x] Dither on export bit-depth reduction: None / Rectangle / Triangle (default) / Shaped (1st-order error feedback); WAV export uses it, FLAC export still truncates via its own path
+- [x] Recording: new track, overdub (plays mix while recording), latency compensation, punch-and-roll with preroll + crossfade, timer record, sound-activated record (threshold + hold); capture via SPSC ring
+- [x] System-audio loopback: Windows WASAPI only; Linux = choose a PulseAudio/PipeWire "Monitor of…" input; macOS unsupported (needs BlackHole/ScreenCaptureKit). See `docs/AUDIO_ENGINE.md`
+- [x] Play-at-speed (0.1–3×, linear interpolation, negative = reverse) and loop playback
+- [ ] Scrubbing UI (engine supports negative/variable speed + seek; no mouse-scrub gesture yet)
+- [x] Headless null backends (`NullOutput`, `NullInput`) — playback and record paths tested without hardware (`au-app::transport` tests)
+- [x] Undo/project: mixer changes (`Track Mix`), recordings (`Add Track`), punch (`Punch and Roll Record`), Draw; gain/pan/mute/solo persist in `.aurs`
+- [x] egui: transport (Play/Pause/Stop/Loop/speed/Record), meters, mixer side panel, record options, export dither/bit-depth
+- [ ] Not verified on real audio hardware (box has no sound device): cpal output/input streams, loopback, real latency values
+- [ ] Punch-and-roll flattens that track's clips into one clip; per-clip punch is a later refinement
 
 ## Known Stage 1 gaps
 
 - The GUI has not been built or verified on the current CI box because it has no display and insufficient disk space.
-- Playback resampling is still TODO.
+- ~~Playback resampling is still TODO.~~ Done in Stage 3.
 - MP3 and Ogg import compile, but automated coverage currently exercises only WAV and FLAC.
 - `.aup3` is detected but is not yet readable or writable.
 

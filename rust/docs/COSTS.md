@@ -31,3 +31,18 @@ Hand fixes (no spend): Track/Editor integration in au-core lib.rs, editor tests,
 **Stage 2 total: $0.0235**
 
 **Running total: $0.0370**
+
+## Stage 3 (2026-10-14)
+
+| date | model | file | prompt tok | completion tok | cost |
+|---|---|---|---|---|---|
+| 2026-10-14 | openai/gpt-6-luna (low) | crates/au-io/src/dsp.rs | 967 | 4645 | $0.00242 |
+| 2026-10-14 | openai/gpt-6-luna (high) | crates/au-io/src/record.rs | 978 | 10892 | $0.00554 |
+| 2026-10-14 | openai/gpt-6-luna (high) | crates/au-io/src/engine.rs | 1411 | 15357 | $0.00785 |
+| 2026-10-14 | openai/gpt-6-luna (high) | crates/au-app/src/gui.rs | 15495 | 23721 | $0.01380 |
+
+Hand fixes (no spend): mixer test expectations that exceeded clip range, f32-phase test sine (caused fake -53 dB alias), rubato 0.15 delay trim (output already aligned), cpal Player/Recorder rewrite onto engine + SPSC capture, dither in WAV export, Editor set_track_mix/replace_track_audio/draw_samples, au-app transport.rs (RecordController + headless tests), 6 GUI compile errors. No Sol escalation needed.
+
+**Stage 3 total: $0.0296**
+
+**Running total: $0.0666**

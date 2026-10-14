@@ -6,13 +6,18 @@ use au_core::{
     AudioBuffer, Editor, Selection, Track,
 };
 use au_effects::{Amplify, FadeIn, FadeOut, Normalize, Reverse};
-use au_io::device::{Player, Recorder};
+use au_io::{
+    device::{InputKind, Player, Recorder},
+    dsp::Dither,
+    engine::{EngineCommand, TrackParams},
+    record::{RecordMode, SoundActivation, TimerRecord},
+};
 use eframe::egui;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 // egui/eframe desktop UI (feature `gui`).
 
+/// Runs the Audacity-RS desktop application.
 pub fn run() -> eframe::Result<()> {
     eframe::run_native(
         "Audacity-RS",
@@ -41,6 +46,7 @@ enum Tool {
     Selection,
     Envelope,
     TimeShift,
+    Draw,
 }
 
 #[derive(Clone, Copy)]
@@ -72,6 +78,24 @@ enum PointerDrag {
         current_start: f64,
         current_end: f64,
     },
+    Draw {
+        track: usize,
+        last_frame: usize,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RecordModeUi {
+    NewTrack,
+    Overdub,
+    PunchAndRoll,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RecordTriggerUi {
+    Immediate,
+    Timer,
+    SoundActivated,
 }
 
 struct AudacityApp {
@@ -80,6 +104,20 @@ struct AudacityApp {
     selection: Option<Selection>,
     player: Option<Player>,
     recorder: Option<Recorder>,
+    record_controller: Option<crate::transport::RecordController>,
+    record_buffer: Vec<f32>,
+    record_peak: f32,
+    record_opts_window: bool,
+    record_mode: RecordModeUi,
+    record_trigger: RecordTriggerUi,
+    input_kind: InputKind,
+    record_preroll_secs: f64,
+    record_latency_ms: f64,
+    record_crossfade_ms: f64,
+    timer_start_secs: f64,
+    timer_duration_secs: f64,
+    sound_threshold_db: f32,
+    sound_hold_secs: f64,
     status: String,
     project_path: Option<PathBuf>,
     tool: Tool,
@@ -87,10 +125,22 @@ struct AudacityApp {
     snapper: Snapper,
     sync_lock: bool,
     drag: Option<PointerDrag>,
+    draw_edits: Vec<(usize, f32)>,
     selected_label: Option<(usize, usize)>,
     label_edit: Option<LabelEdit>,
     speed_window: bool,
     speed_percent: f64,
+    loop_play: bool,
+    play_speed: f64,
+    master_gain: f32,
+    track_mix: Vec<TrackParams>,
+    mixer_visible: bool,
+    export_options_window: bool,
+    export_bits: u16,
+    export_dither: Dither,
+    selection_start_text: String,
+    selection_end_text: String,
+    selection_length_text: String,
 }
 
 struct LabelEdit {
@@ -107,6 +157,20 @@ impl Default for AudacityApp {
             selection: None,
             player: None,
             recorder: None,
+            record_controller: None,
+            record_buffer: Vec::new(),
+            record_peak: 0.0,
+            record_opts_window: false,
+            record_mode: RecordModeUi::NewTrack,
+            record_trigger: RecordTriggerUi::Immediate,
+            input_kind: InputKind::Default,
+            record_preroll_secs: 2.0,
+            record_latency_ms: 0.0,
+            record_crossfade_ms: 10.0,
+            timer_start_secs: 0.0,
+            timer_duration_secs: 60.0,
+            sound_threshold_db: -26.0,
+            sound_hold_secs: 1.0,
             status: "Ready".to_owned(),
             project_path: None,
             tool: Tool::Selection,
@@ -120,10 +184,22 @@ impl Default for AudacityApp {
             },
             sync_lock: false,
             drag: None,
+            draw_edits: Vec::new(),
             selected_label: None,
             label_edit: None,
             speed_window: false,
             speed_percent: 100.0,
+            loop_play: false,
+            play_speed: 1.0,
+            master_gain: 1.0,
+            track_mix: Vec::new(),
+            mixer_visible: false,
+            export_options_window: false,
+            export_bits: 16,
+            export_dither: Dither::Triangle,
+            selection_start_text: "00:00:00.000".to_owned(),
+            selection_end_text: "00:00:00.000".to_owned(),
+            selection_length_text: "00:00:00.000".to_owned(),
         }
     }
 }
@@ -162,6 +238,15 @@ impl AudacityApp {
             .max(1)
     }
 
+    fn project_rate(&self) -> u32 {
+        self.editor
+            .state()
+            .tracks
+            .first()
+            .map_or(self.editor.state().sample_rate, Track::sample_rate)
+            .max(1)
+    }
+
     fn snap_time(&self, time: f64, rate: u32, clips: Option<&WaveClips>) -> f64 {
         self.snapper.snap(
             time.max(0.0),
@@ -192,6 +277,20 @@ impl AudacityApp {
             .fold(track_duration, f64::max)
     }
 
+    fn ensure_track_mix(&mut self) {
+        let count = self.editor.state().tracks.len();
+        self.track_mix.resize(
+            count,
+            TrackParams {
+                gain: 1.0,
+                pan: 0.0,
+                mute: false,
+                solo: false,
+            },
+        );
+        self.track_mix.truncate(count);
+    }
+
     fn import_file(&mut self) {
         if let Some(path) = rfd::FileDialog::new().pick_file() {
             match au_io::import_file(&path) {
@@ -203,6 +302,7 @@ impl AudacityApp {
                         .to_owned();
                     self.editor.add_track(Track::new(name, buffer));
                     self.selected_track = Some(self.editor.state().tracks.len() - 1);
+                    self.ensure_track_mix();
                     self.status = "Imported audio".to_owned();
                 }
                 Err(error) => self.status = format!("Import failed: {error:?}"),
@@ -244,6 +344,8 @@ impl AudacityApp {
                     self.selected_label = None;
                     self.project_path = Some(path);
                     self.sync_lock = self.editor.state().sync_lock;
+                    self.track_mix.clear();
+                    self.ensure_track_mix();
                     self.status = "Project opened".to_owned();
                     self.fit_zoom(1000.0);
                 }
@@ -269,9 +371,14 @@ impl AudacityApp {
             .save_file()
         {
             let result = if flac {
-                au_io::export_flac(&path, &buffer, 16)
+                au_io::export_flac(&path, &buffer, usize::from(self.export_bits.min(24)))
             } else {
-                au_io::export_wav(&path, &buffer, 16)
+                au_io::export_wav_dithered(
+                    &path,
+                    &buffer,
+                    self.export_bits,
+                    self.export_dither,
+                )
             };
             self.status = match result {
                 Ok(()) => "Audio exported".to_owned(),
@@ -280,17 +387,44 @@ impl AudacityApp {
         }
     }
 
+    fn selection_project_frames(&self) -> Option<(usize, usize)> {
+        let selection = self.selection?;
+        let track = self.editor.state().tracks.get(selection.track)?;
+        let rate = track.sample_rate().max(1);
+        let project_rate = self.project_rate();
+        let start_secs = au_core::frames_to_secs(selection.start, rate);
+        let end_secs = au_core::frames_to_secs(selection.end, rate);
+        Some((
+            au_core::secs_to_frames(start_secs, project_rate),
+            au_core::secs_to_frames(end_secs, project_rate),
+        ))
+    }
+
     fn play(&mut self) {
-        let Some(index) = self.selected_track else {
-            self.status = "Select a track to play".to_owned();
+        if let Some(player) = self.player.as_mut() {
+            player.handle.send(EngineCommand::Play);
+            self.status = "Playing".to_owned();
             return;
+        }
+
+        let state = self.editor.state();
+        let rate = self.project_rate();
+        let selection = self.selection_project_frames();
+        let start = selection.map_or(0, |range| range.0);
+        let loop_range = if self.loop_play {
+            selection.filter(|(start, end)| end > start)
+        } else {
+            None
         };
-        let Some(track) = self.editor.state().tracks.get(index) else {
-            self.status = "Selected track not found".to_owned();
-            return;
-        };
-        let start = self.selection_for_track(index).start;
-        match Player::play(Arc::new(track.render()), start) {
+        let tracks = crate::transport::mix_tracks(state);
+        match Player::start(
+            tracks,
+            rate,
+            self.master_gain,
+            start,
+            self.play_speed,
+            loop_range,
+        ) {
             Ok(player) => {
                 self.player = Some(player);
                 self.status = "Playing".to_owned();
@@ -299,29 +433,229 @@ impl AudacityApp {
         }
     }
 
+    fn toggle_pause(&mut self) {
+        if let Some(player) = self.player.as_mut() {
+            let command = if player.handle.is_playing() {
+                EngineCommand::Pause
+            } else {
+                EngineCommand::Play
+            };
+            player.handle.send(command);
+            self.status = if player.handle.is_playing() {
+                "Playing".to_owned()
+            } else {
+                "Paused".to_owned()
+            };
+        } else {
+            self.play();
+        }
+    }
+
     fn stop_playback(&mut self) {
-        if let Some(player) = self.player.take() {
+        if let Some(mut player) = self.player.take() {
             player.stop();
         }
         self.status = "Stopped".to_owned();
     }
 
-    fn start_recording(&mut self) {
-        match Recorder::start(2) {
-            Ok(recorder) => {
-                self.recorder = Some(recorder);
-                self.status = "Recording".to_owned();
-            }
-            Err(error) => self.status = format!("Recording failed: {error:?}"),
+    fn seek_transport(&mut self, project_frame: usize) {
+        if let Some(player) = self.player.as_mut() {
+            let device_frame = (project_frame as f64 * player.rate_ratio).round() as usize;
+            player.handle.send(EngineCommand::Seek(device_frame));
         }
     }
 
+    fn set_play_speed(&mut self, speed: f64) {
+        self.play_speed = speed.clamp(0.1, 3.0);
+        if let Some(player) = self.player.as_mut() {
+            player.handle.send(EngineCommand::SetSpeed(self.play_speed));
+        }
+    }
+
+    fn send_track_mix(&mut self, index: usize, params: TrackParams, commit: bool) {
+        if let Some(player) = self.player.as_mut() {
+            player
+                .handle
+                .send(EngineCommand::SetTrack(index, params));
+        }
+        if commit {
+            let result = self.editor.set_track_mix(
+                index,
+                params.gain,
+                params.pan,
+                params.mute,
+                params.solo,
+            );
+            if let Err(error) = result {
+                self.status = error.to_string();
+            }
+        }
+    }
+
+    fn open_record_options(&mut self) {
+        self.record_opts_window = true;
+    }
+
+    fn begin_recording(&mut self) {
+        let recorder = match Recorder::start(self.input_kind) {
+            Ok(recorder) => recorder,
+            Err(error) => {
+                self.status = format!("Recording failed: {error:?}");
+                return;
+            }
+        };
+        let rate = recorder.sample_rate.max(1);
+        let channels = recorder.channels.max(1) as usize;
+        let selected_rate = self.selected_rate();
+        let cursor_project_frame = self
+            .selection
+            .filter(|selection| Some(selection.track) == self.selected_track)
+            .map_or(0, |selection| {
+                let track_rate = self
+                    .editor
+                    .state()
+                    .tracks
+                    .get(selection.track)
+                    .map_or(selected_rate, Track::sample_rate)
+                    .max(1);
+                let cursor_secs = au_core::frames_to_secs(selection.start, track_rate);
+                au_core::secs_to_frames(cursor_secs, rate)
+            });
+
+        let selected_range = self.selection.filter(|selection| {
+            Some(selection.track) == self.selected_track && selection.end > selection.start
+        });
+        let range_record_frames = selected_range.map(|selection| {
+            let track_rate = self
+                .editor
+                .state()
+                .tracks
+                .get(selection.track)
+                .map_or(selected_rate, Track::sample_rate)
+                .max(1);
+            (
+                au_core::secs_to_frames(
+                    au_core::frames_to_secs(selection.start, track_rate),
+                    rate,
+                ),
+                au_core::secs_to_frames(
+                    au_core::frames_to_secs(selection.end, track_rate),
+                    rate,
+                ),
+            )
+        });
+
+        let preroll = au_core::secs_to_frames(self.record_preroll_secs.max(0.0), rate);
+        let (start, mode) = match self.record_mode {
+            RecordModeUi::NewTrack => (cursor_project_frame, RecordMode::NewTrack),
+            RecordModeUi::Overdub => (cursor_project_frame, RecordMode::Overdub),
+            RecordModeUi::PunchAndRoll => {
+                let (punch_in, punch_out) = range_record_frames
+                    .unwrap_or((cursor_project_frame, cursor_project_frame));
+                let start = punch_in.saturating_sub(preroll);
+                (
+                    start,
+                    RecordMode::PunchAndRoll {
+                        punch_in,
+                        punch_out: Some(punch_out),
+                        preroll,
+                    },
+                )
+            }
+        };
+        let trigger = match self.record_trigger {
+            RecordTriggerUi::Immediate => crate::transport::RecordTrigger::Immediate,
+            RecordTriggerUi::Timer => crate::transport::RecordTrigger::Timer(TimerRecord {
+                start_at: au_core::secs_to_frames(self.timer_start_secs.max(0.0), rate) as u64,
+                duration: au_core::secs_to_frames(self.timer_duration_secs.max(0.0), rate) as u64,
+            }),
+            RecordTriggerUi::SoundActivated => {
+                crate::transport::RecordTrigger::SoundActivated(SoundActivation {
+                    threshold_db: self.sound_threshold_db,
+                    hold_frames: au_core::secs_to_frames(self.sound_hold_secs.max(0.0), rate),
+                })
+            }
+        };
+        let opts = crate::transport::RecordOptions {
+            mode,
+            trigger,
+            latency: (self.record_latency_ms * rate as f64 / 1000.0).round() as i64,
+            crossfade: au_core::secs_to_frames(
+                self.record_crossfade_ms.max(0.0) / 1000.0,
+                rate,
+            ),
+            punch_track: self.selected_track,
+        };
+        let controller = crate::transport::RecordController::new(opts, channels, rate, start);
+
+        self.recorder = Some(recorder);
+        self.record_controller = Some(controller);
+        self.record_buffer.clear();
+        self.record_opts_window = false;
+
+        if matches!(
+            self.record_mode,
+            RecordModeUi::Overdub | RecordModeUi::PunchAndRoll
+        ) {
+            let project_rate = self.project_rate();
+            let start_secs = au_core::frames_to_secs(start, rate);
+            let playback_start = au_core::secs_to_frames(start_secs, project_rate);
+            let tracks = crate::transport::mix_tracks(self.editor.state());
+            match Player::start(
+                tracks,
+                project_rate,
+                self.master_gain,
+                playback_start,
+                self.play_speed,
+                None,
+            ) {
+                Ok(player) => self.player = Some(player),
+                Err(error) => self.status = format!("Playback failed: {error:?}"),
+            }
+        }
+        self.status = "Recording".to_owned();
+    }
+
     fn stop_recording(&mut self) {
-        if let Some(recorder) = self.recorder.take() {
-            let buffer = recorder.stop();
-            self.editor.add_track(Track::new("Recording", buffer));
-            self.selected_track = Some(self.editor.state().tracks.len() - 1);
-            self.status = "Recording added as a track".to_owned();
+        self.recorder = None;
+        self.record_buffer.clear();
+        if let Some(controller) = self.record_controller.take() {
+            match controller.commit(&mut self.editor) {
+                Ok(track) => {
+                    self.selected_track = Some(track);
+                    self.selection = None;
+                    self.ensure_track_mix();
+                    self.status = "Recording committed".to_owned();
+                }
+                Err(error) => self.status = format!("Recording commit failed: {error}"),
+            }
+        }
+        if let Some(mut player) = self.player.take() {
+            player.stop();
+        }
+    }
+
+    fn process_recording(&mut self) {
+        let Some(recorder) = self.recorder.as_mut() else {
+            return;
+        };
+        self.record_buffer.clear();
+        recorder.poll(&mut self.record_buffer);
+        self.record_peak = self.record_peak.max(recorder.take_peak()).clamp(0.0, 1.5);
+        let done = self
+            .record_controller
+            .as_mut()
+            .is_some_and(|controller| !controller.feed(&self.record_buffer));
+        if done {
+            self.stop_recording();
+        } else if self
+            .record_controller
+            .as_ref()
+            .is_some_and(|controller| !controller.gate_open())
+        {
+            self.status = "Waiting for sound".to_owned();
+        } else {
+            self.status = "Recording".to_owned();
         }
     }
 
@@ -543,11 +877,7 @@ impl AudacityApp {
         }
 
         if space {
-            if self.player.is_some() {
-                self.stop_playback();
-            } else {
-                self.play();
-            }
+            self.toggle_pause();
         }
         if split {
             self.split_selection();
@@ -573,6 +903,19 @@ impl AudacityApp {
         self.zoom.x_to_time((x - rect.left()) as f64).max(0.0)
     }
 
+    fn add_draw_point(&mut self, frame: usize, value: f32) {
+        if let Some((_, old_value)) = self
+            .draw_edits
+            .iter_mut()
+            .rev()
+            .find(|(edited_frame, _)| *edited_frame == frame)
+        {
+            *old_value = value;
+        } else {
+            self.draw_edits.push((frame, value));
+        }
+    }
+
     fn draw_track(&mut self, ui: &mut egui::Ui, index: usize) {
         let width = ui.available_width().max(1.0);
         let zoom = self.zoom.clone();
@@ -584,10 +927,8 @@ impl AudacityApp {
             .map(Player::position);
         let drag_preview = self.drag;
 
-        let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(width, 116.0),
-            egui::Sense::click_and_drag(),
-        );
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(width, 116.0), egui::Sense::click_and_drag());
         let painter = ui.painter_at(rect);
 
         let mut clip_bounds = Vec::new();
@@ -656,15 +997,14 @@ impl AudacityApp {
                 clip_bounds.push((clip.start, clip.end()));
 
                 if clip_rect.intersects(rect) {
-                    painter.rect_filled(
-                        clip_rect,
-                        4.0,
-                        egui::Color32::from_rgb(43, 72, 59),
-                    );
+                    painter.rect_filled(clip_rect, 4.0, egui::Color32::from_rgb(43, 72, 59));
                     painter.rect_filled(
                         egui::Rect::from_min_max(
                             clip_rect.left_top(),
-                            egui::pos2(clip_rect.right(), (clip_rect.top() + 19.0).min(clip_rect.bottom())),
+                            egui::pos2(
+                                clip_rect.right(),
+                                (clip_rect.top() + 19.0).min(clip_rect.bottom()),
+                            ),
                         ),
                         4.0,
                         egui::Color32::from_rgb(55, 91, 70),
@@ -710,14 +1050,14 @@ impl AudacityApp {
                                     zoom.x_to_time((x as f32 - rect.left()) as f64) - clip_start;
                                 let local_time_end =
                                     zoom.x_to_time((x as f32 + 1.0 - rect.left()) as f64) - clip_start;
-                                let local_start =
-                                    (local_time_start.max(0.0) / clip_len_secs.max(f64::EPSILON)
-                                        * rendered_len as f64)
-                                        .floor() as usize;
-                                let local_end =
-                                    (local_time_end.max(0.0) / clip_len_secs.max(f64::EPSILON)
-                                        * rendered_len as f64)
-                                        .ceil() as usize;
+                                let local_start = (local_time_start.max(0.0)
+                                    / clip_len_secs.max(f64::EPSILON)
+                                    * rendered_len as f64)
+                                    .floor() as usize;
+                                let local_end = (local_time_end.max(0.0)
+                                    / clip_len_secs.max(f64::EPSILON)
+                                    * rendered_len as f64)
+                                    .ceil() as usize;
                                 let start = local_start.min(samples.len());
                                 let end = local_end.max(start + 1).min(samples.len());
                                 if start >= end {
@@ -777,14 +1117,8 @@ impl AudacityApp {
                     let (t1, v1) = pair[1];
                     painter.line_segment(
                         [
-                            egui::pos2(
-                                rect.left() + zoom.time_to_x(t0) as f32,
-                                value_y(v0),
-                            ),
-                            egui::pos2(
-                                rect.left() + zoom.time_to_x(t1) as f32,
-                                value_y(v1),
-                            ),
+                            egui::pos2(rect.left() + zoom.time_to_x(t0) as f32, value_y(v0)),
+                            egui::pos2(rect.left() + zoom.time_to_x(t1) as f32, value_y(v1)),
                         ],
                         egui::Stroke::new(2.0, egui::Color32::from_rgb(80, 160, 255)),
                     );
@@ -871,6 +1205,25 @@ impl AudacityApp {
                             });
                         }
                     }
+                    Tool::Draw => {
+                        if self.zoom.pixels_per_sec / (rate as f64) < 1.0 {
+                            self.status = "Zoom in to draw samples".to_owned();
+                        } else {
+                            let frame =
+                                au_core::secs_to_frames(time, rate).min(frames.saturating_sub(1));
+                            let body_top = rect.top() + 23.0;
+                            let body_height = (rect.bottom() - body_top).max(1.0);
+                            let value = (1.0
+                                - (pointer.y - body_top) as f64 / body_height as f64 * 2.0)
+                                .clamp(-1.0, 1.0) as f32;
+                            self.draw_edits.clear();
+                            self.add_draw_point(frame, value);
+                            self.drag = Some(PointerDrag::Draw {
+                                track: index,
+                                last_frame: frame,
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -879,11 +1232,7 @@ impl AudacityApp {
             if let Some(pointer) = response.interact_pointer_pos() {
                 let time = self.time_at_x(pointer.x, rect);
                 match self.drag {
-                    Some(PointerDrag::Selection {
-                        track,
-                        start,
-                        ..
-                    }) if track == index => {
+                    Some(PointerDrag::Selection { track, start, .. }) if track == index => {
                         let snapped = self.snap_time(time, rate, None);
                         let end = au_core::secs_to_frames(snapped, rate).min(frames);
                         self.drag = Some(PointerDrag::Selection { track, start, end });
@@ -897,7 +1246,11 @@ impl AudacityApp {
                         ..
                     }) if track == index => {
                         let requested = (original_start + time - pointer_start).max(0.0);
-                        let snapped = self.snap_time(requested, rate, Some(&self.editor.state().tracks[index].clips));
+                        let snapped = self.snap_time(
+                            requested,
+                            rate,
+                            Some(&self.editor.state().tracks[index].clips),
+                        );
                         self.drag = Some(PointerDrag::Clip {
                             track,
                             clip,
@@ -906,22 +1259,56 @@ impl AudacityApp {
                             current_start: snapped.max(0.0),
                         });
                     }
-                    Some(PointerDrag::Envelope {
-                        track,
-                        point,
-                        ..
-                    }) if track == index => {
+                    Some(PointerDrag::Envelope { track, point, .. }) if track == index => {
                         let body_top = rect.top() + 23.0;
                         let body_height = (rect.bottom() - body_top).max(1.0);
-                        let value = (1.0
-                            - (pointer.y - body_top) as f64 / body_height as f64)
-                            * 2.0;
+                        let value =
+                            (1.0 - (pointer.y - body_top) as f64 / body_height as f64) * 2.0;
                         self.drag = Some(PointerDrag::Envelope {
                             track,
                             point,
                             time,
                             value: value.clamp(0.0, 2.0),
                         });
+                    }
+                    Some(PointerDrag::Draw {
+                        track,
+                        last_frame,
+                    }) if track == index => {
+                        if self.zoom.pixels_per_sec / (rate as f64) < 1.0 {
+                            self.status = "Zoom in to draw samples".to_owned();
+                        } else {
+                            let current_frame =
+                                au_core::secs_to_frames(time, rate).min(frames.saturating_sub(1));
+                            let body_top = rect.top() + 23.0;
+                            let body_height = (rect.bottom() - body_top).max(1.0);
+                            let value = (1.0
+                                - (pointer.y - body_top) as f64 / body_height as f64 * 2.0)
+                                .clamp(-1.0, 1.0) as f32;
+                            let previous_value = self
+                                .draw_edits
+                                .iter()
+                                .rev()
+                                .find(|(frame, _)| *frame == last_frame)
+                                .map_or(value, |(_, value)| *value);
+                            let distance = current_frame.abs_diff(last_frame).max(1);
+                            for step in 0..=distance {
+                                let frame = if current_frame >= last_frame {
+                                    last_frame + step
+                                } else {
+                                    last_frame - step
+                                };
+                                let fraction = step as f32 / distance as f32;
+                                self.add_draw_point(
+                                    frame,
+                                    previous_value + (value - previous_value) * fraction,
+                                );
+                            }
+                            self.drag = Some(PointerDrag::Draw {
+                                track,
+                                last_frame: current_frame,
+                            });
+                        }
                     }
                     _ => {}
                 }
@@ -947,9 +1334,8 @@ impl AudacityApp {
                     if let Some(pointer) = response.interact_pointer_pos() {
                         let body_top = rect.top() + 23.0;
                         let body_height = (rect.bottom() - body_top).max(1.0);
-                        let value = (1.0
-                            - (pointer.y - body_top) as f64 / body_height as f64)
-                            * 2.0;
+                        let value =
+                            (1.0 - (pointer.y - body_top) as f64 / body_height as f64) * 2.0;
                         let time = self.time_at_x(pointer.x, rect);
                         if let Err(error) = self.editor.add_envelope_point(
                             index,
@@ -960,14 +1346,13 @@ impl AudacityApp {
                         }
                     }
                 }
-                Tool::TimeShift => {}
+                Tool::TimeShift | Tool::Draw => {}
             }
         }
 
         if self.tool == Tool::Envelope
             && (response.secondary_clicked()
-                || (response.clicked()
-                    && ui.input(|input| input.modifiers.shift)))
+                || (response.clicked() && ui.input(|input| input.modifiers.shift)))
         {
             if let Some(pointer) = response.interact_pointer_pos() {
                 let nearest = envelope_points
@@ -1095,16 +1480,19 @@ impl AudacityApp {
             }
 
             let hit_label = |pointer: egui::Pos2| {
-                labels.iter().enumerate().find_map(|(label_index, (start, end, _))| {
-                    let x0 = rect.left() + zoom.time_to_x(*start) as f32;
-                    let x1 = rect.left() + zoom.time_to_x(*end) as f32;
-                    let hit = if (end - start).abs() <= f64::EPSILON {
-                        (pointer.x - x0).abs() <= 8.0
-                    } else {
-                        pointer.x >= x0.min(x1) - 4.0 && pointer.x <= x0.max(x1) + 4.0
-                    };
-                    hit.then_some(label_index)
-                })
+                labels
+                    .iter()
+                    .enumerate()
+                    .find_map(|(label_index, (start, end, _))| {
+                        let x0 = rect.left() + zoom.time_to_x(*start) as f32;
+                        let x1 = rect.left() + zoom.time_to_x(*end) as f32;
+                        let hit = if (end - start).abs() <= f64::EPSILON {
+                            (pointer.x - x0).abs() <= 8.0
+                        } else {
+                            pointer.x >= x0.min(x1) - 4.0 && pointer.x <= x0.max(x1) + 4.0
+                        };
+                        hit.then_some(label_index)
+                    })
             };
 
             if response.drag_started() {
@@ -1189,12 +1577,48 @@ impl AudacityApp {
         }
     }
 
-    fn finish_pointer_drag(&mut self, ctx: &egui::Context) {
-        let released = ctx.input(|input| {
-            input
-                .pointer
-                .button_released(egui::PointerButton::Primary)
+    fn finish_draw_stroke(&mut self, track: usize) {
+        if self.draw_edits.is_empty() {
+            return;
+        }
+        self.draw_edits.sort_by_key(|(frame, _)| *frame);
+        self.draw_edits.dedup_by(|a, b| {
+            if a.0 == b.0 {
+                a.1 = b.1;
+                true
+            } else {
+                false
+            }
         });
+        let first = self.draw_edits.first().map_or(0, |(frame, _)| *frame);
+        let last = self.draw_edits.last().map_or(first, |(frame, _)| *frame);
+        let mut values = vec![0.0_f32; last.saturating_sub(first) + 1];
+        if let Some(samples) = self
+            .editor
+            .state()
+            .tracks
+            .get(track)
+            .and_then(|wave_track| wave_track.render().channels.first().cloned())
+        {
+            for (offset, sample) in values.iter_mut().enumerate() {
+                if let Some(value) = samples.get(first + offset) {
+                    *sample = *value;
+                }
+            }
+        }
+        for &(frame, value) in &self.draw_edits {
+            if let Some(sample) = values.get_mut(frame.saturating_sub(first)) {
+                *sample = value;
+            }
+        }
+        let result = self.editor.draw_samples(track, first, &values);
+        self.report(result);
+        self.draw_edits.clear();
+    }
+
+    fn finish_pointer_drag(&mut self, ctx: &egui::Context) {
+        let released =
+            ctx.input(|input| input.pointer.button_released(egui::PointerButton::Primary));
         if !released {
             return;
         }
@@ -1241,12 +1665,11 @@ impl AudacityApp {
             } => {
                 let rate = self.selected_rate();
                 let start = self.snap_time(current_start, rate, None).max(0.0);
-                let end = self
-                    .snap_time(current_end, rate, None)
-                    .max(start);
+                let end = self.snap_time(current_end, rate, None).max(start);
                 let result = self.editor.set_label_times(track, label, start, end);
                 self.report(result);
             }
+            PointerDrag::Draw { track, .. } => self.finish_draw_stroke(track),
         }
     }
 
@@ -1312,14 +1735,20 @@ impl AudacityApp {
         if ui.button("Play").clicked() {
             self.play();
         }
+        if ui.button("Pause").clicked() {
+            self.toggle_pause();
+        }
         if ui.button("Stop").clicked() {
             self.stop_playback();
         }
         if ui.button("Record").clicked() {
-            self.start_recording();
+            self.open_record_options();
         }
-        if ui.button("Stop Record").clicked() {
+        if self.recorder.is_some() && ui.button("Stop Record").clicked() {
             self.stop_recording();
+        }
+        if ui.button("Mixer").clicked() {
+            self.mixer_visible = !self.mixer_visible;
         }
         ui.separator();
         if ui.button("Cut").clicked() {
@@ -1380,6 +1809,183 @@ impl AudacityApp {
             }
         }
 
+        if self.record_opts_window {
+            let mut open = self.record_opts_window;
+            let mut start_recording = false;
+            egui::Window::new("Recording options")
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    egui::ComboBox::from_label("Mode")
+                        .selected_text(match self.record_mode {
+                            RecordModeUi::NewTrack => "New track",
+                            RecordModeUi::Overdub => "Overdub",
+                            RecordModeUi::PunchAndRoll => "Punch and roll",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.record_mode,
+                                RecordModeUi::NewTrack,
+                                "New track",
+                            );
+                            ui.selectable_value(
+                                &mut self.record_mode,
+                                RecordModeUi::Overdub,
+                                "Overdub",
+                            );
+                            ui.selectable_value(
+                                &mut self.record_mode,
+                                RecordModeUi::PunchAndRoll,
+                                "Punch and roll",
+                            );
+                        });
+                    if self.record_mode == RecordModeUi::PunchAndRoll {
+                        ui.add(
+                            egui::DragValue::new(&mut self.record_preroll_secs)
+                                .speed(0.1)
+                                .range(0.0..=60.0)
+                                .suffix(" s preroll"),
+                        );
+                        ui.label("Punch uses the current selection on the selected track.");
+                    }
+                    ui.add(
+                        egui::DragValue::new(&mut self.record_latency_ms)
+                            .speed(0.1)
+                            .range(-500.0..=500.0)
+                            .suffix(" ms latency"),
+                    );
+                    ui.add(
+                        egui::DragValue::new(&mut self.record_crossfade_ms)
+                            .speed(0.1)
+                            .range(0.0..=1000.0)
+                            .suffix(" ms crossfade"),
+                    );
+
+                    ui.separator();
+                    egui::ComboBox::from_label("Trigger")
+                        .selected_text(match self.record_trigger {
+                            RecordTriggerUi::Immediate => "Immediate",
+                            RecordTriggerUi::Timer => "Timer",
+                            RecordTriggerUi::SoundActivated => "Sound activated",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.record_trigger,
+                                RecordTriggerUi::Immediate,
+                                "Immediate",
+                            );
+                            ui.selectable_value(
+                                &mut self.record_trigger,
+                                RecordTriggerUi::Timer,
+                                "Timer",
+                            );
+                            ui.selectable_value(
+                                &mut self.record_trigger,
+                                RecordTriggerUi::SoundActivated,
+                                "Sound activated",
+                            );
+                        });
+                    match self.record_trigger {
+                        RecordTriggerUi::Immediate => {}
+                        RecordTriggerUi::Timer => {
+                            ui.add(
+                                egui::DragValue::new(&mut self.timer_start_secs)
+                                    .speed(0.1)
+                                    .range(0.0..=86_400.0)
+                                    .suffix(" s start in"),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut self.timer_duration_secs)
+                                    .speed(0.1)
+                                    .range(0.0..=86_400.0)
+                                    .suffix(" s duration"),
+                            );
+                        }
+                        RecordTriggerUi::SoundActivated => {
+                            ui.add(
+                                egui::DragValue::new(&mut self.sound_threshold_db)
+                                    .speed(0.5)
+                                    .range(-96.0..=0.0)
+                                    .suffix(" dB threshold"),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut self.sound_hold_secs)
+                                    .speed(0.1)
+                                    .range(0.0..=60.0)
+                                    .suffix(" s hold"),
+                            );
+                        }
+                    }
+
+                    egui::ComboBox::from_label("Input")
+                        .selected_text(match self.input_kind {
+                            InputKind::Default => "Default input",
+                            InputKind::Loopback => "System audio loopback",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.input_kind,
+                                InputKind::Default,
+                                "Default input",
+                            );
+                            ui.selectable_value(
+                                &mut self.input_kind,
+                                InputKind::Loopback,
+                                "System audio loopback",
+                            );
+                        });
+                    ui.small(
+                        "Windows only; on Linux pick a Monitor source; macOS unsupported",
+                    );
+                    if ui.button("Start Recording").clicked() {
+                        start_recording = true;
+                    }
+                });
+            self.record_opts_window = open;
+            if start_recording {
+                self.begin_recording();
+            }
+        }
+
+        if self.export_options_window {
+            let mut open = self.export_options_window;
+            egui::Window::new("Export options")
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Bits:");
+                        egui::ComboBox::from_id_salt("export-bits")
+                            .selected_text(self.export_bits.to_string())
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.export_bits, 16, "16");
+                                ui.selectable_value(&mut self.export_bits, 24, "24");
+                                ui.selectable_value(&mut self.export_bits, 32, "32");
+                            });
+                    });
+                    egui::ComboBox::from_label("Dither")
+                        .selected_text(match self.export_dither {
+                            Dither::None => "None",
+                            Dither::Rectangle => "Rectangle",
+                            Dither::Triangle => "Triangle",
+                            Dither::Shaped => "Shaped",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.export_dither, Dither::None, "None");
+                            ui.selectable_value(
+                                &mut self.export_dither,
+                                Dither::Rectangle,
+                                "Rectangle",
+                            );
+                            ui.selectable_value(
+                                &mut self.export_dither,
+                                Dither::Triangle,
+                                "Triangle",
+                            );
+                            ui.selectable_value(&mut self.export_dither, Dither::Shaped, "Shaped");
+                        });
+                });
+            self.export_options_window = open;
+        }
+
         if self.label_edit.is_some() {
             let mut open = true;
             let mut apply = false;
@@ -1388,8 +1994,7 @@ impl AudacityApp {
                 .show(ctx, |ui| {
                     if let Some(edit) = self.label_edit.as_mut() {
                         let response = ui.add(
-                            egui::TextEdit::singleline(&mut edit.text)
-                                .hint_text("Label text"),
+                            egui::TextEdit::singleline(&mut edit.text).hint_text("Label text"),
                         );
                         if response.lost_focus()
                             && ui.input(|input| input.key_pressed(egui::Key::Enter))
@@ -1411,14 +2016,257 @@ impl AudacityApp {
             }
         }
     }
+
+    fn mixer_panel(&mut self, ctx: &egui::Context) {
+        if !self.mixer_visible {
+            return;
+        }
+        self.ensure_track_mix();
+        let track_info = self
+            .editor
+            .state()
+            .tracks
+            .iter()
+            .map(|track| track.name.clone())
+            .collect::<Vec<_>>();
+        egui::SidePanel::right("mixer")
+            .default_width(250.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.heading("Mixer");
+                ui.separator();
+                for (index, name) in track_info.iter().enumerate() {
+                    let mut params = self.track_mix[index];
+                    let mut commit = false;
+                    ui.group(|ui| {
+                        ui.label(name);
+                        let gain_now = params.gain;
+                        let response = ui.add(
+                            egui::Slider::new(&mut params.gain, 0.0..=2.0)
+                                .text(format!(
+                                    "Gain ({:.1} dB)",
+                                    if gain_now > 0.0 {
+                                        20.0 * gain_now.log10()
+                                    } else {
+                                        f32::NEG_INFINITY
+                                    }
+                                )),
+                        );
+                        if response.changed() {
+                            self.send_track_mix(index, params, false);
+                        }
+                        if response.drag_stopped() || (response.changed() && !response.dragged()) {
+                            commit = true;
+                        }
+
+                        let pan_response =
+                            ui.add(egui::Slider::new(&mut params.pan, -1.0..=1.0).text("Pan"));
+                        if pan_response.changed() {
+                            self.send_track_mix(index, params, false);
+                        }
+                        if pan_response.drag_stopped()
+                            || (pan_response.changed() && !pan_response.dragged())
+                        {
+                            commit = true;
+                        }
+
+                        let mute_changed = ui.checkbox(&mut params.mute, "Mute").changed();
+                        let solo_changed = ui.checkbox(&mut params.solo, "Solo").changed();
+                        if mute_changed || solo_changed {
+                            commit = true;
+                        }
+                        if mute_changed || solo_changed {
+                            self.send_track_mix(index, params, false);
+                        }
+                    });
+                    self.track_mix[index] = params;
+                    if commit {
+                        self.send_track_mix(index, params, true);
+                    }
+                }
+                ui.separator();
+                let master_response = ui.add(
+                    egui::Slider::new(&mut self.master_gain, 0.0..=2.0).text("Master gain"),
+                );
+                if master_response.changed() {
+                    if let Some(player) = self.player.as_mut() {
+                        player
+                            .handle
+                            .send(EngineCommand::SetMasterGain(self.master_gain));
+                    }
+                }
+            });
+    }
+
+    fn draw_meter_bar(ui: &mut egui::Ui, label: &str, peak: f32, rms: f32) {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(190.0, 18.0), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 2.0, egui::Color32::from_gray(38));
+        let db_position = |value: f32| {
+            if value <= 0.0 {
+                0.0
+            } else {
+                ((20.0 * value.log10() + 60.0) / 60.0).clamp(0.0, 1.0)
+            }
+        };
+        let rms_width = rect.width() * db_position(rms);
+        let peak_width = rect.width() * db_position(peak);
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                rect.left_top(),
+                egui::pos2(rect.left() + rms_width, rect.bottom()),
+            ),
+            2.0,
+            egui::Color32::from_rgb(55, 145, 85),
+        );
+        painter.line_segment(
+            [
+                egui::pos2(rect.left() + peak_width, rect.top()),
+                egui::pos2(rect.left() + peak_width, rect.bottom()),
+            ],
+            egui::Stroke::new(
+                2.0,
+                if peak >= 1.0 {
+                    egui::Color32::RED
+                } else {
+                    egui::Color32::LIGHT_GREEN
+                },
+            ),
+        );
+        painter.text(
+            rect.left_top() + egui::vec2(4.0, 1.0),
+            egui::Align2::LEFT_TOP,
+            format!(
+                "{label}  P {:.1} dB  R {:.1} dB",
+                if peak > 0.0 {
+                    20.0 * peak.log10()
+                } else {
+                    -60.0
+                },
+                if rms > 0.0 {
+                    20.0 * rms.log10()
+                } else {
+                    -60.0
+                }
+            ),
+            egui::FontId::proportional(10.0),
+            egui::Color32::WHITE,
+        );
+    }
+
+    fn selection_toolbar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let track_rate = self
+            .selection
+            .and_then(|selection| self.editor.state().tracks.get(selection.track))
+            .map_or(self.selected_rate(), Track::sample_rate)
+            .max(1);
+        let current = self.selection;
+        let start_secs = current.map_or(0.0, |selection| {
+            au_core::frames_to_secs(selection.start, track_rate)
+        });
+        let end_secs = current.map_or(0.0, |selection| {
+            au_core::frames_to_secs(selection.end, track_rate)
+        });
+        let start_id = egui::Id::new("selection-start-field");
+        let end_id = egui::Id::new("selection-end-field");
+        let length_id = egui::Id::new("selection-length-field");
+        if !ctx.memory(|memory| memory.has_focus(start_id)) {
+            self.selection_start_text = format_time(start_secs);
+        }
+        if !ctx.memory(|memory| memory.has_focus(end_id)) {
+            self.selection_end_text = format_time(end_secs);
+        }
+        if !ctx.memory(|memory| memory.has_focus(length_id)) {
+            self.selection_length_text = format_time((end_secs - start_secs).max(0.0));
+        }
+
+        let mut update = None;
+        ui.horizontal(|ui| {
+            ui.label("Start");
+            let start_response = ui.add(
+                egui::TextEdit::singleline(&mut self.selection_start_text)
+                    .id(start_id)
+                    .desired_width(94.0),
+            );
+            if start_response.lost_focus()
+                && ui.input(|input| input.key_pressed(egui::Key::Enter))
+            {
+                update = parse_time(&self.selection_start_text).map(|start| {
+                    let end = parse_time(&self.selection_end_text).unwrap_or(end_secs);
+                    (start, end)
+                });
+                if update.is_none() {
+                    self.status = "Invalid Start time; expected hh:mm:ss.mmm".to_owned();
+                }
+            }
+
+            ui.label("End");
+            let end_response = ui.add(
+                egui::TextEdit::singleline(&mut self.selection_end_text)
+                    .id(end_id)
+                    .desired_width(94.0),
+            );
+            if end_response.lost_focus()
+                && ui.input(|input| input.key_pressed(egui::Key::Enter))
+            {
+                update = parse_time(&self.selection_end_text).map(|end| {
+                    let start = parse_time(&self.selection_start_text).unwrap_or(start_secs);
+                    (start, end)
+                });
+                if update.is_none() {
+                    self.status = "Invalid End time; expected hh:mm:ss.mmm".to_owned();
+                }
+            }
+
+            ui.label("Length");
+            let length_response = ui.add(
+                egui::TextEdit::singleline(&mut self.selection_length_text)
+                    .id(length_id)
+                    .desired_width(94.0),
+            );
+            if length_response.lost_focus()
+                && ui.input(|input| input.key_pressed(egui::Key::Enter))
+            {
+                update = parse_time(&self.selection_length_text).map(|length| {
+                    let start = parse_time(&self.selection_start_text).unwrap_or(start_secs);
+                    (start, start + length)
+                });
+                if update.is_none() {
+                    self.status = "Invalid Length; expected hh:mm:ss.mmm".to_owned();
+                }
+            }
+            ui.separator();
+            ui.label(format!("Snap: {}", snap_mode_name(self.snapper.mode.clone())));
+        });
+        if let Some((start, end)) = update {
+            if let Some(track) = self.selected_track {
+                let start = start.max(0.0);
+                let end = end.max(start);
+                self.selection = Some(Selection {
+                    track,
+                    start: au_core::secs_to_frames(start, track_rate),
+                    end: au_core::secs_to_frames(end, track_rate),
+                });
+            } else {
+                self.status = "Select a track before editing the selection".to_owned();
+            }
+        }
+    }
 }
 
 impl eframe::App for AudacityApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_shortcuts(ctx);
+
+        let dt = ctx.input(|input| input.unstable_dt).max(0.0);
+        self.record_peak *= (-dt * 2.0).exp();
+        if self.recorder.is_some() {
+            self.process_recording();
+        }
         if self.player.as_ref().is_some_and(Player::is_finished) {
             self.player = None;
         }
+        self.ensure_track_mix();
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
@@ -1443,6 +2291,10 @@ impl eframe::App for AudacityApp {
                         ui.close_menu();
                         self.export(true);
                     }
+                    if ui.button("Export options…").clicked() {
+                        ui.close_menu();
+                        self.export_options_window = true;
+                    }
                     ui.separator();
                     if ui.button("Import Labels…").clicked() {
                         ui.close_menu();
@@ -1451,6 +2303,15 @@ impl eframe::App for AudacityApp {
                     if ui.button("Export Labels…").clicked() {
                         ui.close_menu();
                         self.export_labels();
+                    }
+                });
+                ui.menu_button("View", |ui| {
+                    if ui
+                        .selectable_label(self.mixer_visible, "Mixer")
+                        .clicked()
+                    {
+                        self.mixer_visible = !self.mixer_visible;
+                        ui.close_menu();
                     }
                 });
                 ui.menu_button("Edit", |ui| {
@@ -1573,6 +2434,7 @@ impl eframe::App for AudacityApp {
                 ui.selectable_value(&mut self.tool, Tool::Selection, "Selection");
                 ui.selectable_value(&mut self.tool, Tool::Envelope, "Envelope");
                 ui.selectable_value(&mut self.tool, Tool::TimeShift, "Time Shift");
+                ui.selectable_value(&mut self.tool, Tool::Draw, "Draw");
                 ui.separator();
                 if ui.button("Zoom In").clicked() {
                     self.zoom.zoom_in();
@@ -1607,24 +2469,31 @@ impl eframe::App for AudacityApp {
                             SnapMode::Grid { secs: 0.1 },
                             "Grid 0.1s",
                         );
-                        ui.selectable_value(
-                            &mut self.snapper.mode,
-                            SnapMode::Samples,
-                            "Samples",
-                        );
+                        ui.selectable_value(&mut self.snapper.mode, SnapMode::Samples, "Samples");
                         ui.selectable_value(
                             &mut self.snapper.mode,
                             SnapMode::ZeroCrossing,
                             "Zero crossings",
                         );
-                        ui.selectable_value(
-                            &mut self.snapper.mode,
-                            SnapMode::Labels,
-                            "Labels",
-                        );
+                        ui.selectable_value(&mut self.snapper.mode, SnapMode::Labels, "Labels");
                     });
                 if ui.checkbox(&mut self.sync_lock, "Sync-Lock").changed() {
                     self.editor.set_sync_lock(self.sync_lock);
+                }
+                ui.separator();
+                ui.checkbox(&mut self.loop_play, "Loop");
+                let mut speed = self.play_speed;
+                let speed_response =
+                    ui.add(egui::Slider::new(&mut speed, 0.1..=3.0).text("Play-at-speed"));
+                if speed_response.changed() {
+                    self.set_play_speed(speed);
+                }
+                if ui.button("Rewind").clicked() {
+                    self.seek_transport(0);
+                }
+                if ui.button("End").clicked() {
+                    let end = au_core::secs_to_frames(self.project_duration(), self.project_rate());
+                    self.seek_transport(end);
                 }
             });
 
@@ -1640,6 +2509,8 @@ impl eframe::App for AudacityApp {
                 );
             });
         });
+
+        self.mixer_panel(ctx);
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let canvas_left = ui.min_rect().left();
@@ -1676,43 +2547,70 @@ impl eframe::App for AudacityApp {
         });
 
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            let selection_text = self
-                .selection
-                .filter(|selection| {
-                    self.editor.state().tracks.get(selection.track).is_some()
-                })
-                .map(|selection| {
-                    let rate = self
-                        .editor
-                        .state()
-                        .tracks
-                        .get(selection.track)
-                        .map_or(self.editor.state().sample_rate.max(1), Track::sample_rate);
-                    let start = au_core::frames_to_secs(selection.start, rate);
-                    let end = au_core::frames_to_secs(selection.end, rate);
-                    format!("Selection: {start:.3}s – {end:.3}s")
-                })
-                .unwrap_or_else(|| "No selection".to_owned());
             ui.horizontal(|ui| {
                 ui.label(&self.status);
                 ui.separator();
-                ui.label(selection_text);
                 if let Some((track, label)) = self.selected_label {
-                    ui.separator();
                     ui.label(format!("Label {}:{}", track + 1, label + 1));
                 }
                 if self.player.is_some() {
-                    ui.separator();
                     ui.label("Playhead active");
                 }
+            });
+
+            self.selection_toolbar(ui, ctx);
+
+            ui.horizontal(|ui| {
+                let meters = self
+                    .player
+                    .as_ref()
+                    .map(|player| player.handle.meters.load());
+                let reading = meters.unwrap_or(au_io::engine::MeterReading {
+                    peak: [0.0; 2],
+                    rms: [0.0; 2],
+                });
+                Self::draw_meter_bar(ui, "L", reading.peak[0], reading.rms[0]);
+                Self::draw_meter_bar(ui, "R", reading.peak[1], reading.rms[1]);
+                Self::draw_meter_bar(ui, "REC", self.record_peak, self.record_peak * 0.7);
             });
         });
 
         self.draw_windows(ctx);
 
-        if self.player.is_some() {
+        if self.player.is_some() || self.recorder.is_some() {
             ctx.request_repaint();
         }
+    }
+}
+
+fn format_time(seconds: f64) -> String {
+    let millis = (seconds.max(0.0) * 1000.0).round() as u64;
+    let hours = millis / 3_600_000;
+    let minutes = (millis / 60_000) % 60;
+    let secs = (millis / 1_000) % 60;
+    let remainder = millis % 1_000;
+    format!("{hours:02}:{minutes:02}:{secs:02}.{remainder:03}")
+}
+
+fn parse_time(text: &str) -> Option<f64> {
+    let mut parts = text.trim().split(':');
+    let hours = parts.next()?.parse::<u64>().ok()?;
+    let minutes = parts.next()?.parse::<u64>().ok()?;
+    let seconds = parts.next()?.parse::<f64>().ok()?;
+    if parts.next().is_some() || minutes >= 60 || !(0.0..60.0).contains(&seconds) {
+        return None;
+    }
+    Some(hours as f64 * 3600.0 + minutes as f64 * 60.0 + seconds)
+}
+
+fn snap_mode_name(mode: SnapMode) -> &'static str {
+    match mode {
+        SnapMode::Off => "Off",
+        SnapMode::Grid { secs } if (secs - 1.0).abs() < f64::EPSILON => "Grid 1s",
+        SnapMode::Grid { .. } => "Grid 0.1s",
+        SnapMode::Samples => "Samples",
+        SnapMode::ZeroCrossing => "Zero crossings",
+        SnapMode::Labels => "Labels",
     }
 }
 

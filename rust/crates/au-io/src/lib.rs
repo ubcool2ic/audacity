@@ -5,6 +5,10 @@ use au_core::AudioBuffer;
 use std::path::Path;
 use thiserror::Error;
 
+pub mod dsp;
+pub mod engine;
+pub mod record;
+
 #[derive(Debug, Error)]
 pub enum IoError {
     #[error("I/O error: {0}")]
@@ -98,7 +102,18 @@ pub fn import_file(path: &Path) -> Result<AudioBuffer, IoError> {
     Ok(AudioBuffer::from_channels(sample_rate, channels))
 }
 
+/// Exports WAV with the default dither (triangular) when reducing to 16/24-bit.
 pub fn export_wav(path: &Path, buffer: &AudioBuffer, bits: u16) -> Result<(), IoError> {
+    export_wav_dithered(path, buffer, bits, dsp::Dither::default())
+}
+
+/// Exports WAV; integer depths are quantized with the selected [`dsp::Dither`].
+pub fn export_wav_dithered(
+    path: &Path,
+    buffer: &AudioBuffer,
+    bits: u16,
+    dither: dsp::Dither,
+) -> Result<(), IoError> {
     use hound::{SampleFormat, WavSpec, WavWriter};
 
     if !matches!(bits, 16 | 24 | 32) {
@@ -122,22 +137,19 @@ pub fn export_wav(path: &Path, buffer: &AudioBuffer, bits: u16) -> Result<(), Io
     let mut writer =
         WavWriter::create(path, spec).map_err(|error| IoError::Encode(error.to_string()))?;
 
-    for sample in buffer.interleaved() {
-        let sample = sample.clamp(-1.0, 1.0);
-        if float {
+    if float {
+        for sample in buffer.interleaved() {
             writer
-                .write_sample(sample)
+                .write_sample(sample.clamp(-1.0, 1.0))
                 .map_err(|error| IoError::Encode(error.to_string()))?;
-        } else if bits == 16 {
-            let value = (sample * i16::MAX as f32).round() as i16;
-            writer
-                .write_sample(value)
-                .map_err(|error| IoError::Encode(error.to_string()))?;
-        } else {
-            let value = (sample * 8_388_607.0).round() as i32;
-            writer
-                .write_sample(value)
-                .map_err(|error| IoError::Encode(error.to_string()))?;
+        }
+    } else {
+        let q = dsp::quantize_buffer(buffer, bits as u32, dither, 0x1234_5678);
+        for i in 0..buffer.len() {
+            for ch in &q {
+                let r = if bits == 16 { writer.write_sample(ch[i] as i16) } else { writer.write_sample(ch[i]) };
+                r.map_err(|error| IoError::Encode(error.to_string()))?;
+            }
         }
     }
     writer
@@ -182,11 +194,11 @@ pub fn export_flac(path: &Path, buffer: &AudioBuffer, bits: usize) -> Result<(),
 
 #[cfg(feature = "device")]
 pub mod device {
-    use super::{AudioBuffer, IoError};
+    use super::IoError;
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
+        atomic::Ordering,
+        Arc,
     };
 
     pub fn output_devices() -> Vec<String> {
@@ -203,14 +215,32 @@ pub mod device {
             .unwrap_or_default()
     }
 
+    /// Lock-free playback through the Stage 3 [`crate::engine`].
+    ///
+    /// Tracks are resampled with rubato to the device rate before the stream
+    /// starts, so the realtime callback only mixes preallocated buffers: no
+    /// allocation, no locks, commands arrive through an SPSC ring.
     pub struct Player {
-        stream: cpal::Stream,
-        position: Arc<AtomicUsize>,
-        finished: Arc<std::sync::atomic::AtomicBool>,
+        _stream: cpal::Stream,
+        /// Lock-free command/meter handle shared with the audio thread.
+        pub handle: crate::engine::EngineHandle,
+        /// Device sample rate the mix runs at.
+        pub device_rate: u32,
+        /// Ratio device_rate / project_rate, for converting positions.
+        pub rate_ratio: f64,
     }
 
     impl Player {
-        pub fn play(buf: Arc<AudioBuffer>, start: usize) -> Result<Player, IoError> {
+        /// Starts the engine on the default output device. `tracks` are at
+        /// `project_rate`; `start` is a project-rate frame.
+        pub fn start(
+            tracks: Vec<crate::engine::MixTrack>,
+            project_rate: u32,
+            master_gain: f32,
+            start: usize,
+            speed: f64,
+            loop_range: Option<(usize, usize)>,
+        ) -> Result<Player, IoError> {
             let host = cpal::default_host();
             let device = host
                 .default_output_device()
@@ -218,125 +248,147 @@ pub mod device {
             let config = device
                 .default_output_config()
                 .map_err(|error| IoError::Device(error.to_string()))?;
+            if config.sample_format() != cpal::SampleFormat::F32 {
+                return Err(IoError::Unsupported("output device must support f32".to_owned()));
+            }
+            let device_rate = config.sample_rate().0;
             let channels = config.channels() as usize;
-            let sample_format = config.sample_format();
             let config: cpal::StreamConfig = config.into();
-            let position = Arc::new(AtomicUsize::new(start.min(buf.len())));
-            let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let cursor = position.clone();
-            let done = finished.clone();
-            let buffer = buf.clone();
-
-            let stream = match sample_format {
-                cpal::SampleFormat::F32 => device.build_output_stream(
+            let ratio = device_rate as f64 / project_rate.max(1) as f64;
+            let conv = |f: usize| (f as f64 * ratio).round() as usize;
+            let tracks: Vec<_> = tracks
+                .into_iter()
+                .map(|mut t| {
+                    if t.audio.sample_rate != device_rate {
+                        t.audio = Arc::new(crate::dsp::resample(&t.audio, device_rate));
+                    }
+                    t.offset = conv(t.offset);
+                    t
+                })
+                .collect();
+            let mut mixer = crate::engine::Mixer::new(tracks, master_gain);
+            mixer.set_position(conv(start));
+            mixer.set_speed(speed);
+            mixer.set_loop(loop_range.map(|(a, b)| (conv(a), conv(b))));
+            let (mut handle, mut callback) = crate::engine::engine(mixer);
+            let stream = device
+                .build_output_stream(
                     &config,
-                    move |output: &mut [f32], _| {
-                        for frame in output.chunks_mut(channels) {
-                            let index = cursor.load(Ordering::Relaxed);
-                            if index >= buffer.len() {
-                                frame.fill(0.0);
-                                done.store(true, Ordering::Relaxed);
-                                continue;
-                            }
-                            for (channel, sample) in frame.iter_mut().enumerate() {
-                                let source_channel = channel.min(buffer.n_channels().saturating_sub(1));
-                                *sample = buffer.channels
-                                    .get(source_channel)
-                                    .and_then(|data| data.get(index))
-                                    .copied()
-                                    .unwrap_or(0.0);
-                            }
-                            cursor.store(index + 1, Ordering::Relaxed);
-                        }
-                    },
+                    move |output: &mut [f32], _| callback.render(output, channels),
                     |error| eprintln!("audio output error: {error}"),
                     None,
-                ),
-                _ => return Err(IoError::Unsupported("output device must support f32".to_owned())),
-            }
-            .map_err(|error| IoError::Device(error.to_string()))?;
-            stream
-                .play()
+                )
                 .map_err(|error| IoError::Device(error.to_string()))?;
-            // TODO: resample when the device rate differs from the buffer rate.
-            Ok(Player {
-                stream,
-                position,
-                finished,
-            })
+            stream.play().map_err(|error| IoError::Device(error.to_string()))?;
+            handle.send(crate::engine::EngineCommand::Play);
+            Ok(Player { _stream: stream, handle, device_rate, rate_ratio: ratio })
         }
 
+        /// Playback position in project-rate frames.
         pub fn position(&self) -> usize {
-            self.position.load(Ordering::Relaxed)
+            (self.handle.position() / self.rate_ratio).max(0.0) as usize
         }
 
+        /// Whether playback reached the end (or was stopped).
         pub fn is_finished(&self) -> bool {
-            self.finished.load(Ordering::Relaxed)
+            !self.handle.is_playing()
         }
 
-        pub fn stop(&self) {
-            let _ = &self.stream;
-            self.finished.store(true, Ordering::Relaxed);
+        /// Stops playback.
+        pub fn stop(&mut self) {
+            self.handle.send(crate::engine::EngineCommand::Stop);
         }
     }
 
+    /// Where a recording captures from.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum InputKind {
+        /// The default input device (microphone / line-in).
+        Default,
+        /// System audio ("what you hear"). Windows: WASAPI loopback on the
+        /// default output device. Linux: not native; choose the PulseAudio /
+        /// PipeWire "Monitor of ..." source as the input device instead.
+        /// macOS: unsupported (needs a virtual device such as BlackHole).
+        Loopback,
+    }
+
+    /// Capture stream. The audio callback pushes samples into an SPSC ring
+    /// (no locks, no allocation); call [`Recorder::poll`] from the UI/worker
+    /// thread to drain them.
     pub struct Recorder {
-        stream: cpal::Stream,
-        samples: Arc<Mutex<Vec<f32>>>,
-        channels: u16,
-        sample_rate: u32,
+        _stream: cpal::Stream,
+        rx: rtrb::Consumer<f32>,
+        peak: Arc<std::sync::atomic::AtomicU32>,
+        /// Interleaved channel count of the capture.
+        pub channels: u16,
+        /// Capture sample rate.
+        pub sample_rate: u32,
     }
 
     impl Recorder {
-        pub fn start(channels: u16) -> Result<Recorder, IoError> {
+        /// Starts capture. `channels` is a request; the device's own count is used.
+        pub fn start(kind: InputKind) -> Result<Recorder, IoError> {
             let host = cpal::default_host();
-            let device = host
-                .default_input_device()
-                .ok_or_else(|| IoError::Device("no default input device".to_owned()))?;
-            let supported = device
-                .default_input_config()
-                .map_err(|error| IoError::Device(error.to_string()))?;
+            let (device, supported) = match kind {
+                InputKind::Default => {
+                    let d = host
+                        .default_input_device()
+                        .ok_or_else(|| IoError::Device("no default input device".to_owned()))?;
+                    let c = d.default_input_config().map_err(|e| IoError::Device(e.to_string()))?;
+                    (d, c)
+                }
+                InputKind::Loopback => {
+                    if !cfg!(target_os = "windows") {
+                        return Err(IoError::Unsupported(
+                            "system-audio loopback is only native on Windows (WASAPI); on Linux pick a \"Monitor of\" input, on macOS use a virtual device".to_owned(),
+                        ));
+                    }
+                    let d = host
+                        .default_output_device()
+                        .ok_or_else(|| IoError::Device("no default output device".to_owned()))?;
+                    let c = d.default_output_config().map_err(|e| IoError::Device(e.to_string()))?;
+                    (d, c)
+                }
+            };
             if supported.sample_format() != cpal::SampleFormat::F32 {
                 return Err(IoError::Unsupported("input device must support f32".to_owned()));
             }
             let sample_rate = supported.sample_rate().0;
+            let channels = supported.channels();
             let config: cpal::StreamConfig = supported.into();
-            let samples = Arc::new(Mutex::new(Vec::new()));
-            let captured = samples.clone();
+            // ~20 s of headroom; the UI drains every frame.
+            let (mut tx, rx) = rtrb::RingBuffer::<f32>::new(sample_rate as usize * channels as usize * 20);
+            let peak = Arc::new(std::sync::atomic::AtomicU32::new(0));
+            let peak_cb = peak.clone();
             let stream = device
                 .build_input_stream(
                     &config,
                     move |input: &[f32], _| {
-                        if let Ok(mut output) = captured.lock() {
-                            output.extend_from_slice(input);
+                        let mut p = f32::from_bits(peak_cb.load(Ordering::Relaxed));
+                        for &s in input {
+                            p = p.max(s.abs());
+                            let _ = tx.push(s);
                         }
+                        peak_cb.store(p.to_bits(), Ordering::Relaxed);
                     },
                     |error| eprintln!("audio input error: {error}"),
                     None,
                 )
                 .map_err(|error| IoError::Device(error.to_string()))?;
-            stream
-                .play()
-                .map_err(|error| IoError::Device(error.to_string()))?;
-            Ok(Recorder {
-                stream,
-                samples,
-                channels: channels.max(1),
-                sample_rate,
-            })
+            stream.play().map_err(|error| IoError::Device(error.to_string()))?;
+            Ok(Recorder { _stream: stream, rx, peak, channels, sample_rate })
         }
 
-        pub fn stop(self) -> AudioBuffer {
-            let _ = &self.stream;
-            let samples = self.samples.lock().map(|samples| samples.clone()).unwrap_or_default();
-            let channels = self.channels as usize;
-            let mut output = vec![Vec::new(); channels];
-            for frame in samples.chunks(channels) {
-                for (channel, sample) in frame.iter().enumerate() {
-                    output[channel].push(*sample);
-                }
+        /// Drains captured interleaved samples into `out`.
+        pub fn poll(&mut self, out: &mut Vec<f32>) {
+            while let Ok(s) = self.rx.pop() {
+                out.push(s);
             }
-            AudioBuffer::from_channels(self.sample_rate, output)
+        }
+
+        /// Returns and resets the input peak since the last call.
+        pub fn take_peak(&self) -> f32 {
+            f32::from_bits(self.peak.swap(0, Ordering::Relaxed))
         }
     }
 }

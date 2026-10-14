@@ -11,6 +11,7 @@ use au_core::{AudioBuffer, Editor, ProjectState, Selection, Track};
 use au_effects::{Amplify, Effect, FadeIn, FadeOut, Normalize, Reverse};
 use std::path::Path;
 
+pub mod transport;
 #[cfg(feature = "gui")]
 mod gui;
 
