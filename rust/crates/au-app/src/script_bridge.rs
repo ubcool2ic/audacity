@@ -214,8 +214,14 @@ fn execute_get_info(state: &ProjectState, params: &[(String, String)]) -> (Strin
                     }
                     needs_comma = true;
                     output.push_str(&format!(
-                        r#"{{"name":{},"kind":"wave","rate":{},"clips":{}}}"#,
+                        r#"{{"name":{},"kind":"wave","start":{:.6},"end":{:.6},"rate":{},"clips":{}}}"#,
                         json_string(&track.name),
+                        0.0,
+                        if track.sample_rate() == 0 {
+                            0.0
+                        } else {
+                            track.len() as f64 / f64::from(track.sample_rate())
+                        },
                         track.sample_rate(),
                         track.clips.clips.len()
                     ));

@@ -728,6 +728,247 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     }
 }
 
+    /// Editing, file and transport commands for scripting. Returns None when the command is not handled here.
+    fn execute_edit_command(&mut self, line: &str) -> Option<(String, bool)> {
+        let (name, args) = crate::script_bridge::parse_command(line);
+        let value = |key: &str| {
+            args.iter()
+                .find(|(candidate, _)| candidate.eq_ignore_ascii_case(key))
+                .map(|(_, value)| value.as_str())
+        };
+        let status_failed = |status: &str| {
+            let status = status.to_ascii_lowercase();
+            status.contains("fail") || status.contains("error")
+        };
+
+        match name.as_str() {
+            "Select" | "SelectTime" => {
+                let track = if name == "SelectTime" {
+                    self.selected_track.unwrap_or(0)
+                } else {
+                    match value("Track").unwrap_or("0").parse::<usize>() {
+                        Ok(track) => track,
+                        Err(_) => return Some(("Invalid track".to_string(), false)),
+                    }
+                };
+                let (rate, len) = match self.editor.state().tracks.get(track) {
+                    Some(track) => (track.sample_rate(), track.len()),
+                    None => return Some((format!("Track {} does not exist", track), false)),
+                };
+                let start_secs = match value("Start").and_then(|v| v.parse::<f64>().ok()) {
+                    Some(value) if value.is_finite() => value.max(0.0),
+                    _ => return Some(("Invalid or missing Start".to_string(), false)),
+                };
+                let end_secs = match value("End").and_then(|v| v.parse::<f64>().ok()) {
+                    Some(value) if value.is_finite() => value.max(0.0),
+                    _ => return Some(("Invalid or missing End".to_string(), false)),
+                };
+                let start = au_core::secs_to_frames(start_secs, rate).min(len);
+                let end = au_core::secs_to_frames(end_secs, rate).min(len);
+                let selection = Selection {
+                    track,
+                    start: start.min(end),
+                    end: start.max(end),
+                };
+                self.selected_track = Some(track);
+                self.selection = Some(selection);
+                let divisor = f64::from(rate.max(1));
+                Some((
+                    format!(
+                        "Selected {:.6}-{:.6} s on track {}",
+                        selection.start as f64 / divisor,
+                        selection.end as f64 / divisor,
+                        track
+                    ),
+                    true,
+                ))
+            }
+            "SelectAll" => {
+                let (len, exists) = match self.editor.state().tracks.first() {
+                    Some(track) => (track.len(), true),
+                    None => (0, false),
+                };
+                if !exists {
+                    return Some(("No tracks available".to_string(), false));
+                }
+                self.selected_track = Some(0);
+                self.selection = Some(Selection {
+                    track: 0,
+                    start: 0,
+                    end: len,
+                });
+                Some(("Selected all of track 0".to_string(), true))
+            }
+            "Cut" | "Copy" | "Delete" | "Paste" => {
+                let track = match self.selected_track {
+                    Some(track) => track,
+                    None => return Some(("No track selected".to_string(), false)),
+                };
+                let selection = self.selection_for_track(track);
+                let before = self.status.clone();
+                match name.as_str() {
+                    "Cut" => self.edit_selection(|editor| editor.cut(selection)),
+                    "Copy" => self.edit_selection(|editor| editor.copy(selection)),
+                    "Delete" => self.edit_selection(|editor| editor.delete(selection)),
+                    "Paste" => {
+                        self.edit_selection(|editor| editor.paste(track, selection.start))
+                    }
+                    _ => unreachable!(),
+                }
+                if self.status != before && status_failed(&self.status) {
+                    Some((self.status.clone(), false))
+                } else {
+                    Some((format!("{} completed", name), true))
+                }
+            }
+            "Undo" | "Redo" => {
+                if self.selected_track.is_none() {
+                    return Some(("No track selected".to_string(), false));
+                }
+                let result = if name == "Undo" {
+                    self.editor.undo()
+                } else {
+                    self.editor.redo()
+                };
+                match result {
+                    Ok(()) => Some((format!("{} completed", name), true)),
+                    Err(error) => Some((error.to_string(), false)),
+                }
+            }
+            "Export2" => {
+                let filename = match value("Filename") {
+                    Some(filename) if !filename.is_empty() => filename,
+                    _ => return Some(("Missing Filename".to_string(), false)),
+                };
+                let path = std::path::PathBuf::from(filename);
+                let track = self.selected_track.unwrap_or(0);
+                let buffer = match crate::fx_bridge::render_track(
+                    self.editor.state(),
+                    &self.aup3_extras,
+                    track,
+                ) {
+                    Some(buffer) => buffer,
+                    None => return Some((format!("Unable to render track {}", track), false)),
+                };
+                let is_flac = path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .map(|extension| extension.eq_ignore_ascii_case("flac"))
+                    .unwrap_or(false);
+                let result = if is_flac {
+                    let bits = if self.export_bits == 24 {
+                        usize::from(self.export_bits.min(24))
+                    } else {
+                        16
+                    };
+                    au_io::export_flac(&path, &buffer, bits)
+                } else {
+                    au_io::export_wav_dithered(
+                        &path,
+                        &buffer,
+                        self.export_bits,
+                        self.export_dither,
+                    )
+                };
+                match result {
+                    Ok(()) => Some((format!("Exported {}", path.display()), true)),
+                    Err(error) => Some((format!("Export failed: {:?}", error), false)),
+                }
+            }
+            "SaveProject2" => {
+                let filename = match value("Filename") {
+                    Some(filename) if !filename.is_empty() => filename,
+                    _ => return Some(("Missing Filename".to_string(), false)),
+                };
+                let path = std::path::PathBuf::from(filename);
+                self.save_to(path);
+                if self.status.starts_with("Saved") {
+                    Some((self.status.clone(), true))
+                } else {
+                    Some((self.status.clone(), false))
+                }
+            }
+            "OpenProject2" => {
+                let filename = match value("Filename") {
+                    Some(filename) if !filename.is_empty() => filename,
+                    _ => return Some(("Missing Filename".to_string(), false)),
+                };
+                let path = std::path::PathBuf::from(filename);
+                if !path.is_file() {
+                    return Some((format!("File not found: {}", path.display()), false));
+                }
+                self.open_path(path);
+                if let Some(recovery_path) = &self.recovery_prompt {
+                    Some((
+                        format!("Recovery available for {}", recovery_path.display()),
+                        true,
+                    ))
+                } else if status_failed(&self.status) {
+                    Some((self.status.clone(), false))
+                } else {
+                    Some((self.status.clone(), true))
+                }
+            }
+            "Recover" => {
+                let action = match value("Action") {
+                    Some(action) if action.eq_ignore_ascii_case("Recover") => true,
+                    Some(action) if action.eq_ignore_ascii_case("Discard") => false,
+                    _ => return Some(("Action must be Recover or Discard".to_string(), false)),
+                };
+                let path = match self.recovery_prompt.clone() {
+                    Some(path) => path,
+                    None => return Some(("No recovery available".to_string(), false)),
+                };
+                if action {
+                    self.recovery_prompt.take();
+                    self.open_aup3(path.clone(), au_project::aup3::DocSource::Autosave);
+                    if status_failed(&self.status) {
+                        Some((self.status.clone(), false))
+                    } else {
+                        Some((format!("Recovered {}", path.display()), true))
+                    }
+                } else {
+                    if let Err(error) = au_project::aup3::discard_autosave(&path) {
+                        return Some((format!("Unable to discard autosave: {}", error), false));
+                    }
+                    self.recovery_prompt.take();
+                    self.open_aup3(path.clone(), au_project::aup3::DocSource::Saved);
+                    if status_failed(&self.status) {
+                        Some((self.status.clone(), false))
+                    } else {
+                        Some((format!("Discarded recovery for {}", path.display()), true))
+                    }
+                }
+            }
+            "Play" => {
+                self.play();
+                Some(("Playing".to_string(), true))
+            }
+            "Stop" => {
+                if self.recorder.is_some() {
+                    self.stop_recording();
+                } else {
+                    self.stop_playback();
+                }
+                Some(("Stopped".to_string(), true))
+            }
+            "Record1stChoice" => {
+                self.begin_recording();
+                if self.recorder.is_some() {
+                    Some(("Recording".to_string(), true))
+                } else {
+                    let message = if self.status.is_empty() {
+                        "Unable to start recording".to_string()
+                    } else {
+                        self.status.clone()
+                    };
+                    Some((message, false))
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn open_path(&mut self, path: PathBuf) {
         if Self::is_aup3(&path) || au_project::is_aup3(&path) {
             match au_project::aup3::inspect(&path) {
@@ -3337,7 +3578,10 @@ if !self.script_pipe_enabled {
 }
 if let Some(pipe) = self.script_pipe.as_mut() {
     for request in pipe.drain(32) {
-        let response = match self.execute_app_command(request.command()) {
+        let response = match self
+            .execute_app_command(request.command())
+            .or_else(|| self.execute_edit_command(request.command()))
+        {
             Some((message, ok)) => au_scriptpipe::finished(&message, ok),
             None => crate::script_bridge::execute(self.editor.state(), request.command()),
         };
