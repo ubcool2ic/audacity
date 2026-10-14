@@ -376,7 +376,7 @@ impl BuiltinEffect for FadeOut {
                 continue;
             }
             for (index, sample) in channel.iter_mut().enumerate() {
-                *sample *= (len - index) as f32 / len as f32;
+                *sample *= (len - 1 - index) as f32 / len as f32; // Audacity 3.7.3: (n-1-i)/n
             }
         }
         Ok(())
@@ -1262,7 +1262,7 @@ mod tests {
         fade_out
             .process(&mut buf, &mut EffectContext::default())
             .unwrap();
-        assert_eq!(buf.channels[0], vec![1.0, 0.75, 0.5, 0.25]);
+        assert_eq!(buf.channels[0], vec![0.75, 0.5, 0.25, 0.0]);
     }
 
     #[test]

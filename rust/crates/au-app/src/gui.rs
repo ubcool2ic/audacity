@@ -4102,6 +4102,10 @@ if let Some(pipe) = self.script_pipe.as_mut() {
             .execute_app_command(request.command())
             .or_else(|| self.execute_edit_command(request.command()))
             .or_else(|| self.execute_diagnostic_command(request.command()))
+            .or_else(|| {
+                let (name, _) = crate::script_bridge::parse_command(request.command());
+                self.execute_macro_command(&name)
+            })
         {
             Some((message, ok)) => au_scriptpipe::finished(&message, ok),
             None => {
@@ -4783,6 +4787,38 @@ impl AudacityApp {
         let r = au_script::execute(&mut host, line);
         host.finish();
         r
+    }
+
+    /// Audacity's `Macro_<NameWithoutSpaces>` command (Tools > Apply Macro over the pipe).
+    fn execute_macro_command(&mut self, command: &str) -> Option<(String, bool)> {
+        let id = command.strip_prefix("Macro_")?;
+
+        let mut mc =
+            au_script::macros::MacroCommands::new(au_script::macros::default_macro_dir());
+        let Some(name) = mc
+            .get_names()
+            .into_iter()
+            .find(|name| name.replace(' ', "") == id)
+        else {
+            return Some((
+                format!("Your batch command of {command} was not recognized."),
+                false,
+            ));
+        };
+
+        if mc.read_macro(&name).is_err() || mc.commands().is_empty() {
+            mc.restore_macro(&name);
+        }
+
+        let mut runner = au_script::macros::MacroRunner::new(mc.commands().to_vec());
+        let mut host = AppScriptHost::new(self);
+        let result = runner.apply(&mut host);
+        host.finish();
+
+        match result {
+            Ok(()) => Some((String::new(), true)),
+            Err(error) => Some((error, false)),
+        }
     }
 }
 

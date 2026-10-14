@@ -352,6 +352,14 @@ fn execute_effect(
 ) -> (String, bool) {
     let mut forwarded = Vec::new();
     for (key, value) in params {
+        if key == "Use_Preset" {
+            if value == "<Current Settings>" || value == "<Factory Defaults>" {
+                continue;
+            } else {
+                return (format!("Unknown preset {value} for command {id}."), false);
+            }
+        }
+
         let Some((_, ty, _)) = definition.iter().find(|(name, _, _)| name == key) else {
             return (format!("Unknown parameter {key} for command {id}."), false);
         };
@@ -424,6 +432,8 @@ fn execute_select(
                 "SelectionEnd" => (old_t1 - t0, old_t1 - t1),
                 _ => return (format!("Invalid RelativeTo value: {relative}."), false),
             };
+            // SelectedRegion::setTimes orders the pair (e.g. ProjectEnd Start=0 End=1).
+            let (start, end) = if start > end { (end, start) } else { (start, end) };
             let selection = host.selection();
             selection.t0 = start;
             selection.t1 = end;
