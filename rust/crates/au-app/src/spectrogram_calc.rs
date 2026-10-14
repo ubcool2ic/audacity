@@ -310,77 +310,171 @@ fn window_values(which: usize, size: usize, extra_sample: bool) -> Vec<f32> {
     window
 }
 
+/// Audacity 3.7.3 lib-fft DerivativeOfWindowFunc applied to a buffer of ones.
 fn derivative_window_values(which: usize, size: usize, extra_sample: bool) -> Vec<f32> {
-    let mut result = vec![0.0f32; size];
-    if size == 0 {
-        return result;
+    let mut input = vec![1.0f32; size];
+    let mut num_samples = size;
+
+    if which == 0 {
+        assert!(num_samples > 0);
+        num_samples -= 1;
+        for ii in 1..num_samples {
+            input[ii] = 0.0f32;
+        }
+        input[num_samples] *= -1.0f32;
+        return input;
     }
 
-    let has_extra = extra_sample && size > 1;
-    let n = if has_extra { size - 1 } else { size };
-    let nf = n as f64;
+    if extra_sample {
+        assert!(num_samples > 0);
+        num_samples -= 1;
+    }
+
+    assert!(num_samples > 0);
 
     match which {
-        0 => {}
         1 => {
-            let denom = n as f32 / 2.0;
-            for (i, value) in result.iter_mut().take(n).enumerate() {
-                if i < n / 2 {
-                    *value = 1.0 / denom;
-                } else if i > n / 2 || n % 2 == 0 {
-                    *value = -1.0 / denom;
-                }
+            let n_pairs = (num_samples - 1) / 2;
+            let value = 2.0f32 / num_samples as f32;
+            input[0] *= value / 2.0f32;
+            for ii in 1..=n_pairs {
+                input[ii] *= value;
+                input[num_samples - ii] *= -value;
+            }
+            if num_samples % 2 == 0 {
+                input[num_samples / 2] = 0.0f32;
+            }
+            if extra_sample {
+                input[num_samples] *= -value / 2.0f32;
+            } else {
+                input[num_samples - 1] *= 0.5f32;
             }
         }
-        2..=5 => {
-            let multiplier = 2.0 * std::f64::consts::PI / nf;
+        2 => {
+            let multiplier = 2.0 * std::f64::consts::PI / num_samples as f64;
+            let coeff0 = 0.54f64;
+            let coeff1 = -0.46f64 * multiplier;
+
+            input[0] = (input[0] as f64 * coeff0) as f32;
+            if !extra_sample {
+                num_samples -= 1;
+            }
+            for ii in 0..num_samples {
+                input[ii] = (input[ii] as f64
+                    * (-coeff1 * ((ii as f64) * multiplier).sin()))
+                    as f32;
+            }
+            if extra_sample {
+                input[num_samples] = (input[num_samples] as f64 * -coeff0) as f32;
+            } else {
+                input[num_samples] = (input[num_samples] as f64
+                    * (-coeff0 - coeff1 * ((num_samples as f64) * multiplier).sin()))
+                    as f32;
+            }
+        }
+        3 => {
+            let multiplier = 2.0 * std::f64::consts::PI / num_samples as f64;
+            let coeff1 = -0.5f64 * multiplier;
+            for ii in 0..num_samples {
+                input[ii] = (input[ii] as f64
+                    * (-coeff1 * ((ii as f64) * multiplier).sin()))
+                    as f32;
+            }
+            if extra_sample {
+                input[num_samples] = 0.0f32;
+            }
+        }
+        4 => {
+            let multiplier = 2.0 * std::f64::consts::PI / num_samples as f64;
+            let multiplier2 = 2.0 * multiplier;
+            let coeff1 = -0.5f64 * multiplier;
+            let coeff2 = 0.08f64 * multiplier2;
+            for ii in 0..num_samples {
+                input[ii] = (input[ii] as f64
+                    * (-coeff1 * ((ii as f64) * multiplier).sin()
+                        - coeff2 * ((ii as f64) * multiplier2).sin()))
+                    as f32;
+            }
+            if extra_sample {
+                input[num_samples] = 0.0f32;
+            }
+        }
+        5 => {
+            let multiplier = 2.0 * std::f64::consts::PI / num_samples as f64;
             let multiplier2 = 2.0 * multiplier;
             let multiplier3 = 3.0 * multiplier;
-
-            for i in 0..n {
-                let x = i as f64;
-                let derivative = match which {
-                    2 => 0.46 * multiplier * (x * multiplier).sin(),
-                    3 => 0.5 * multiplier * (x * multiplier).sin(),
-                    4 => {
-                        0.5 * multiplier * (x * multiplier).sin()
-                            - 0.16 * multiplier2 * (x * multiplier2).sin()
-                    }
-                    _ => {
-                        0.48829 * multiplier * (x * multiplier).sin()
-                            - 0.28256 * multiplier2 * (x * multiplier2).sin()
-                            + 0.03504 * multiplier3 * (x * multiplier3).sin()
-                    }
-                };
-                result[i] = derivative as f32;
+            let coeff1 = -0.48829f64 * multiplier;
+            let coeff2 = 0.14128f64 * multiplier2;
+            let coeff3 = -0.01168f64 * multiplier3;
+            for ii in 0..num_samples {
+                input[ii] = (input[ii] as f64
+                    * (-coeff1 * ((ii as f64) * multiplier).sin()
+                        - coeff2 * ((ii as f64) * multiplier2).sin()
+                        - coeff3 * ((ii as f64) * multiplier3).sin()))
+                    as f32;
+            }
+            if extra_sample {
+                input[num_samples] = 0.0f32;
             }
         }
         6 => {
-            let n_float = n as f32;
-            for (i, value) in result.iter_mut().take(n).enumerate() {
-                let i_over_n = i as f32 / n_float;
-                *value = 4.0 * (1.0 - 2.0 * i_over_n) / n_float;
+            let n = num_samples as f32;
+            let nn = num_samples.wrapping_mul(num_samples) as f32;
+            for ii in 0..num_samples {
+                input[ii] *= 4.0f32 * (n - ii as f32 - ii as f32) / nn;
             }
+            if extra_sample {
+                input[num_samples] = 0.0f32;
+            }
+            input[0] /= 2.0f32;
+            input[num_samples - 1] /= 2.0f32;
         }
-        7..=9 => {
-            let a = match which {
+        7 | 8 | 9 => {
+            let a: f64 = match which {
                 7 => -2.0 * 2.5 * 2.5,
                 8 => -2.0 * 3.5 * 3.5,
                 _ => -2.0 * 4.5 * 4.5,
             };
-            let n_float = n as f32;
-            for (i, value) in result.iter_mut().take(n).enumerate() {
-                let i_over_n = i as f32 / n_float;
-                let exponent =
-                    a * (0.25 + (i_over_n * i_over_n) as f64 - i_over_n as f64);
-                let window_value = exponent.exp();
-                *value = (window_value * (a * (2.0 * i_over_n as f64 - 1.0) / nf)) as f32;
+
+            let inv_n = 1.0f32 / num_samples as f32;
+            let inv_nn = inv_n * inv_n;
+            input[0] = (input[0] as f64
+                * (a * 0.25).exp()
+                * (1.0f32 - inv_n) as f64) as f32;
+
+            if !extra_sample {
+                num_samples -= 1;
+            }
+            for ii in 1..num_samples {
+                let i_over_n = ii as f32 * inv_n;
+                input[ii] = (input[ii] as f64
+                    * (a * (0.25 + (i_over_n as f64 * i_over_n as f64) - i_over_n as f64))
+                        .exp()
+                    * (2usize.wrapping_mul(ii) as f32 * inv_nn - inv_n) as f64)
+                    as f32;
+            }
+            if extra_sample {
+                input[num_samples] = (input[num_samples] as f64
+                    * (a * 0.25).exp()
+                    * (inv_n - 1.0f32) as f64) as f32;
+            } else {
+                let i_over_n = num_samples as f32 * inv_n;
+                input[num_samples] = (input[num_samples] as f64
+                    * (a * (0.25 + (i_over_n as f64 * i_over_n as f64) - i_over_n as f64))
+                        .exp()
+                    * (2usize.wrapping_mul(num_samples) as f32 * inv_nn - inv_n - 1.0f32)
+                        as f64) as f32;
             }
         }
-        _ => {}
+        _ => {
+            eprintln!(
+                "FFT::DerivativeOfWindowFunc - Invalid window function: {}",
+                which
+            );
+        }
     }
 
-    result
+    input
 }
 
 struct CachedWindows {
@@ -676,6 +770,7 @@ fn compute_columns_internal(
     first_sample_positions: &[i64],
     pixels_per_second: Option<f64>,
     cancel: &au_runtime::pool::CancelToken,
+    end_position: Option<i64>,
 ) -> Option<Vec<Vec<f32>>> {
     if first_sample_positions.is_empty() || sample_rate == 0 {
         return Some(Vec::new());
@@ -721,27 +816,20 @@ fn compute_columns_internal(
             );
         }
 
-        let step = if columns > 1 {
-            let mut total = 0i64;
-            for pair in first_sample_positions.windows(2) {
-                total += pair[1] - pair[0];
-            }
-            total as f64 / (columns - 1) as f64
-        } else {
-            sample_rate as f64 / pps
-        };
+        let spp = sample_rate as f64 / pps;
+        let end_position = end_position
+            .unwrap_or((first_sample_positions[columns - 1] as f64 + spp) as i64);
 
         for side in 0..2 {
             let mut source_column = if side == 0 { 0isize } else { columns as isize - 1 };
             for _ in 0..limit {
                 source_column += if side == 0 { -1 } else { 1 };
                 let center = if side == 0 {
-                    first_sample_positions[0] as f64 + source_column as f64 * step
+                    (first_sample_positions[0] as f64 + source_column as f64 * spp) as i64
                 } else {
-                    first_sample_positions[columns - 1] as f64
-                        + (source_column - (columns as isize - 1)) as f64 * step
-                }
-                .round() as i64;
+                    (end_position as f64
+                        + (source_column - columns as isize) as f64 * spp) as i64
+                };
 
                 if !reassign_one(
                     mono,
@@ -870,6 +958,7 @@ pub fn compute_columns(
         first_sample_positions,
         None,
         cancel,
+        None,
     )
 }
 
@@ -937,6 +1026,11 @@ pub fn audacity_columns(
         &positions,
         Some(pixels_per_second),
         cancel,
+        // Audacity's where[len]: the position one column past the right edge.
+        (columns > 0).then(|| {
+            let step = (t1 - t0) / columns as f64;
+            ((t0 + columns as f64 * step) * sample_rate as f64 + 0.5).floor() as i64
+        }),
     )
 }
 
@@ -1149,5 +1243,144 @@ mod golden {
         }
         eprintln!("{}", cases.join("\n"));
         assert!(cases.len() == 8);
+    }
+
+    fn reference_reassign(
+        sig: &[f32],
+        s: &AudSpectrogramSettings,
+        pos: &[i64],
+        pps: f64,
+    ) -> Option<Vec<f32>> {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tools/specref");
+        let exe = format!("{root}/spec_ref");
+        if !std::path::Path::new(&exe).exists() {
+            let ok = std::process::Command::new("sh")
+                .arg(format!("{root}/build.sh"))
+                .status()
+                .ok()?;
+            if !ok.success() {
+                return None;
+            }
+        }
+        let dir = std::env::temp_dir().join(format!("specref-reassign-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).ok()?;
+        let input = dir.join("in.f32");
+        let positions = dir.join("pos.txt");
+        let out = dir.join("out.f32");
+        std::fs::write(
+            &input,
+            sig.iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<_>>(),
+        )
+        .ok()?;
+        std::fs::write(
+            &positions,
+            pos.iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .ok()?;
+        let pps_arg = format!("{pps:.17}");
+        let st = std::process::Command::new(exe)
+            .args([
+                input.to_str()?,
+                "44100",
+                &s.window_size.to_string(),
+                &s.zero_padding_factor.to_string(),
+                &s.window_type.to_string(),
+                &s.frequency_gain.to_string(),
+                &s.algorithm.to_string(),
+                positions.to_str()?,
+                out.to_str()?,
+                &pps_arg,
+            ])
+            // See tools/specref/spec_ref.cpp: skip Audacity's stale-scratch artifact (zp > 1).
+            .env("SPECREF_ZERO", "1")
+            .output()
+            .ok()?;
+        if !st.status.success() {
+            return None;
+        }
+        let b = std::fs::read(&out).ok()?;
+        Some(
+            b.chunks_exact(4)
+                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn reassignment_matches_audacity() {
+        let n = 30_000;
+        let mut seed = 12345u32;
+        let sig: Vec<f32> = (0..n)
+            .map(|i| {
+                seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                let noise = (seed >> 9) as f32 / (1u32 << 23) as f32 - 0.5;
+                (0.5 * (i as f32 * 0.0712).sin()
+                    + 0.2 * (i as f32 * 0.31).sin()
+                    + 0.05 * noise) as f32
+            })
+            .collect();
+        let cancel = au_runtime::pool::CancelToken::default();
+
+        for (wt, ws, zp) in [(3, 2048, 1), (3, 1024, 2), (0, 256, 1), (1, 512, 1), (2, 512, 1), (4, 1024, 1), (5, 1024, 1), (6, 512, 1), (7, 512, 2), (8, 512, 1), (9, 512, 1), (6, 512, 2), (2, 512, 2)] {
+            for (t0, t1, columns) in [
+                (0.0, 30_000.0 / 44100.0, 400),
+                (0.1, 0.5, 300),
+            ] {
+                let mut view = crate::spectrogram_view::ViewSettings::default();
+                view.window_size = ws;
+                view.algorithm = 1 as _;
+                view.window_type = wt as _;
+                view.zero_padding = zp as _;
+                view.frequency_gain = 0 as _;
+
+                let s = AudSpectrogramSettings {
+                    window_type: wt,
+                    window_size: ws,
+                    zero_padding_factor: zp,
+                    frequency_gain: 0,
+                    algorithm: 1,
+                    ..Default::default()
+                };
+                let step = (t1 - t0) / columns as f64;
+                let pos = column_positions(t0, t1 + step, columns + 1, 44100);
+                let pps = columns as f64 / (t1 - t0);
+                let Some(r) = reference_reassign(&sig, &s, &pos, pps) else {
+                    eprintln!("spec_ref unavailable; skipping");
+                    return;
+                };
+
+                let ours = audacity_columns(&sig, 44100, &view, t0, t1, columns, &cancel).unwrap();
+                let flat: Vec<f32> = ours.into_iter().flatten().collect();
+                assert_eq!(flat.len(), r.len(), "bins for wt={wt} ws={ws} zp={zp}");
+
+                let mut maxd = 0.0f32;
+                let mut mismatches = 0usize;
+                let mut exact = 0usize;
+                for (&a, &b) in flat.iter().zip(&r) {
+                    let d = (a - b).abs();
+                    maxd = maxd.max(d);
+                    mismatches += usize::from(d > 0.01);
+                    exact += usize::from(a.to_bits() == b.to_bits());
+                }
+
+                let summary = format!(
+                    "wt={wt} ws={ws} zp={zp} view=({t0:.6},{t1:.6},{columns}): max|d|={maxd:e} mismatches={mismatches}/{} exact={exact}/{}",
+                    flat.len(),
+                    flat.len()
+                );
+                eprintln!("{summary}");
+                // A bin can flip when (int)(bin + correction + 0.5f) lands on a rounding edge,
+                // which moves a whole power contribution; allow at most 0.01% such bins.
+                assert!(
+                    mismatches as f64 <= flat.len() as f64 * 0.0001,
+                    "{summary}"
+                );
+            }
+        }
     }
 }

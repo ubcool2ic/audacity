@@ -279,3 +279,27 @@ Luna 3 calls, $0.0271. Sol: none. **Batch total: $0.0271**
 Hand edits: gui.rs glue for every page; effect_meta.rs generated from Audacity's pluginregistry.cfg; small fixes after comparing against Audacity 3.7.3 with tools/compare_prefs.py: the /GUI/TrackNames/DefaultTrackName key and its "Audio" default, XML group members sorted by name, our "RMS" mapped to "Measure RMS", effects Audacity doesn't ship marked non-default.
 
 **Running total (ubcool2ic): $2.0116**
+
+## BizyBot — Apply Macro parity, Reassignment reference, packaging catalogs/engine, CLI dedupe, test fixes (2026-10-14)
+
+| File | Model | USD |
+|---|---|---|
+| spectrogram_view.rs SelectedRegion selection | openai/gpt-6-luna | 0.0017 |
+| packaging/linux build-deb/appimage/smoke-test (engine + catalogs) | openai/gpt-6-luna | 0.0027 |
+| gui.rs Macro_<Name> command | openai/gpt-6-luna | 0.0002 |
+| tools/compare_macros.py | openai/gpt-6-luna | 0.0020 |
+| au-script cmd.rs Use_Preset | openai/gpt-6-luna | 0.0002 |
+| editor_host.rs setup/ready | openai/gpt-6-luna | 0.0003 |
+| script_pipe_gui.rs default script | openai/gpt-6-luna | 0.0001 |
+| real_catalogs.rs default dir | openai/gpt-6-luna | 0.0001 |
+| tools/specref/spec_ref.cpp Reassignment | openai/gpt-6-luna | 0.0032 |
+| spectrogram_calc.rs reassignment golden test | openai/gpt-6-luna | 0.0014 |
+| spectrogram_calc.rs Audacity edge positions | openai/gpt-6-luna | 0.0003 |
+| spectrogram_calc.rs DerivativeOfWindowFunc port | openai/gpt-6-luna | 0.0018 |
+
+Luna 12 calls, $0.0140. Sol: none. **Batch total: $0.0140**. Balance after the batch: $17.74.
+
+Hand edits: trivial fixes only: a Select swap (2 lines), FadeOut `len-1-index` plus its unit test, the rectangular derivative deltas (later replaced by the port), an `f64` annotation, the right-edge start index, a temp-dir name, and the SPECREF_ZERO line.
+
+**Running total (ubcool2ic): $2.0256**
+

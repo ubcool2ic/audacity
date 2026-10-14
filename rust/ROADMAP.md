@@ -211,7 +211,7 @@ This roadmap describes intended scope, not a claim that planned features are imp
   - The selection is kept in the app until the partner's spectral model lands.
 - Xvfb UI automation: `tests/script_pipe_gui.rs` and `tests/spectrogram_gui.rs` drive the GUI over the pipe.
 - Open:
-  - The Macros manager dialog and Apply Macro menu are blocked on the partner's macro model.
+  - Macros dialog (partner, ac14bfb). Apply Macro vs Audacity 3.7.3 checked with tools/compare_macros.py (`Macro_FadeEnds` over the pipe in both apps): max|diff| 5.96e-8, RMS -163.7 dBFS. Fixes needed: Use_Preset, ordering of reversed Select times, FadeOut (n-1-i)/n.
   - The Windows pipe has not been built or tested.
   - The waveform_summary cache work is part of Perf.
 
@@ -258,7 +258,7 @@ This roadmap describes intended scope, not a claim that planned features are imp
 | CLAP/VST3/LV2/LADSPA hosting | Plugins | 7/8B | Done (BizyBot) |
 | Codecs (WAV/AIFF/FLAC/MP3/Ogg/Opus/WavPack/FFmpeg), metadata, Export Multiple, MIDI | Import/export | 8 | Done; 27/27 bit-identical exports |
 | Nyquist (Audacity's libnyquist, .ny parser, sandboxed worker) | Automation | 9 | Done; 19/19 bit-exact |
-| Spectrogram (Frequencies bit-exact, EAC ≤4e-7), spectral selection | Analysis | 9 | Done; Reassignment has no reference check |
+| Spectrogram (Frequencies bit-exact, EAC ≤4e-7), spectral selection | Analysis | 9 | Done; Reassignment checked against lib-fft (tools/specref, 11 window/zero-padding configs × 2 zoom levels; ≤2 bins of ~150k flip on rounding). Not reproduced: Audacity's stale scratch at the extra window sample when zero padding > 1 |
 | mod-script-pipe + scripting commands, macros (.txt byte-identical) | Automation | 9 | Done; macro *application* not yet compared against Audacity (BizyBot) |
 | Toolbars, themes, AccessKit, UI automation | Application | 10 | Done (BizyBot) |
 | Preferences (3.7.3 keys/defaults, audacity.cfg I/O, Edit > Preferences pages, Get/SetPreference) | Preferences | 10 | Done. Applied: language, shortcuts, default project rate, export HQ dither. Most other keys are stored/edited but not yet consumed (Tracks Behaviors, Warnings, Effects grouping, devices) |
