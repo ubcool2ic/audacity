@@ -228,7 +228,10 @@ extern "C" int au_export_mp3(
     const AuMp3Tag *tags,
     std::size_t tag_count,
     char *error_message,
-    std::size_t error_message_capacity)
+    std::size_t error_message_capacity,
+    int (*progress)(void *user, unsigned long long done,
+                    unsigned long long total),
+    void *progress_user)
 {
     if (error_message != nullptr && error_message_capacity > 0)
         error_message[0] = '\0';
@@ -358,6 +361,12 @@ extern "C" int au_export_mp3(
                             "Could not write encoded MP3 data");
 
             position += static_cast<std::uint64_t>(sample_count);
+            if (progress != nullptr &&
+                progress(progress_user,
+                         static_cast<unsigned long long>(position),
+                         static_cast<unsigned long long>(frames)) == 0)
+                return fail(error_message, error_message_capacity, 2,
+                            "cancelled");
         }
 
         const int flushed = lame_encode_flush(

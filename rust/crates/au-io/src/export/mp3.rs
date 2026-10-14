@@ -92,7 +92,15 @@ unsafe extern "C" {
         tag_count: usize,
         error_message: *mut std::ffi::c_char,
         error_message_capacity: usize,
+        progress: Option<unsafe extern "C" fn(*mut std::ffi::c_void, u64, u64) -> i32>,
+        progress_user: *mut std::ffi::c_void,
     ) -> i32;
+}
+
+unsafe extern "C" fn progress_trampoline(user: *mut std::ffi::c_void, done: u64, total: u64) -> i32 {
+    // SAFETY: `user` is the `&mut ProgressFn` passed to au_export_mp3, alive for the call.
+    let progress = unsafe { &mut *(user as *mut crate::export::ProgressFn<'_>) };
+    i32::from(progress(done, total))
 }
 
 /// Export planar audio as an MP3 file.
@@ -124,7 +132,7 @@ pub fn export_mp3_with_progress(
     sample_rate: u32,
     opts: &MP3Options,
     tags: &Tags,
-    progress: crate::export::ProgressFn<'_>,
+    mut progress: crate::export::ProgressFn<'_>,
 ) -> Result<(), IoError> {
     if channels.is_empty() || channels.len() > 2 {
         return Err(IoError::Unsupported(
@@ -267,6 +275,8 @@ pub fn export_mp3_with_progress(
             ffi_tags.len(),
             error_message.as_mut_ptr(),
             error_message.len(),
+            Some(progress_trampoline),
+            &mut progress as *mut crate::export::ProgressFn<'_> as *mut std::ffi::c_void,
         )
     };
 
@@ -276,6 +286,9 @@ pub fn export_mp3_with_progress(
             return Err(IoError::Cancelled);
         }
         Ok(())
+    } else if result == 2 {
+        let _ = std::fs::remove_file(output_path);
+        Err(IoError::Cancelled)
     } else {
         // SAFETY: The C shim always NUL-terminates the supplied error buffer.
         let message = unsafe { CStr::from_ptr(error_message.as_ptr()) }

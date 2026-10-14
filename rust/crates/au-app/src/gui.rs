@@ -1151,6 +1151,37 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         }
     }
 
+    /// Starts an Export Audio job on the I/O pool; the progress dialog
+    /// follows it (File > Export Audio and the ExportAudioTest hook).
+    fn start_export_audio(
+        &mut self,
+        path: std::path::PathBuf,
+        fmt: au_io::export::ExportFormat,
+        tags: au_core::tags::Tags,
+        selection_only: bool,
+    ) {
+        let rate = self.project_rate().max(1) as f64;
+        let (t0, t1) = match self.selection_project_frames().filter(|_| selection_only) {
+            Some((a, b)) if b > a => (a as f64 / rate, b as f64 / rate),
+            _ => (0.0, self.editor.state().tracks.iter()
+                .map(|t| t.len() as f64 / t.sample_rate().max(1) as f64)
+                .fold(0.0, f64::max)),
+        };
+        self.aup3_extras.tags = tags.clone();
+        let (state, extras) = (self.editor.state().clone(), self.aup3_extras.clone());
+        let shown = path.display().to_string();
+        let handle = self.io_runtime.submit(0, move |ctx: &au_runtime::pool::JobCtx| {
+            ctx.cancel.check()?;
+            let mut last = 0;
+            let mut report = io_progress(ctx, &mut last);
+            crate::export_glue::export_range_with_progress(&path, &state, &extras, t0, t1, None, &fmt, &tags, &mut report)
+                .map_err(io_job_error)?;
+            Ok(format!("Exported {}", path.display()))
+        });
+        let ticket = self.progress.register("Export Audio", format!("Exporting {shown}"), &handle, false);
+        self.io_jobs.push((ticket, IoJob::Export("Export".into(), handle)));
+    }
+
     /// Executes test and diagnostic commands exposed by the mod-script pipe.
     ///
     /// `ProgressTest` and `CrashTest` are available only when
@@ -1204,6 +1235,19 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 self.test_jobs.push((ticket, handle));
                 Some((format!("Started {title}"), true))
             }
+            "ExportAudioTest" => {
+                if !std::env::var("AU_ALLOW_TEST_HOOKS").map(|v| v == "1").unwrap_or(false) {
+                    return Some(("Test hooks are disabled".to_string(), false));
+                }
+                let Some(file) = value("Filename").filter(|f| !f.is_empty()) else {
+                    return Some(("ExportAudioTest requires a Filename value".to_string(), false));
+                };
+                let fmt = crate::export_glue::FormatChooser::from_name(value("Format").unwrap_or("WAV")).format;
+                let tags = self.aup3_extras.tags.clone();
+                let file = file.to_string();
+                self.start_export_audio(std::path::PathBuf::from(&file), fmt, tags, false);
+                Some((format!("Started export to {file}"), true))
+            }
             "GetProgress" => {
                 let snapshot = self.progress.snapshot();
                 if snapshot.is_empty() {
@@ -1218,7 +1262,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                             progress::Outcome::Cancelled => "Cancelled",
                             progress::Outcome::Stopped => "Stopped",
                         };
-                        format!("{title}\t{:.0}\t{status}", fraction * 100.0)
+                        format!("{title}\t{:.1}\t{status}", fraction * 100.0)
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
@@ -1539,26 +1583,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         if let Some(dlg) = self.export_audio_dialog.as_mut() {
             if let Some((path, fmt, tags, selection_only)) = dlg.show(ctx) {
                 self.export_audio_dialog = None;
-                let rate = self.project_rate().max(1) as f64;
-                let (t0, t1) = match self.selection_project_frames().filter(|_| selection_only) {
-                    Some((a, b)) if b > a => (a as f64 / rate, b as f64 / rate),
-                    _ => (0.0, self.editor.state().tracks.iter()
-                        .map(|t| t.len() as f64 / t.sample_rate().max(1) as f64)
-                        .fold(0.0, f64::max)),
-                };
-                self.aup3_extras.tags = tags.clone();
-                let (state, extras) = (self.editor.state().clone(), self.aup3_extras.clone());
-                let shown = path.display().to_string();
-                let handle = self.io_runtime.submit(0, move |ctx: &au_runtime::pool::JobCtx| {
-                    ctx.cancel.check()?;
-                    let mut last = 0;
-                    let mut report = io_progress(ctx, &mut last);
-                    crate::export_glue::export_range_with_progress(&path, &state, &extras, t0, t1, None, &fmt, &tags, &mut report)
-                        .map_err(io_job_error)?;
-                    Ok(format!("Exported {}", path.display()))
-                });
-                let ticket = self.progress.register("Export Audio", format!("Exporting {shown}"), &handle, false);
-                self.io_jobs.push((ticket, IoJob::Export("Export".into(), handle)));
+                self.start_export_audio(path, fmt, tags, selection_only);
             }
         }
         if let Some(dlg) = self.export_multi_dialog.as_mut() {
