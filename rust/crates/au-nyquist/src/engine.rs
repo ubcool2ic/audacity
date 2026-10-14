@@ -129,6 +129,55 @@ impl Api {
 
 static NYQUIST_LOCK: Mutex<()> = Mutex::new(());
 
+#[cfg(unix)]
+mod cstdio {
+    use std::os::raw::{c_int, c_void};
+    extern "C" {
+        pub fn dup(fd: c_int) -> c_int;
+        pub fn dup2(fd: c_int, fd2: c_int) -> c_int;
+        pub fn close(fd: c_int) -> c_int;
+        pub fn fflush(stream: *mut c_void) -> c_int;
+    }
+}
+
+struct StdoutToStderr {
+    #[cfg(unix)]
+    saved: std::os::raw::c_int,
+}
+
+impl StdoutToStderr {
+    fn new() -> Self {
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        // SAFETY: plain POSIX fd duplication on the process's own stdio fds.
+        #[cfg(unix)]
+        unsafe {
+            cstdio::fflush(ptr::null_mut());
+            let saved = cstdio::dup(1);
+            if saved >= 0 {
+                cstdio::dup2(2, 1);
+            }
+            Self { saved }
+        }
+        #[cfg(not(unix))]
+        Self {}
+    }
+}
+
+impl Drop for StdoutToStderr {
+    fn drop(&mut self) {
+        // SAFETY: restores the fd saved in new().
+        #[cfg(unix)]
+        unsafe {
+            cstdio::fflush(ptr::null_mut());
+            if self.saved >= 0 {
+                cstdio::dup2(self.saved, 1);
+                cstdio::close(self.saved);
+            }
+        }
+    }
+}
+
 /// An engine that evaluates scripts with Audacity's dynamically loaded Nyquist interpreter.
 #[derive(Default)]
 pub struct AudacityNyquist;
@@ -346,6 +395,9 @@ impl NyquistEngine for AudacityNyquist {
         let input_channels = input.map_or(0usize, |audio| audio.channels.len());
 
         let _guard = NYQUIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // libnyquist printf()s banners/diagnostics to stdout; keep stdout clean
+        // (the sandbox worker protocol uses it) by routing fd 1 to stderr.
+        let _stdout = StdoutToStderr::new();
         let library = shared_library()?;
         let api = Api::load(library)?;
 

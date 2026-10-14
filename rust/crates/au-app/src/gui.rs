@@ -3583,7 +3583,10 @@ if let Some(pipe) = self.script_pipe.as_mut() {
             .or_else(|| self.execute_edit_command(request.command()))
         {
             Some((message, ok)) => au_scriptpipe::finished(&message, ok),
-            None => crate::script_bridge::execute(self.editor.state(), request.command()),
+            None => {
+                let (message, ok) = self.execute_script(request.command());
+                au_scriptpipe::finished(&message, ok)
+            }
         };
         request.respond(&response);
     }
@@ -4080,5 +4083,157 @@ trait ProcessEffect {
 impl<T: au_effects::Effect + ?Sized> ProcessEffect for T {
     fn process(&mut self, buffer: &mut AudioBuffer) {
         au_effects::Effect::process(self, buffer);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// au-script host: the full Audacity scripting command layer runs after the
+// app's own pipe commands (Import2/Export2/Select/... above), replacing the
+// temporary script_bridge interpreter.
+// ---------------------------------------------------------------------------
+struct AppScriptHost<'a> {
+    app: &'a mut AudacityApp,
+    work: Option<au_core::ProjectState>,
+    sel: au_script::Selection,
+}
+
+impl<'a> AppScriptHost<'a> {
+    fn new(app: &'a mut AudacityApp) -> Self {
+        let state = app.editor.state();
+        let n = state.tracks.len() + state.labels.len();
+        let mut sel = au_script::Selection { t0: 0.0, t1: 0.0, f0: -1.0, f1: -1.0, tracks: vec![false; n] };
+        if let Some(track) = app.selected_track {
+            let s = app.selection_for_track(track);
+            let rate = f64::from(state.tracks.get(track).map_or(44_100, |t| t.sample_rate()).max(1));
+            sel.t0 = s.start as f64 / rate;
+            sel.t1 = s.end as f64 / rate;
+            if track < n {
+                sel.tracks[track] = true;
+            }
+        }
+        if let Some(sp) = app.spectral_selection {
+            sel.f0 = sp.f0;
+            sel.f1 = sp.f1;
+        }
+        Self { app, work: None, sel }
+    }
+
+    /// Writes the script selection back into the app's selection model.
+    fn finish(self) {
+        let n_wave = self.app.editor.state().tracks.len();
+        if let Some(track) = self.sel.tracks.iter().take(n_wave).position(|s| *s) {
+            let rate = self.app.editor.state().tracks[track].sample_rate();
+            let len = self.app.editor.state().tracks[track].len();
+            let a = au_core::secs_to_frames(self.sel.t0.max(0.0), rate).min(len);
+            let b = au_core::secs_to_frames(self.sel.t1.max(0.0), rate).min(len);
+            self.app.selected_track = Some(track);
+            self.app.selection = Some(Selection { track, start: a.min(b), end: a.max(b) });
+            if self.sel.f0 >= 0.0 || self.sel.f1 >= 0.0 {
+                self.app.spectral_selection = Some(crate::spectrogram_view::SpectralSelection {
+                    track,
+                    t0: self.sel.t0,
+                    t1: self.sel.t1,
+                    f0: self.sel.f0,
+                    f1: self.sel.f1,
+                });
+            }
+        }
+    }
+
+    fn delegate(&mut self, line: &str) -> Option<(String, bool)> {
+        self.work = None;
+        let r = self
+            .app
+            .execute_app_command(line)
+            .or_else(|| self.app.execute_edit_command(line));
+        let n = self.app.editor.state().tracks.len() + self.app.editor.state().labels.len();
+        self.sel.tracks.resize(n, false);
+        r
+    }
+}
+
+impl au_script::ScriptHost for AppScriptHost<'_> {
+    fn state(&mut self) -> &mut au_core::ProjectState {
+        if self.work.is_none() {
+            self.work = Some(self.app.editor.state().clone());
+        }
+        self.work.as_mut().expect("work state")
+    }
+    fn selection(&mut self) -> &mut au_script::Selection {
+        &mut self.sel
+    }
+    fn push_undo(&mut self, desc: &str) {
+        if let Some(work) = self.work.take() {
+            self.app.editor.history.push(desc, work);
+        }
+    }
+    fn apply_effect(&mut self, id: &str, params: &[(String, String)]) -> Result<String, String> {
+        self.work = None;
+        let mut effect = au_effects::registry::create(id).ok_or_else(|| format!("unknown effect {id}"))?;
+        au_effects::stack::params_from_strings(effect.as_mut(), params);
+        let n_wave = self.app.editor.state().tracks.len();
+        let tracks: Vec<usize> = (0..n_wave).filter(|t| self.sel.tracks.get(*t).copied().unwrap_or(false)).collect();
+        if tracks.is_empty() {
+            return Err("No tracks selected".into());
+        }
+        let mut report = String::new();
+        for track in tracks {
+            let rate = self.app.editor.state().tracks[track].sample_rate();
+            let len = self.app.editor.state().tracks[track].len();
+            let a = au_core::secs_to_frames(self.sel.t0.max(0.0), rate).min(len);
+            let b = au_core::secs_to_frames(self.sel.t1.max(0.0), rate).min(len);
+            let out = crate::fx_bridge::apply_builtin(
+                &mut self.app.editor,
+                Selection { track, start: a.min(b), end: a.max(b) },
+                effect.as_mut(),
+                None,
+            )?;
+            report.push_str(&out.report);
+        }
+        Ok(report)
+    }
+    fn effect_ids(&self) -> Vec<(String, Vec<(String, String, String)>)> {
+        au_effects::registry::all()
+            .iter()
+            .map(|e| {
+                (
+                    e.id().to_string(),
+                    e.params()
+                        .iter()
+                        .map(|p| (p.key.to_string(), "double".to_string(), p.default.to_string()))
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+    fn import(&mut self, path: &str) -> Result<(), String> {
+        match self.delegate(&format!("Import2: Filename=\"{path}\"")) {
+            Some((_, true)) => Ok(()),
+            Some((m, false)) => Err(m),
+            None => Err("Import2 unavailable".into()),
+        }
+    }
+    fn export(&mut self, path: &str, _channels: u32) -> Result<(), String> {
+        match self.delegate(&format!("Export2: Filename=\"{path}\"")) {
+            Some((_, true)) => Ok(()),
+            Some((m, false)) => Err(m),
+            None => Err("Export2 unavailable".into()),
+        }
+    }
+    fn menu_command(&mut self, id: &str) -> Option<Result<(), String>> {
+        self.delegate(id).map(|(m, ok)| if ok { Ok(()) } else { Err(m) })
+    }
+    fn message(&mut self, text: &str) {
+        self.app.status = text.to_string();
+    }
+}
+
+impl AudacityApp {
+    /// Runs one scripting line through au-script against this project.
+    fn execute_script(&mut self, line: &str) -> (String, bool) {
+        let mut host = AppScriptHost::new(self);
+        let r = au_script::execute(&mut host, line);
+        host.finish();
+        r
     }
 }

@@ -46,7 +46,26 @@ pub fn crash_dir() -> std::path::PathBuf {
         .unwrap_or_else(au_runtime::crash::default_crash_dir)
 }
 
+/// Points the Nyquist sandbox at the Audacity-exact engine worker
+/// (`au-nyquist-engine`, from the au-nyquist crate) when it ships beside us.
+fn select_nyquist_worker() {
+    if std::env::var_os("AU_NYQUIST_WORKER").is_some() {
+        return;
+    }
+    let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) else {
+        return;
+    };
+    let name = if cfg!(windows) { "au-nyquist-engine.exe" } else { "au-nyquist-engine" };
+    for cand in [dir.join(name), dir.join("..").join(name)] {
+        if cand.is_file() {
+            std::env::set_var("AU_NYQUIST_WORKER", cand);
+            return;
+        }
+    }
+}
+
 fn main() {
+    select_nyquist_worker();
     au_runtime::crash::install(au_runtime::crash::CrashConfig {
         dir: crash_dir(),
         app_name: "audacity-rs".into(),

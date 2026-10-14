@@ -481,10 +481,12 @@ dependencies = [
  "au-core",
  "au-effects",
  "au-io",
+ "au-nyquist",
  "au-plugin-api",
  "au-plugin-host",
  "au-project",
  "au-runtime",
+ "au-script",
  "au-scriptpipe",
  "eframe",
  "png",
@@ -536,6 +538,7 @@ version = "0.1.0"
 dependencies = [
  "au-core",
  "au-plugin-host",
+ "au-runtime",
  "libloading",
  "tempfile",
 ]

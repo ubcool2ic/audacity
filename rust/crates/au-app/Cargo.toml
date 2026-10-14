@@ -17,6 +17,8 @@ rustfft = "6"
 png = "0.18"
 au-plugin-host = { path = "../au-plugin-host" }
 au-scriptpipe = { path = "../au-scriptpipe" }
+au-script = { path = "../au-script" }
+au-nyquist = { path = "../au-nyquist" }
 eframe = { version = "0.29", optional = true, default-features = false, features = ["glow","default_fonts","x11","wayland","accesskit"] }
 rfd = { version = "0.15", optional = true }
 

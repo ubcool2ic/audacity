@@ -12,6 +12,7 @@ au-plugin-host = { path = "../au-plugin-host" }
 libloading = "0.8"
 
 [dev-dependencies]
+au-runtime = { path = "../au-runtime" }
 tempfile = "3"
 
 [[bin]]
