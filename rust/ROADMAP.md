@@ -261,11 +261,12 @@ This roadmap describes intended scope, not a claim that planned features are imp
 | Spectrogram (Frequencies bit-exact, EAC ≤4e-7), spectral selection | Analysis | 9 | Done; Reassignment has no reference check |
 | mod-script-pipe + scripting commands, macros (.txt byte-identical) | Automation | 9 | Done; macro *application* not yet compared against Audacity (BizyBot) |
 | Toolbars, themes, AccessKit, UI automation | Application | 10 | Done (BizyBot) |
-| Preferences model (3.7.3 keys/defaults, audacity.cfg I/O) | Preferences | 10 | Model done (`au-core::prefs`); Preferences dialog and applying every key in core/IO/effects still open |
-| Localization (gettext .po/.mo, runtime switch) | Localization | 10 | Catalogs done (`au-core::i18n`, tested on Audacity's de/pl .po); UI strings not yet routed through `tr()`, catalogs not packaged |
-| Keyboard shortcut compatibility, audio.com | Application | 10 | Open |
+| Preferences (3.7.3 keys/defaults, audacity.cfg I/O, Edit > Preferences pages, Get/SetPreference) | Preferences | 10 | Done. Applied: language, shortcuts, default project rate, export HQ dither. Most other keys are stored/edited but not yet consumed (Tracks Behaviors, Warnings, Effects grouping, devices) |
+| Localization (gettext .po/.mo, runtime switch) | Localization | 10 | Done: 249 UI literals via `tr_ui()` (Audacity msgids, accelerators stripped); Xvfb test switches to German at runtime. Strings built with `format!` are still English; catalog packaging is BizyBot's |
+| Keyboard shortcuts (Audacity Standard/Full defaults, remapping, shortcuts XML import/export, /NewKeys) | Application | 10 | Done. Standard set checked against 3.7.3 GetInfo Menus (73 menu shortcuts); non-menu (Extra) defaults taken from source, not checked against a running Audacity |
+| audio.com cloud save/share | Application | 10 | Deferred: needs an audio.com account and Audacity's private API |
 | Packaging .deb/AppImage/.msi/.dmg | Packaging | 10 | Done (BizyBot); CI workflow not enabled (push needs `workflow` scope); package should ship au-nyquist-engine |
-| Performance: waveform caches, progress dialog, import/export as pool jobs | Perf | — | Done |
+| Performance: waveform caches, progress dialog, import/export as pool jobs with real progress/cancel | Perf | — | Done |
 
 
 ## Stage 2 status (2026-10-14)
