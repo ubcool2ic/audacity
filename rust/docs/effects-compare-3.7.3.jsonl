@@ -53,4 +53,22 @@
 {"case": "FindClipping", "note": "", "thr": 0, "aud": 1, "rust": 1, "pass_": true, "detail": "aud [(1.5, 1.5, '5 of 5')] rust [(1.5, 1.5, '5 of 5')]"}
 {"case": "BeatFinder", "note": "", "thr": 0, "aud": 4, "rust": 4, "pass_": true, "detail": "aud [(0.266, 0.266, 'B'), (0.767, 0.767, 'B'), (1.267, 1.267, 'B'), (1.766, 1.766, 'B')] rust [(0.266, 0.266, 'B'), (0.766, 0.766, 'B'), (1.266, 1.266, 'B'), (1.766, 1.766, 'B')]"}
 {"case": "LabelSounds", "note": "", "thr": 0, "aud": 2, "rust": 2, "pass_": true, "detail": "aud [(0, 0.8, 'S'), (1.2, 2, 'S')] rust [(0.0, 0.8, 'S'), (1.2, 2.0, 'S')]"}
-PASS 55/55
+{"case": "RissetDrum", "note": "nyquist; glibc rand() noise (fresh Audacity)", "thr": -100, "len_aud": [2, 88200], "len_rust": [2, 88200], "rms_diff_db": -109.7, "peak_diff_db": -71.4, "pass_": true}
+{"case": "SampleDataExport", "note": "nyquist; exported text compared byte-for-byte", "thr": 0, "pass_": true, "aud_lines": 200, "rust_lines": 200}
+{"case": "SampleDataExportDB", "note": "nyquist; exported text compared byte-for-byte", "thr": 0, "pass_": true, "aud_lines": 1006, "rust_lines": 1006}
+{"case": "PlotSpectrum_0_3_1024", "note": "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format", "thr": 0, "rows": 511, "identical_lines": 512, "max_abs_diff": 0.0, "pass_": true}
+{"case": "PlotSpectrum_0_0_128", "note": "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format", "thr": 0, "rows": 63, "identical_lines": 64, "max_abs_diff": 0.0, "pass_": true}
+{"case": "PlotSpectrum_0_5_65536", "note": "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format", "thr": 0, "rows": 32767, "identical_lines": 32768, "max_abs_diff": 0.0, "pass_": true}
+{"case": "PlotSpectrum_0_9_4096", "note": "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format", "thr": 0, "rows": 2047, "identical_lines": 2048, "max_abs_diff": 0.0, "pass_": true}
+{"case": "PlotSpectrum_0_2_2048", "note": "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format", "thr": 0, "rows": 1023, "identical_lines": 1024, "max_abs_diff": 0.0, "pass_": true}
+{"case": "PlotSpectrum_0_1_512", "note": "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format", "thr": 0, "rows": 255, "identical_lines": 256, "max_abs_diff": 0.0, "pass_": true}
+{"case": "PlotSpectrum_0_4_8192", "note": "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format", "thr": 0, "rows": 4095, "identical_lines": 4096, "max_abs_diff": 0.0, "pass_": true}
+{"case": "PlotSpectrum_0_6_256", "note": "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format", "thr": 0, "rows": 127, "identical_lines": 128, "max_abs_diff": 0.0, "pass_": true}
+{"case": "PlotSpectrum_0_7_16384", "note": "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format", "thr": 0, "rows": 8191, "identical_lines": 8192, "max_abs_diff": 0.0, "pass_": true}
+{"case": "PlotSpectrum_0_8_32768", "note": "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format", "thr": 0, "rows": 16383, "identical_lines": 16384, "max_abs_diff": 0.0, "pass_": true}
+{"case": "PlotSpectrum_1_3_1024", "note": "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format", "thr": 0, "rows": 511, "identical_lines": 512, "max_abs_diff": 0.0, "pass_": true}
+{"case": "PlotSpectrum_2_3_2048", "note": "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format", "thr": 0, "rows": 1023, "identical_lines": 942, "max_abs_diff": 6.999999996537554e-06, "pass_": true}
+{"case": "PlotSpectrum_3_2_1024", "note": "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format", "thr": 0, "rows": 511, "identical_lines": 507, "max_abs_diff": 1.999999998503199e-06, "pass_": true}
+{"case": "PlotSpectrum_4_3_4096", "note": "ref: Audacity lib-fft.so SpectrumAnalyst + FreqWindow export format", "thr": 0, "rows": 2047, "identical_lines": 2048, "max_abs_diff": 0.0, "pass_": true}
+{"case": "Contrast", "note": "ref: ContrastBase::GetDB formula (dialog-only); %.2f dB values + WCAG verdict", "thr": 0, "expected": ["-12.75 dB", "-12.75 dB", "0.00", "Fail"], "found": [true, true, true, true], "pass_": true}
+{"case": "ContrastQuiet", "note": "background = quiet aux track (ctl.wav x 0.01)", "thr": 0, "expected": ["-11.78 dB", "-55.05 dB", "43.27", "Pass"], "found": [true, true, true, true], "pass_": true}

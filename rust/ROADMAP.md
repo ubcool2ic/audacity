@@ -112,6 +112,16 @@ This roadmap describes intended scope, not a claim that planned features are imp
 - Generators: Tone, Chirp, Noise, DTMF, Rhythm Track, and Silence.
 - Analyzers: Plot Spectrum, Contrast, Find Clipping, Beat Finder, Label Sounds, and Silence Finder.
 
+**Status (2026-10-14): done.** Checklist:
+- [x] Tone, Chirp, Noise, DTMF, Silence (built-ins), Rhythm Track, Pluck, Risset Drum (Nyquist ports): every 3.7.3 Generate-menu item.
+- [x] Plot Spectrum: all 5 algorithms, all 10 window functions, sizes 128 to 131072, linear/log axis, peak cursor, grid, Export text (FreqWindow format). It has its own GUI window (`au-app/src/analyze_ui.rs`).
+- [x] Contrast: ContrastBase::GetDB measurement, WCAG2 pass/fail (more than 20 dB), Contrast.cpp export report. It has its own GUI dialog with Measure-selection buttons.
+- [x] Find Clipping, Beat Finder, Label Sounds. Silence Finder was replaced by Label Sounds in Audacity 3.x and is not shipped in 3.7.3.
+- [x] Sample Data Export: byte-identical text output.
+- [x] Loudness measurement: MeasureLoudness/RMS analyzers. 3.7.3 has no standalone loudness analyzer to compare against; the LUFS path is verified through Loudness Normalization.
+- [x] GUI: generators and the other analyzers use the generic parameter dialog with a report pane. Plot Spectrum and Contrast have dedicated windows.
+- 3.7.3 comparison: **74/74 pass**, with 14 Plot Spectrum configurations, 2 Contrast, 2 Sample Data Export and Risset Drum added. See the parity section below.
+
 **Crates:** `au-effects`, `au-core`, `au-app`, `au-project`.
 
 **Acceptance tests**
@@ -265,7 +275,12 @@ Verified against **real Audacity 3.7.3** (Debian package, run headlessly under X
 This project is GPL-3.0-or-later and is a derived work of Audacity. Preserve Audacity copyright notices and applicable attribution in derived files and distributions. Review every third-party dependency and SDK for GPL compatibility before adoption; avoid GPL-incompatible components such as the VST2 SDK. The VST3 SDK is GPLv3-dual-licensed and is acceptable when used under its GPLv3 terms. Keep optional dependencies and their license obligations documented.
 
 ## Stage 5/6 parity status (2026-10-14)
-Audacity 3.7.3 comparison (`tools/compare_effects.py`, results in `docs/effects-compare-3.7.3.jsonl`): **55/55 cases pass**; 52 are bit-exact (−240 dB RMS diff).
+Audacity 3.7.3 comparison (`tools/compare_effects.py`, results in `docs/effects-compare-3.7.3.jsonl`): **74/74 cases pass**.
+- Stage 6 additions:
+  - Plot Spectrum: the reference is Audacity's own `lib-fft.so` `SpectrumAnalyst::Calculate` (`tools/aud_ref/plot_spectrum_ref.cpp`), with input mixed as in PlotSpectrumBase::GetAudio (channel sum) and printed in the FreqWindow export format. 12 of the 14 configurations give byte-identical export text. Cube-root and Enhanced autocorrelation differ by at most 7e-6 in a few lines (last printed digit, libm `pow`).
+  - Contrast: the dialog cannot be scripted. The reference is the ContrastBase::GetDB formula, compared on the `%.2f` values and the WCAG verdict.
+  - Sample Data Export: the exported file is byte-identical in Linear/Count/SameLine and in dB/Time/Standard-header/Alternate.
+  - Risset Drum: −109.7 dB RMS difference, using glibc rand() with a fresh Audacity process.
 - Change Speed/Pitch/Tempo link the same system libsoxr 0.1.3 / libSoundTouch 2.4.0 as Debian's Audacity 3.7.3 (C shim in `crates/au-effects/csrc`).
 - Classic Filters: Audacity 3.7.3 segfaults when it is scripted (null `mpBiquad` in `ScienFilterBase::ProcessInitialize`), so the reference is Audacity's own `lib-math.so` run through `tools/aud_ref/classic_filters_ref.cpp`.
 - DTMF: when scripted, 3.7.3 ignores Sequence/Duty Cycle (stale `Recalculate`), so the harness uses the real dialog via xdotool, with default settings.

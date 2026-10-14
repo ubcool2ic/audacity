@@ -126,5 +126,21 @@ Luna (openai/gpt-6-luna): 20 calls, $0.1566. Sol (openai/gpt-6-sol): 5 calls, $0
 
 **Running total: $1.2236**
 
+## Stage 6: generators and analyzers (2026-10-14)
+| file | model | cost $ |
+|---|---|---|
+| fx/fix_rissetdrum.rs | openai/gpt-6-luna | 0.0122 |
+| fx/fix_rissetdrum.rs (retry) | openai/gpt-6-luna | 0.0103 |
+| fx/fix_rissetdrum.rs (review after 2 Luna passes) | openai/gpt-6-sol | 0.2132 |
+| fx/fix_plotspectrum.rs | openai/gpt-6-luna | 0.0083 |
+| fx/fix_plotspectrum.rs (RealFFTf port) | openai/gpt-6-luna | 0.0092 |
+| fx/fix_contrast.rs | openai/gpt-6-luna | 0.0059 |
+| fx/fix_sampledataexport.rs | openai/gpt-6-luna | 0.0071 |
+| au-app/src/analyze_ui.rs | openai/gpt-6-luna | 0.0084 |
+
+Stage 6: Luna 7 calls, $0.0614. Sol 1 call, $0.2132. **Stage 6 total: $0.2746**
+
+**Running total: $1.4982**
+
 ## BizyBot — Performance & reliability (2026-10-14)
 - au-runtime crate, crash hook/dialog, tests: written by hand, no OpenRouter calls. Spend: $0.00
