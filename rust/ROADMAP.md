@@ -263,3 +263,12 @@ Verified against **real Audacity 3.7.3** (Debian package, run headlessly under X
 ## License
 
 This project is GPL-3.0-or-later and is a derived work of Audacity. Preserve Audacity copyright notices and applicable attribution in derived files and distributions. Review every third-party dependency and SDK for GPL compatibility before adoption; avoid GPL-incompatible components such as the VST2 SDK. The VST3 SDK is GPLv3-dual-licensed and is acceptable when used under its GPLv3 terms. Keep optional dependencies and their license obligations documented.
+
+## Stage 5/6 parity status (2026-10-14)
+Audacity 3.7.3 comparison (`tools/compare_effects.py`, results in `docs/effects-compare-3.7.3.jsonl`): **55/55 cases pass**; 52 are bit-exact (−240 dB RMS diff).
+- Change Speed/Pitch/Tempo link the same system libsoxr 0.1.3 / libSoundTouch 2.4.0 as Debian's Audacity 3.7.3 (C shim in `crates/au-effects/csrc`).
+- Classic Filters: Audacity 3.7.3 segfaults when it is scripted (null `mpBiquad` in `ScienFilterBase::ProcessInitialize`), so the reference is Audacity's own `lib-math.so` run through `tools/aud_ref/classic_filters_ref.cpp`.
+- DTMF: when scripted, 3.7.3 ignores Sequence/Duty Cycle (stale `Recalculate`), so the harness uses the real dialog via xdotool, with default settings.
+- Tone: when scripted, 3.7.3 skips `PostSet`, so the reference is Chirp with start = end, which is the same code path.
+- Not yet exact: Rhythm Track (−57 dB RMS, passes −40 dB threshold), Pluck (−167 dB), Studio Fade Out (−119 dB), Beat Finder labels within 1 ms.
+- Not yet compared: Noise Reduction (needs a GUI-captured noise profile), Repair, Vocoder, Sliding Stretch, Vocal Reduction, Risset Drum, Contrast, Plot Spectrum.

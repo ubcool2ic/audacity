@@ -89,3 +89,39 @@ Includes $0.0035 for Auto Duck. Repeated rows are regenerations after 402/compil
 **Stages 5–6 total: $0.1366**
 
 **Running total: $0.2123**
+
+## Stages 5–6 parity fixes (Audacity 3.7.3 mismatches)
+
+| file | model | USD |
+|---|---|---|
+| fx/fix_loudness.rs | openai/gpt-6-luna | 0.0053 |
+| fx/fix_nyqfilters.rs | openai/gpt-6-luna | 0.0067 |
+| fx/fix_analyzers.rs | openai/gpt-6-luna | 0.0071 |
+| fx/fix_pluck.rs | openai/gpt-6-luna | 0.0040 |
+| fx/fix_delay.rs | openai/gpt-6-luna | 0.0057 |
+| fx/fix_tremolo.rs | openai/gpt-6-luna | 0.0058 |
+| fx/fix_distortion.rs | openai/gpt-6-luna | 0.0067 |
+| fx/fix_studiofade.rs | openai/gpt-6-luna | 0.0087 |
+| fx/fix_rhythm.rs | openai/gpt-6-luna | 0.0110 |
+| fx/fix_paulstretch.rs | openai/gpt-6-luna | 0.0072 |
+| fx/fix_dynamics.rs | openai/gpt-6-luna | 0.0094 |
+| fx/fix_nyqfilters.rs | openai/gpt-6-luna | 0.0074 |
+| fx/fix_analyzers.rs | openai/gpt-6-luna | 0.0079 |
+| fx/fix_dynamics.rs | openai/gpt-6-luna | 0.0089 |
+| fx/fix_distortion.rs | openai/gpt-6-luna | 0.0090 |
+| fx/fix_paulstretch.rs | openai/gpt-6-luna | 0.0087 |
+| fx/fix_speedpitch.rs | openai/gpt-6-luna | 0.0075 |
+| fx/fix_rhythm.rs | openai/gpt-6-luna | 0.0179 |
+| fx/fix_nyqfilters.rs | openai/gpt-6-sol | 0.1023 |
+| fx/fix_rhythm.rs | openai/gpt-6-sol | 0.2122 |
+| fx/fix_dynamics.rs | openai/gpt-6-sol | 0.1830 |
+| fx/fix_dynamics.rs | openai/gpt-6-sol | 0.1292 |
+| fx/fix_rhythm.rs | openai/gpt-6-sol | 0.2281 |
+| fx/fix_findclipping.rs | openai/gpt-6-luna | 0.0027 |
+| fx/fix_dynamics.rs | openai/gpt-6-luna | 0.0091 |
+
+Luna (openai/gpt-6-luna): 20 calls, $0.1566. Sol (openai/gpt-6-sol): 5 calls, $0.8547 (Notch, Compressor/Limiter x2, Rhythm Track x2, only after two Luna failures).
+
+**Parity fixes total: $1.0113**
+
+**Running total: $1.2236**
