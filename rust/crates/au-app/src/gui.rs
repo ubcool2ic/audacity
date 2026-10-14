@@ -8,7 +8,7 @@ use eframe::egui;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-//! egui/eframe desktop UI (feature `gui`).
+// egui/eframe desktop UI (feature `gui`).
 
 pub fn run() -> eframe::Result<()> {
     eframe::run_native(
@@ -214,7 +214,8 @@ impl AudacityApp {
     }
 
     fn edit_selection(&mut self, operation: impl FnOnce(&mut Editor) -> au_core::Result<()>) {
-        self.report(operation(&mut self.editor));
+        let result = operation(&mut self.editor);
+        self.report(result);
     }
 
     fn apply_effect(&mut self, description: &'static str, effect: impl FnOnce(&mut AudioBuffer)) {
@@ -223,10 +224,8 @@ impl AudacityApp {
             return;
         };
         let selection = self.selection_for_track(index);
-        self.report(
-            self.editor
-                .apply(selection, description, effect),
-        );
+        { let result = self.editor
+                .apply(selection, description, effect); self.report(result); }
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
@@ -252,7 +251,7 @@ impl AudacityApp {
             if cut {
                 self.edit_selection(|editor| editor.cut(selection));
             } else if copy {
-                self.report(self.editor.copy(selection));
+                { let result = self.editor.copy(selection); self.report(result); }
             } else if delete {
                 self.edit_selection(|editor| editor.delete(selection));
             } else if paste {
@@ -261,9 +260,9 @@ impl AudacityApp {
             }
         }
         if undo {
-            self.report(self.editor.undo());
+            { let result = self.editor.undo(); self.report(result); }
         } else if redo {
-            self.report(self.editor.redo());
+            { let result = self.editor.redo(); self.report(result); }
         }
         if space {
             if self.player.is_some() {
@@ -427,7 +426,7 @@ impl AudacityApp {
         }
         if ui.button("Copy").clicked() {
             if let Some(index) = self.selected_track {
-                self.report(self.editor.copy(self.selection_for_track(index)));
+                { let result = self.editor.copy(self.selection_for_track(index)); self.report(result); }
             }
         }
         if ui.button("Paste").clicked() {
@@ -443,10 +442,10 @@ impl AudacityApp {
             }
         }
         if ui.button("Undo").clicked() {
-            self.report(self.editor.undo());
+            { let result = self.editor.undo(); self.report(result); }
         }
         if ui.button("Redo").clicked() {
-            self.report(self.editor.redo());
+            { let result = self.editor.redo(); self.report(result); }
         }
     }
 }

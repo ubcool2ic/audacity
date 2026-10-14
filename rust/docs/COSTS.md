@@ -13,3 +13,9 @@ Model policy: cheapest top-ranked coding model, `openai/gpt-6-luna` ($0.10 / 1M 
 | 2026-10-14 | openai/gpt-6-luna | ROADMAP.md | 1212 | 2970 | $0.00164 |
 
 **Stage 1 total: $0.0134** (plus ~$0.0001 key smoke test)
+
+## GUI build fix (2026-10-14)
+
+Hand fix, no OpenRouter calls: inner doc comment in `au-app/src/gui.rs` and 8 double-borrow errors (`self.report(self.editor...)`). `cargo build -p au-app --features gui` now succeeds. Spend: $0.00.
+
+**Running total: $0.0135**
