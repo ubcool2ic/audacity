@@ -1,0 +1,6 @@
+{"params": [12, 6, 3, 0], "len_ref": 132300, "len_rust": 132300, "rms_diff_db": -240.0, "peak": -240.0}
+{"params": [6, 6, 6, 0], "len_ref": 132300, "len_rust": 132300, "rms_diff_db": -240.0, "peak": -240.0}
+{"params": [24, 12, 0, 0], "len_ref": 132300, "len_rust": 132300, "rms_diff_db": -240.0, "peak": -240.0}
+{"params": [12, 6, 3, 1], "len_ref": 132300, "len_rust": 132300, "rms_diff_db": -240.0, "peak": -240.0}
+{"params": [12, 6, 3, 2], "len_ref": 132300, "len_rust": 132300, "rms_diff_db": -240.0, "peak": -240.0}
+{"params": [18, 3, 9, 0], "len_ref": 132300, "len_rust": 132300, "rms_diff_db": -240.0, "peak": -240.0}

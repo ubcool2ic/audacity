@@ -20,6 +20,7 @@ pub fn all() -> Vec<Box<dyn BuiltinEffect>> {
     v.extend(fx::fix_tremolo::all());
     v.extend(fx::fix_speedpitch::all());
     v.extend(fx::fix_findclipping::all());
+    v.extend(fx::fix_noisereduction::all());
     v.extend(fx::fix_rissetdrum::all());
     v.extend(fx::fix_sampledataexport::all());
     v.extend(fx::fix_contrast::all());
