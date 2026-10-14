@@ -132,7 +132,7 @@ static PREF_DEFS: &[PrefDef] = &[
 
     PrefDef { page: "Tracks Behaviors", key: "/GUI/SelectAllOnNone", default: PrefDefault::Bool(false), label: "Select all audio if selection required" },
     PrefDef { page: "Tracks Behaviors", key: "/GUI/EnableCutLines", default: PrefDefault::Bool(false), label: "Enable cut lines" },
-    PrefDef { page: "Tracks Behaviors", key: "/GUI/EditClipsCanMove", default: PrefDefault::Bool(true), label: "Editing a clip can move other clips" },
+    PrefDef { page: "Tracks Behaviors", key: "/GUI/EditClipCanMove", default: PrefDefault::Bool(false), label: "Editing a clip can move other clips" },
     PrefDef { page: "Tracks Behaviors", key: "/GUI/PasteAsNewClips", default: PrefDefault::Bool(false), label: "Always paste audio as new clips" },
     PrefDef { page: "Tracks Behaviors", key: "/GUI/CircularTrackNavigation", default: PrefDefault::Bool(false), label: "Cycle repeatedly through tracks" },
     PrefDef { page: "Tracks Behaviors", key: "/GUI/TypeToCreateLabel", default: PrefDefault::Bool(false), label: "Type to create a label" },
@@ -353,7 +353,7 @@ impl Prefs {
 
     /// Whether editing a clip may move other clips.
     pub fn editing_clip_can_move_other_clips(&self) -> bool {
-        self.get_bool("/GUI/EditClipsCanMove")
+        self.get_bool("/GUI/EditClipCanMove")
     }
 
     /// Whether pasted audio should always become new clips.

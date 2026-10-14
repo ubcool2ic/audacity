@@ -224,6 +224,10 @@ struct AudacityApp {
     draw_edits: Vec<(usize, f32)>,
     selected_label: Option<(usize, usize)>,
     label_edit: Option<LabelEdit>,
+    /// Label track that has keyboard focus (last clicked), for Type to create a label.
+    label_focus: Option<usize>,
+    /// Tracks Behaviors > Use dialog for the name of a new label: (start, end, text).
+    new_label_dialog: Option<(f64, f64, String)>,
     speed_window: bool,
     speed_percent: f64,
     loop_play: bool,
@@ -347,6 +351,8 @@ impl Default for AudacityApp {
             draw_edits: Vec::new(),
             selected_label: None,
             label_edit: None,
+            label_focus: None,
+            new_label_dialog: None,
             speed_window: false,
             speed_percent: 100.0,
             loop_play: false,
@@ -981,6 +987,40 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 });
                 Some(("Selected all of track 0".to_string(), true))
             }
+            "SplitDelete" => {
+                // Edit > Remove Special > Split Delete: remove the audio, leave a gap.
+                let Some(track) = self.selected_track else {
+                    return Some(("No track selected".to_string(), false));
+                };
+                let sel = self.selection_for_track(track).normalized();
+                let mut state = self.editor.state().clone();
+                let Some(t) = state.tracks.get_mut(track) else {
+                    return Some(("No track selected".to_string(), false));
+                };
+                let mut clips = Vec::new();
+                for clip in t.clips.clips.drain(..) {
+                    let (c0, c1) = (clip.start, clip.end());
+                    if c1 <= sel.start || c0 >= sel.end {
+                        clips.push(clip);
+                        continue;
+                    }
+                    let audio = clip.rendered();
+                    if c0 < sel.start {
+                        if let Ok(left) = audio.slice(0, sel.start - c0) {
+                            clips.push(au_core::timeline::Clip::new(clip.name.clone(), c0, left));
+                        }
+                    }
+                    if c1 > sel.end {
+                        if let Ok(right) = audio.slice(sel.end - c0, audio.len()) {
+                            clips.push(au_core::timeline::Clip::new(clip.name.clone(), sel.end, right));
+                        }
+                    }
+                }
+                clips.sort_by_key(|c| c.start);
+                t.clips.clips = clips;
+                self.editor.replace_state("Split Delete", state);
+                Some(("SplitDelete completed".to_string(), true))
+            }
             "Cut" | "Copy" | "Delete" | "Paste" => {
                 let track = match self.selected_track {
                     Some(track) => track,
@@ -989,11 +1029,11 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 let selection = self.selection_for_track(track);
                 let before = self.status.clone();
                 match name.as_str() {
-                    "Cut" => self.edit_selection(|editor| editor.cut(selection)),
+                    "Cut" => { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.cut_with(selection, &behavior)) },
                     "Copy" => self.edit_selection(|editor| editor.copy(selection)),
-                    "Delete" => self.edit_selection(|editor| editor.delete(selection)),
+                    "Delete" => { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.delete_with(selection, &behavior)) },
                     "Paste" => {
-                        self.edit_selection(|editor| editor.paste(track, selection.start))
+                        { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.paste_with(track, selection.start, &behavior)) }
                     }
                     _ => unreachable!(),
                 }
@@ -1148,6 +1188,16 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 }
             }
             _ => None,
+        }
+    }
+
+    /// Tracks Behaviors / Interface editing preferences for Cut, Delete and Paste.
+    fn edit_behavior(&self) -> au_core::edit_behaviors::EditBehavior {
+        au_core::edit_behaviors::EditBehavior {
+            enable_cut_lines: self.settings.enable_cut_lines,
+            edit_clips_can_move: self.settings.edit_clips_can_move,
+            paste_as_new_clips: self.settings.paste_as_new_clips,
+            retain_labels: self.settings.retain_labels,
         }
     }
 
@@ -2350,6 +2400,33 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     }
 
     fn add_label_at_selection(&mut self) {
+        self.add_label_with_text(String::new());
+    }
+
+    /// DoAddLabel / LabelTrackView::DoChar: with "Use dialog for the name of a
+    /// new label" the "New Label" dialog asks for the name first (Cancel adds
+    /// nothing); otherwise the label is added and its text edited in place.
+    fn add_label_with_text(&mut self, initial: String) {
+        if self.settings.dialog_for_name_new_label {
+            let (start, end) = self.selection_secs();
+            self.new_label_dialog = Some((start, end, initial));
+            return;
+        }
+        self.add_label_now(initial);
+    }
+
+    fn selection_secs(&self) -> (f64, f64) {
+        let selection = self.selected_track.map(|index| self.selection_for_track(index));
+        let rate = self.selected_rate();
+        selection.map_or((0.0, 0.0), |selection| {
+            (
+                au_core::frames_to_secs(selection.start, rate),
+                au_core::frames_to_secs(selection.end, rate),
+            )
+        })
+    }
+
+    fn add_label_now(&mut self, initial: String) {
         let selection = self.selected_track.map(|index| self.selection_for_track(index));
         let rate = self.selected_rate();
         let (start, end) = selection.map_or((0.0, 0.0), |selection| {
@@ -2370,12 +2447,15 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         }
         let label_index = self.editor.state().labels[label_track].labels.len() - 1;
         self.selected_label = Some((label_track, label_index));
+        if !initial.is_empty() {
+            let _ = self.editor.edit_label(label_track, label_index, &initial);
+        }
         self.label_edit = Some(LabelEdit {
             track: label_track,
             label: label_index,
-            text: String::new(),
+            text: initial,
         });
-        self.status = "Editing new label".to_owned();
+        self.status = au_core::i18n::tr_ui("Editing new label");
     }
 
     fn import_labels(&mut self) {
@@ -2425,6 +2505,32 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         if ctx.wants_keyboard_input() {
             return;
+        }
+        // Tracks Behaviors > Type to create a label: a printable key typed while
+        // a label track has focus starts a new label (LabelTrackView::DoCaptureKey).
+        if self.settings.type_to_create_label
+            && self.label_focus.is_some()
+            && self.label_edit.is_none()
+            && self.new_label_dialog.is_none()
+        {
+            let typed: String = ctx.input(|input| {
+                input
+                    .events
+                    .iter()
+                    .filter_map(|event| match event {
+                        egui::Event::Text(text) => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect()
+            });
+            let (start, end) = self.selection_secs();
+            let label_here = self.editor.state().labels.iter().any(|lt| {
+                lt.labels.iter().any(|l| l.start == start && l.end == end)
+            });
+            if !typed.is_empty() && !typed.chars().any(char::is_control) && !label_here {
+                self.add_label_with_text(typed);
+                return;
+            }
         }
         // Pressed keys as Audacity key strings, resolved through the (remappable) key map.
         let pressed: Vec<String> = ctx.input(|input| {
@@ -2509,18 +2615,18 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 self.report(result);
             } else if let Some(index) = self.selected_track {
                 let selection = self.selection_for_track(index);
-                self.edit_selection(|editor| editor.delete(selection));
+                { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.delete_with(selection, &behavior)) };
             }
         } else if let Some(index) = self.selected_track {
             let selection = self.selection_for_track(index);
             if cut {
-                self.edit_selection(|editor| editor.cut(selection));
+                { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.cut_with(selection, &behavior)) };
             } else if copy {
                 let result = self.editor.copy(selection);
                 self.report(result);
             } else if paste {
                 let at = selection.start;
-                self.edit_selection(|editor| editor.paste(index, at));
+                { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.paste_with(index, at, &behavior)) };
             }
         }
 
@@ -2835,6 +2941,17 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 }
             }
 
+            // Cut lines (Tracks Behaviors > Enable cut lines), drawn like Audacity's.
+            if let Some(track) = self.editor.state().tracks.get(index) {
+                for line in &track.clips.cut_lines {
+                    let x = rect.left() + zoom.time_to_x(au_core::frames_to_secs(line.at, rate)) as f32;
+                    painter.line_segment(
+                        [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                        egui::Stroke::new(3.0, egui::Color32::from_rgb(200, 0, 0)),
+                    );
+                }
+            }
+
             if let Some(frame) = playhead {
                 let time = au_core::frames_to_secs(frame.min(frames), rate);
                 let x = rect.left() + zoom.time_to_x(time) as f32;
@@ -2850,6 +2967,33 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     0.0,
                     egui::Stroke::new(1.0, egui::Color32::from_rgb(45, 88, 145)),
                 );
+            }
+        }
+
+        if response.clicked() || response.drag_started() {
+            self.label_focus = None;
+        }
+        // CutlineHandle: left click on a cut line expands it, right click removes it.
+        if response.clicked() || response.secondary_clicked() {
+            if let Some(pointer) = response.interact_pointer_pos() {
+                let rate = self.editor.state().tracks.get(index).map(|t| t.sample_rate()).unwrap_or(1);
+                let hit = self.editor.state().tracks.get(index).and_then(|t| {
+                    t.clips.cut_lines.iter().map(|l| l.at).find(|&at| {
+                        let x = rect.left() + self.zoom.time_to_x(au_core::frames_to_secs(at, rate)) as f32;
+                        (x - pointer.x).abs() <= 3.0
+                    })
+                });
+                if let Some(at) = hit {
+                    let result = if response.clicked() {
+                        self.editor.expand_cut_line(index, at)
+                    } else {
+                        self.editor.remove_cut_line(index, at)
+                    };
+                    if let Err(e) = result {
+                        self.status = e.to_string();
+                    }
+                    return;
+                }
             }
         }
 
@@ -3236,6 +3380,9 @@ fn draw_note_tracks(&mut self, ui: &mut egui::Ui) {
                 egui::vec2(ui.available_width().max(1.0), 48.0),
                 egui::Sense::click_and_drag(),
             );
+            if response.clicked() || response.drag_started() {
+                self.label_focus = Some(track_index);
+            }
             let painter = ui.painter_at(rect);
             painter.rect_filled(rect, 3.0, egui::Color32::from_gray(30));
             painter.text(
@@ -3789,6 +3936,46 @@ if self.ffmpeg_window {
             self.export_options_window = open;
         }
 
+        if let Some((start, end, mut text)) = self.new_label_dialog.take() {
+            // LabelTrackView::DialogForLabelName: "New Label" with "Name:" and OK/Cancel.
+            let mut done = None;
+            egui::Window::new(au_core::i18n::tr_ui("New Label"))
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(au_core::i18n::tr_ui("&Name:"));
+                        let r = ui.text_edit_singleline(&mut text);
+                        r.request_focus();
+                        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            done = Some(true);
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button(au_core::i18n::tr_ui("OK")).clicked() {
+                            done = Some(true);
+                        }
+                        if ui.button(au_core::i18n::tr_ui("Cancel")).clicked()
+                            || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                        {
+                            done = Some(false);
+                        }
+                    });
+                });
+            match done {
+                Some(true) => {
+                    let label_track = if self.editor.state().labels.is_empty() {
+                        self.editor.add_label_track("Labels")
+                    } else {
+                        self.label_focus.unwrap_or(0)
+                    };
+                    let result = self.editor.add_label(label_track, start, end, &text);
+                    self.report(result);
+                }
+                Some(false) => {}
+                None => self.new_label_dialog = Some((start, end, text)),
+            }
+        }
+
         if self.label_edit.is_some() {
             let mut open = true;
             let mut apply = false;
@@ -4270,7 +4457,7 @@ if response.changed() && self.script_pipe_enabled {
                         ui.close_menu();
                         if let Some(index) = self.selected_track {
                             let selection = self.selection_for_track(index);
-                            self.edit_selection(|editor| editor.cut(selection));
+                            { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.cut_with(selection, &behavior)) };
                         }
                     }
                     if ui.button(au_core::i18n::tr_ui("Copy")).clicked() {
@@ -4285,14 +4472,14 @@ if response.changed() && self.script_pipe_enabled {
                         ui.close_menu();
                         if let Some(index) = self.selected_track {
                             let at = self.selection_for_track(index).start;
-                            self.edit_selection(|editor| editor.paste(index, at));
+                            { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.paste_with(index, at, &behavior)) };
                         }
                     }
                     if ui.button(au_core::i18n::tr_ui("Delete")).clicked() {
                         ui.close_menu();
                         if let Some(index) = self.selected_track {
                             let selection = self.selection_for_track(index);
-                            self.edit_selection(|editor| editor.delete(selection));
+                            { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.delete_with(selection, &behavior)) };
                         }
                     }
                     ui.separator();

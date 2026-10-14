@@ -767,7 +767,7 @@ fn render_track_behaviors(ui: &mut egui::Ui, prefs: &mut Prefs) {
         checkbox(
             ui,
             prefs,
-            "/GUI/EditClipsCanMove",
+            "/GUI/EditClipCanMove",
             "Editing a clip can &move other clips",
         );
         checkbox(

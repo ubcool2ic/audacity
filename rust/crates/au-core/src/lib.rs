@@ -3,6 +3,7 @@
 
 //! Core audio data types and editing operations.
 
+pub mod edit_behaviors;
 pub mod prefs;
 pub mod i18n;
 pub mod selected_region;
@@ -34,6 +35,9 @@ pub enum CoreError {
     /// No track exists at the requested index.
     #[error("track not found {0}")]
     TrackNotFound(usize),
+    /// Audacity: "There is not enough room available to paste the selection".
+    #[error("There is not enough room available to paste the selection")]
+    NoRoom,
 }
 
 /// The result type used by this crate.
@@ -514,6 +518,11 @@ impl Editor {
             .ok_or(CoreError::TrackNotFound(selection.track))?;
         self.clipboard = Some(track.clips.render_range(selection.start, selection.end)?);
         Ok(())
+    }
+
+    /// Records `state` as a new undo entry (for edits built outside the editor).
+    pub fn replace_state(&mut self, description: &str, state: ProjectState) {
+        self.history.push(description, state);
     }
 
     /// Inserts the clipboard at the requested frame and records an undo entry.

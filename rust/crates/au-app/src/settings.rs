@@ -270,7 +270,7 @@ impl AppSettings {
 
             select_all_on_none: p.get_bool("/GUI/SelectAllOnNone"),
             enable_cut_lines: p.get_bool("/GUI/EnableCutLines"),
-            edit_clips_can_move: p.get_bool("/GUI/EditClipsCanMove"),
+            edit_clips_can_move: p.get_bool("/GUI/EditClipCanMove"),
             paste_as_new_clips: p.get_bool("/GUI/PasteAsNewClips"),
             circular_track_navigation: p.get_bool("/GUI/CircularTrackNavigation"),
             type_to_create_label: p.get_bool("/GUI/TypeToCreateLabel"),

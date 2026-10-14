@@ -109,6 +109,30 @@ def main():
             n = min(a.shape[1], b.shape[1]); d = float(np.max(np.abs(a[:, :n] - b[:, :n]))) if n and a.shape[0] == b.shape[0] else float("nan")
             report(f"default format {fmt} import", a.shape == b.shape and d == 0.0, f"max diff {d:g} shapes {a.shape} {b.shape}")
             A("SetPreference: Name=/SamplingRate/DefaultProjectSampleFormatChoice Value=Format32BitFloat")
+    # 4. Tracks Behaviors editing: EditClipsCanMove, PasteAsNewClips (fresh app of ours per case)
+    with C.Aud() as A:
+      def clips(X):
+          return sorted((round(c["start"], 4), round(c["end"], 4)) for c in jload(X("GetInfo: Type=Clips Format=JSON")))
+      cases = [("move=1", {"/GUI/EditClipCanMove": 1, "/GUI/PasteAsNewClips": 0}),
+               ("move=0", {"/GUI/EditClipCanMove": 0, "/GUI/PasteAsNewClips": 0}),
+               ("newclips=1", {"/GUI/EditClipCanMove": 1, "/GUI/PasteAsNewClips": 1})]
+      for name, prefs in cases:
+        with Ours() as O:
+          got = {}
+          for tag, X in (("aud", A), ("rs", O)):
+              for k, v in prefs.items(): X(f"SetPreference: Name={k} Value={v} Reload=1")
+              if X is A: X("SelectAll:"); X("RemoveTracks:")
+              X(f"Import2: Filename={W}/in.wav")
+              steps = []
+              for cmd in ["Select: Start=0.8 End=1.0 Track=0", "SplitDelete:", "Select: Start=0.2 End=0.4 Track=0", "Delete:"]:
+                  X(cmd)
+              steps.append(clips(X))
+              X("Select: Start=0.05 End=0.55 Track=0"); X("Copy:")
+              X("Select: Start=0.3 End=0.3 Track=0"); X("Paste:")
+              steps.append(clips(X))
+              got[tag] = steps
+          report(f"editing {name}", got["aud"] == got["rs"], f"aud {got['aud']} ours {got['rs']}")
+
     print(f"{sum(1 for r in res if r[1])}/{len(res)} pass")
 
 if __name__ == "__main__": main()

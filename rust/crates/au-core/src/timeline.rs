@@ -198,6 +198,16 @@ impl Default for Envelope {
     }
 }
 
+/// Audio removed by a Cut while "Enable cut lines" is on; it can be
+/// expanded back (Audacity's WaveClip cut lines).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CutLine {
+    /// Timeline frame where the cut line sits.
+    pub at: usize,
+    /// The removed audio (pre-envelope).
+    pub audio: AudioBuffer,
+}
+
 /// A collection of clips forming a wave track.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WaveClips {
@@ -209,6 +219,8 @@ pub struct WaveClips {
     pub sample_rate: u32,
     /// The track's channel count.
     pub n_channels: usize,
+    /// Cut lines left by cuts with "Enable cut lines" on.
+    pub cut_lines: Vec<CutLine>,
 }
 
 impl WaveClips {
@@ -219,6 +231,7 @@ impl WaveClips {
             envelope: Envelope::new(),
             sample_rate: rate,
             n_channels: n_ch,
+            cut_lines: Vec::new(),
         }
     }
 
