@@ -18,7 +18,17 @@ mod gui;
 #[cfg(feature = "gui")]
 mod fx_ui;
 
+/// Crash-report folder (`AUDACITY_RS_CRASH_DIR` overrides the per-OS default).
+pub fn crash_dir() -> std::path::PathBuf {
+    std::env::var_os("AUDACITY_RS_CRASH_DIR").map(Into::into).unwrap_or_else(au_runtime::crash::default_crash_dir)
+}
+
 fn main() {
+    au_runtime::crash::install(au_runtime::crash::CrashConfig {
+        dir: crash_dir(),
+        app_name: "audacity-rs".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+    });
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.first().map(String::as_str) {
         Some("--selftest") => report(selftest()),

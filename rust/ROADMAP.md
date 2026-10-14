@@ -272,3 +272,15 @@ Audacity 3.7.3 comparison (`tools/compare_effects.py`, results in `docs/effects-
 - Tone: when scripted, 3.7.3 skips `PostSet`, so the reference is Chirp with start = end, which is the same code path.
 - Not yet exact: Rhythm Track (−57 dB RMS, passes −40 dB threshold), Pluck (−167 dB), Studio Fade Out (−119 dB), Beat Finder labels within 1 ms.
 - Not yet compared: Noise Reduction (needs a GUI-captured noise profile), Repair, Vocoder, Sliding Stretch, Vocal Reduction, Risset Drum, Contrast, Plot Spectrum.
+
+## Performance & reliability status (2026-10-14)
+New crate `crates/au-runtime` (no changes to `au-effects`).
+- [x] Rayon work-stealing pool (`Runtime`) behind a bounded admission queue (`submit` blocks, `try_submit` → `Busy`), `CancelToken`, lock-free `Progress`, non-blocking `JobHandle::try_result` for the UI thread
+- [x] Offline kernels with serial + parallel paths, bit-identical by construction: `map_items` (per-track effect render / per-file import decode / export encode), `mix_offline` (chunk-parallel, tracks summed in serial order), `waveform_summary` (min/max/RMS), `spectrogram` (Hann + radix-2 FFT, frame-parallel)
+- [x] Real-time audio thread untouched: `au-io` callback never locks, waits on, or submits to the pool
+- [x] Worker panics isolated with `catch_unwind` → `JobError::Panicked`, logged to the ring, no crash report
+- [x] Panic hook: local crash report (version, OS/arch, thread, message, location, open project, last 64 actions, backtrace) in the per-OS crash folder (`AUDACITY_RS_CRASH_DIR` override), then the registered autosave flush; no network upload
+- [x] GUI: top-level unwind guard force-flushes the `.aup3` autosave; on next launch the crashed project is reopened so the Stage 4 recovery dialog appears, and a crash dialog shows the report with Copy / Dismiss (dismissed reports move to `viewed/`)
+- [x] Tests: parallel vs serial bit-identity (mix, summaries, spectrogram, map), stress (2,000 jobs with injected panics, cancellation, queue bound), injected fatal panic in a child process → report + autosave → `aup3::recover` restores the unsaved edit
+- [ ] Not yet wired: existing call sites (effect apply, export, import, waveform drawing) still run serially; they should move onto `Runtime` jobs with progress bars
+- [ ] Crash dialog and recovery reopen not yet exercised under Xvfb

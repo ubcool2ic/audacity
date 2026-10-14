@@ -24,6 +24,14 @@ pub fn run_with(open: Option<PathBuf>) -> eframe::Result<()> {
         eframe::NativeOptions::default(),
         Box::new(move |_cc| {
             let mut app = AudacityApp::default();
+            app.crash_reports = au_runtime::crash::pending_reports(&crate::crash_dir());
+            // After a crash, reopen the project that was open so the Stage 4
+            // recovery dialog offers its flushed autosave.
+            let open = open.or_else(|| {
+                app.crash_reports.iter().filter_map(|r| r.project()).find(|p| {
+                    p.exists() && au_project::aup3::inspect(p).is_ok_and(|i| i.needs_recovery)
+                })
+            });
             if let Some(path) = open {
                 app.open_path(path);
             }
@@ -130,6 +138,8 @@ struct AudacityApp {
     aup3_extras: au_project::aup3::Aup3Extras,
     /// File whose unclean autosave awaits the user's recover/discard choice.
     recovery_prompt: Option<PathBuf>,
+    /// Unviewed crash reports from earlier sessions (Help ▸ crash dialog on launch).
+    crash_reports: Vec<au_runtime::crash::CrashReport>,
     /// Signature of the history at the last autosave, and when it happened.
     autosave_sig: (usize, Option<String>),
     autosave_at: std::time::Instant,
@@ -192,6 +202,7 @@ impl Default for AudacityApp {
             project_path: None,
             aup3_extras: Default::default(),
             recovery_prompt: None,
+            crash_reports: Vec::new(),
             autosave_sig: (1, None),
             autosave_at: std::time::Instant::now(),
             tool: Tool::Selection,
@@ -399,6 +410,7 @@ impl AudacityApp {
             return;
         }
         self.autosave_at = std::time::Instant::now();
+        if let Some(d) = &sig.1 { au_runtime::crash::log_action(format!("edit: {d}")); }
         self.autosave_sig = sig;
         if let Err(e) = au_project::aup3::autosave(&path, &self.current_aup3()) {
             self.status = format!("Autosave failed: {e}");
@@ -473,6 +485,47 @@ impl AudacityApp {
         self.autosave_sig = self.history_sig();
         self.status = "Project opened".to_owned();
         self.fit_zoom(1000.0);
+    }
+
+    /// Forces an autosave of unsaved edits now (crash path; ignores the 2 s throttle).
+    fn flush_autosave(&mut self) {
+        let Some(path) = self.project_path.clone().filter(|p| Self::is_aup3(p)) else { return };
+        if self.history_sig() != self.autosave_sig {
+            let _ = au_project::aup3::autosave(&path, &self.current_aup3());
+        }
+    }
+
+    /// Shows crash reports left by earlier sessions: view, copy, dismiss.
+    fn crash_report_dialog(&mut self, ctx: &egui::Context) {
+        let Some(report) = self.crash_reports.first().cloned() else { return };
+        let mut action = None;
+        egui::Window::new("Audacity-RS crashed last time")
+            .collapsible(false)
+            .default_width(560.0)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "A crash report was saved locally (nothing was uploaded):\n{}",
+                    report.path.display()
+                ));
+                if let Some(m) = report.message() { ui.label(format!("Reason: {m}")); }
+                egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                    let mut text = report.text.as_str();
+                    ui.add(egui::TextEdit::multiline(&mut text).code_editor().desired_width(f32::INFINITY));
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Copy report").clicked() { action = Some(0); }
+                    if ui.button("Dismiss").clicked() { action = Some(1); }
+                    if self.crash_reports.len() > 1 { ui.label(format!("{} more", self.crash_reports.len() - 1)); }
+                });
+            });
+        match action {
+            Some(0) => { ctx.copy_text(report.text.clone()); self.status = "Crash report copied".to_owned(); }
+            Some(1) => {
+                let _ = au_runtime::crash::dismiss(&report);
+                self.crash_reports.remove(0);
+            }
+            _ => {}
+        }
     }
 
     fn recovery_dialog(&mut self, ctx: &egui::Context) {
@@ -2497,7 +2550,19 @@ impl AudacityApp {
 }
 
 impl eframe::App for AudacityApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // The panic hook has already written the crash report; flush unsaved
+        // edits to the autosave before the panic continues to unwind.
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.update_frame(ctx, frame)));
+        if let Err(p) = r {
+            self.flush_autosave();
+            std::panic::resume_unwind(p);
+        }
+    }
+}
+
+impl AudacityApp {
+    fn update_frame(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_shortcuts(ctx);
 
         let dt = ctx.input(|input| input.unstable_dt).max(0.0);
@@ -2511,6 +2576,11 @@ impl eframe::App for AudacityApp {
         self.ensure_track_mix();
         self.maybe_autosave();
         self.recovery_dialog(ctx);
+        self.crash_report_dialog(ctx);
+        match &self.project_path {
+            Some(p) => au_runtime::crash::set_context("project", p.display().to_string()),
+            None => au_runtime::crash::clear_context("project"),
+        }
         self.effect_windows(ctx);
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {

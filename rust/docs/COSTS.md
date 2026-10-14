@@ -125,3 +125,6 @@ Luna (openai/gpt-6-luna): 20 calls, $0.1566. Sol (openai/gpt-6-sol): 5 calls, $0
 **Parity fixes total: $1.0113**
 
 **Running total: $1.2236**
+
+## BizyBot — Performance & reliability (2026-10-14)
+- au-runtime crate, crash hook/dialog, tests: written by hand, no OpenRouter calls. Spend: $0.00

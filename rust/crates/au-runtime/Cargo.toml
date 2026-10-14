@@ -1,0 +1,17 @@
+[package]
+name = "au-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Worker pool, offline parallel compute, panic isolation and local crash reports for the Audacity Rust port"
+
+[dependencies]
+rayon = "1.10"
+crossbeam-channel = "0.5"
+
+[dev-dependencies]
+tempfile = "3"
+au-core = { path = "../au-core" }
+au-project = { path = "../au-project" }
