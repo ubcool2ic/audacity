@@ -180,6 +180,9 @@ struct AudacityApp {
     progress: progress::ProgressCenter,
     /// Jobs started by the `ProgressTest` scripting hook.
     test_jobs: Vec<(progress::JobTicket, au_runtime::JobHandle<()>)>,
+    /// File > Import / Export jobs running on `io_runtime` with progress dialogs.
+    io_jobs: Vec<(progress::JobTicket, IoJob)>,
+    io_runtime: au_runtime::Runtime,
     /// Pool for scripting test jobs.
     runtime_for_tests: au_runtime::Runtime,
     /// Waveform min/max summaries computed on the au-runtime pool.
@@ -306,6 +309,8 @@ impl Default for AudacityApp {
             progress: progress::ProgressCenter::new(),
             test_jobs: Vec::new(),
             runtime_for_tests: au_runtime::Runtime::new(1, 4),
+            io_jobs: Vec::new(),
+            io_runtime: au_runtime::Runtime::new(2, 16),
             zoom: ZoomInfo {
                 h_offset: 0.0,
                 pixels_per_sec: 100.0,
@@ -465,7 +470,7 @@ fn import_file(&mut self) {
         )
         .pick_file()
     {
-        self.import_path(path);
+        self.import_path_background(path);
     }
 }
 
@@ -512,6 +517,65 @@ fn import_path(&mut self, path: PathBuf) {
                 }
                 Err(error) => self.status = format!("Import failed: {error:?}"),
             }
+        }
+    }
+}
+
+/// File > Import on the I/O pool with a progress dialog (Cancel). MIDI and the
+/// pipe's Import2 stay synchronous (scripts expect the track once the command returns).
+fn import_path_background(&mut self, path: PathBuf) {
+    if path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("mid") || e.eq_ignore_ascii_case("midi")) {
+        return self.import_path(path);
+    }
+    let p = path.clone();
+    let handle = self.io_runtime.submit(1, move |ctx: &au_runtime::pool::JobCtx| {
+        ctx.cancel.check()?;
+        let r = au_io::import_file(&p).map_err(|e| format!("{e:?}"));
+        ctx.cancel.check()?;
+        ctx.progress.add(1);
+        Ok(r)
+    });
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_owned();
+    let ticket = self.progress.register("Import", format!("Importing {name}"), &handle, false);
+    self.io_jobs.push((ticket, IoJob::Import(path, handle)));
+}
+
+/// Applies finished import/export jobs (called every frame).
+fn poll_io_jobs(&mut self) {
+    let mut i = 0;
+    while i < self.io_jobs.len() {
+        let done = match &self.io_jobs[i].1 {
+            IoJob::Import(_, h) => h.try_result().map(IoDone::Import),
+            IoJob::Export(_, h) => h.try_result().map(IoDone::Export),
+        };
+        let Some(done) = done else { i += 1; continue };
+        let (ticket, job) = self.io_jobs.remove(i);
+        self.progress.finish(ticket);
+        match (job, done) {
+            (IoJob::Import(path, _), IoDone::Import(Ok(Ok(buffer)))) => {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("Imported audio").to_owned();
+                self.editor.add_track(Track::new(name, buffer));
+                self.selected_track = Some(self.editor.state().tracks.len() - 1);
+                self.ensure_track_mix();
+                self.status = "Imported audio".to_owned();
+            }
+            (IoJob::Import(path, _), IoDone::Import(Ok(Err(e)))) => {
+                if e.starts_with("FfmpegMissing") {
+                    self.status = "FFmpeg is not installed — see File > FFmpeg status".to_owned();
+                    self.ffmpeg_window = true;
+                    self.ffmpeg_status = au_io::ffmpeg::status();
+                } else {
+                    self.status = format!("Import of {} failed: {e}", path.display());
+                }
+            }
+            (_, IoDone::Import(Err(au_runtime::JobError::Cancelled)) | IoDone::Export(Err(au_runtime::JobError::Cancelled))) => {
+                self.status = "Cancelled".to_owned();
+            }
+            (_, IoDone::Import(Err(e))) => self.status = format!("Import failed: {e:?}"),
+            (IoJob::Export(..), IoDone::Import(Ok(_))) => unreachable!("import result for an export job"),
+            (_, IoDone::Export(Ok(msg))) => self.status = msg,
+            (IoJob::Export(what, _), IoDone::Export(Err(au_runtime::JobError::Failed(e)))) => self.status = format!("{what} failed: {e}"),
+            (_, IoDone::Export(Err(e))) => self.status = format!("Export failed: {e:?}"),
         }
     }
 }
@@ -1379,16 +1443,33 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                         .fold(0.0, f64::max)),
                 };
                 self.aup3_extras.tags = tags.clone();
-                let r = crate::export_glue::export_range(&path, self.editor.state(), &self.aup3_extras, t0, t1, None, &fmt, &tags);
-                self.status = match r { Ok(()) => format!("Exported {}", path.display()), Err(e) => format!("Export failed: {e}") };
+                let (state, extras) = (self.editor.state().clone(), self.aup3_extras.clone());
+                let shown = path.display().to_string();
+                let handle = self.io_runtime.submit(1, move |ctx: &au_runtime::pool::JobCtx| {
+                    ctx.cancel.check()?;
+                    crate::export_glue::export_range(&path, &state, &extras, t0, t1, None, &fmt, &tags)
+                        .map_err(au_runtime::JobError::Failed)?;
+                    ctx.progress.add(1);
+                    Ok(format!("Exported {}", path.display()))
+                });
+                let ticket = self.progress.register("Export Audio", format!("Exporting {shown}"), &handle, false);
+                self.io_jobs.push((ticket, IoJob::Export("Export".into(), handle)));
             }
         }
         if let Some(dlg) = self.export_multi_dialog.as_mut() {
             if let Some(req) = dlg.show(ctx) {
                 self.export_multi_dialog = None;
                 let fmt = crate::export_glue::FormatChooser::from_name(&req.format).format;
-                let r = crate::export_glue::export_multiple(self.editor.state(), &self.aup3_extras, &req, &fmt);
-                self.status = match r { Ok(files) => format!("Exported {} files", files.len()), Err(e) => format!("Export Multiple failed: {e}") };
+                let (state, extras) = (self.editor.state().clone(), self.aup3_extras.clone());
+                let handle = self.io_runtime.submit(1, move |ctx: &au_runtime::pool::JobCtx| {
+                    ctx.cancel.check()?;
+                    let files = crate::export_glue::export_multiple(&state, &extras, &req, &fmt)
+                        .map_err(au_runtime::JobError::Failed)?;
+                    ctx.progress.add(1);
+                    Ok(format!("Exported {} files", files.len()))
+                });
+                let ticket = self.progress.register("Export Multiple", "Exporting files", &handle, false);
+                self.io_jobs.push((ticket, IoJob::Export("Export Multiple".into(), handle)));
             }
         }
     }
@@ -4284,6 +4365,8 @@ if response.changed() && self.script_pipe_enabled {
                 true
             }
         });
+        self.poll_io_jobs();
+        if !self.io_jobs.is_empty() { ctx.request_repaint_after(std::time::Duration::from_millis(50)); }
         self.progress.show(ctx);
 
         if self.player.is_some() || self.recorder.is_some() {
@@ -4614,4 +4697,13 @@ impl AudacityApp {
             }
         }
     }
+}
+
+enum IoJob {
+    Import(PathBuf, au_runtime::JobHandle<Result<au_core::AudioBuffer, String>>),
+    Export(String, au_runtime::JobHandle<String>),
+}
+enum IoDone {
+    Import(Result<Result<au_core::AudioBuffer, String>, au_runtime::JobError>),
+    Export(Result<String, au_runtime::JobError>),
 }
