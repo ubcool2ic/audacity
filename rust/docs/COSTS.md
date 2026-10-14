@@ -142,6 +142,19 @@ Stage 6: Luna 7 calls, $0.0614. Sol 1 call, $0.2132. **Stage 6 total: $0.2746**
 
 **Running total: $1.4982**
 
+## Noise Reduction + room noise profile (2026-10-14)
+| file | model | cost $ |
+|---|---|---|
+| fx/fix_noisereduction.rs (first pass) | openai/gpt-6-luna | 0.0096 |
+| fx/fix_noisereduction.rs (review: Luna file + C++ + diff numbers) | openai/gpt-6-sol | 0.1975 |
+| tools/aud_ref/noise_reduction_ref.cpp (3 calls; first 2 returned no C++) | openai/gpt-6-luna | 0.0217 |
+| au-project/src/noise_profiles.rs | openai/gpt-6-luna | 0.0017 |
+| au-app/src/room_noise.rs (+ test fix) | openai/gpt-6-luna | 0.0105 |
+
+Luna 7 calls, $0.0435. Sol 1 call, $0.1975. **Total: $0.2410**
+
+**Running total: $1.7392**
+
 ## BizyBot — Performance & reliability (2026-10-14)
 - au-runtime crate, crash hook/dialog, tests: written by hand, no OpenRouter calls. Spend: $0.00
 

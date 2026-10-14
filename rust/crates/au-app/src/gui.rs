@@ -120,6 +120,10 @@ struct AudacityApp {
     recorder: Option<Recorder>,
     record_controller: Option<crate::transport::RecordController>,
     record_buffer: Vec<f32>,
+    room_noise: crate::room_noise::RoomNoise,
+    noise_capture: Option<Recorder>,
+    live_denoised: Vec<f32>,
+    live_take_active: bool,
     record_peak: f32,
     record_opts_window: bool,
     record_mode: RecordModeUi,
@@ -188,6 +192,10 @@ impl Default for AudacityApp {
             recorder: None,
             record_controller: None,
             record_buffer: Vec::new(),
+            room_noise: crate::room_noise::RoomNoise::new(),
+            noise_capture: None,
+            live_denoised: Vec::new(),
+            live_take_active: false,
             record_peak: 0.0,
             record_opts_window: false,
             record_mode: RecordModeUi::NewTrack,
@@ -397,6 +405,9 @@ impl AudacityApp {
         };
         match result {
             Ok(()) => {
+                if let Err(e) = au_project::noise_profiles::save(&path, &self.room_noise.project_blobs()) {
+                    self.status = format!("Saved, but noise profiles not stored: {e}");
+                }
                 self.status = format!("Saved {}", path.display());
                 self.project_path = Some(path);
                 self.autosave_sig = self.history_sig();
@@ -450,6 +461,7 @@ impl AudacityApp {
         }
         match au_project::load_project(&path) {
             Ok(state) => {
+                if let Ok(b) = au_project::noise_profiles::load(&path) { self.room_noise.load_project_blobs(&b); }
                 self.aup3_extras = Default::default();
                 self.install_state(state, path);
             }
@@ -460,6 +472,7 @@ impl AudacityApp {
     fn open_aup3(&mut self, path: PathBuf, source: au_project::aup3::DocSource) {
         match au_project::aup3::load_from(&path, source) {
             Ok(p) => {
+                if let Ok(b) = au_project::noise_profiles::load(&path) { self.room_noise.load_project_blobs(&b); }
                 let (s0, s1) = p.extras.selection;
                 self.aup3_extras = p.extras;
                 self.install_state(p.state, path);
@@ -711,6 +724,44 @@ impl AudacityApp {
         }
     }
 
+    fn input_device_key(&self) -> String {
+        match self.input_kind {
+            InputKind::Loopback => "loopback".to_owned(),
+            _ => au_io::device::input_devices().into_iter().next().map_or_else(|| "default".to_owned(), |n| crate::room_noise::RoomNoise::device_key(&n)),
+        }
+    }
+
+    fn start_noise_capture(&mut self) {
+        match Recorder::start(self.input_kind) {
+            Ok(rec) => {
+                let key = self.input_device_key();
+                self.room_noise.start_capture(&key, rec.sample_rate.max(1), rec.channels.max(1) as usize);
+                self.noise_capture = Some(rec);
+                self.status = "Capturing room noise (10 s) - stay quiet".to_owned();
+            }
+            Err(e) => self.status = format!("Noise capture failed: {e:?}"),
+        }
+    }
+
+    fn process_noise_capture(&mut self) {
+        let Some(rec) = self.noise_capture.as_mut() else { return };
+        let mut buf = Vec::new();
+        rec.poll(&mut buf);
+        match self.room_noise.feed(&buf) {
+            crate::room_noise::RoomNoiseEvent::None => {
+                if !self.room_noise.is_capturing() { self.noise_capture = None; }
+            }
+            crate::room_noise::RoomNoiseEvent::CaptureFinished(dev) => {
+                self.noise_capture = None;
+                self.status = format!("Room noise profile captured for {dev}");
+            }
+            crate::room_noise::RoomNoiseEvent::CaptureFailed(e) => {
+                self.noise_capture = None;
+                self.status = format!("Noise capture failed: {e}");
+            }
+        }
+    }
+
     fn open_record_options(&mut self) {
         self.record_opts_window = true;
     }
@@ -807,6 +858,9 @@ impl AudacityApp {
         };
         let controller = crate::transport::RecordController::new(opts, channels, rate, start);
 
+        let key = self.input_device_key();
+        self.live_denoised.clear();
+        self.live_take_active = self.room_noise.begin_live_take(&key, rate, channels);
         self.recorder = Some(recorder);
         self.record_controller = Some(controller);
         self.record_buffer.clear();
@@ -841,6 +895,13 @@ impl AudacityApp {
         if let Some(controller) = self.record_controller.take() {
             match controller.commit(&mut self.editor) {
                 Ok(track) => {
+                    if self.live_take_active {
+                        if let Some(buf) = self.room_noise.end_live_take() {
+                            let name = format!("{} (noise suppressed)", self.editor.state().tracks[track].name);
+                            self.editor.add_track(Track::new(&name, buf));
+                        }
+                    }
+                    self.live_take_active = false;
                     self.selected_track = Some(track);
                     self.selection = None;
                     self.ensure_track_mix();
@@ -860,6 +921,10 @@ impl AudacityApp {
         };
         self.record_buffer.clear();
         recorder.poll(&mut self.record_buffer);
+        if self.live_take_active {
+            // Raw samples still go to the take below (non-destructive); the denoised copy is kept alongside.
+            self.room_noise.process_live(&self.record_buffer, &mut self.live_denoised);
+        }
         self.record_peak = self.record_peak.max(recorder.take_peak()).clamp(0.0, 1.5);
         let done = self
             .record_controller
@@ -2141,6 +2206,7 @@ impl AudacityApp {
         if self.record_opts_window {
             let mut open = self.record_opts_window;
             let mut start_recording = false;
+            let mut capture_noise = false;
             egui::Window::new("Recording options")
                 .open(&mut open)
                 .show(ctx, |ui| {
@@ -2265,11 +2331,24 @@ impl AudacityApp {
                     ui.small(
                         "Windows only; on Linux pick a Monitor source; macOS unsupported",
                     );
+                    ui.separator();
+                    ui.label("Room noise profile");
+                    let key = self.input_device_key();
+                    if self.room_noise.ui(ui, &key) && self.noise_capture.is_none() && self.recorder.is_none() {
+                        capture_noise = true;
+                    }
+                    ui.separator();
                     if ui.button("Start Recording").clicked() {
                         start_recording = true;
                     }
                 });
             self.record_opts_window = open;
+            if capture_noise {
+                self.start_noise_capture();
+            }
+            if !self.room_noise.is_capturing() && self.noise_capture.is_some() {
+                self.noise_capture = None;
+            }
             if start_recording {
                 self.begin_recording();
             }
@@ -2604,6 +2683,10 @@ impl AudacityApp {
         if self.recorder.is_some() {
             self.process_recording();
         }
+        if self.noise_capture.is_some() {
+            self.process_noise_capture();
+            ctx.request_repaint();
+        }
         if self.player.as_ref().is_some_and(Player::is_finished) {
             self.player = None;
         }
@@ -2763,6 +2846,15 @@ impl AudacityApp {
                                     match id {
                                         "PlotSpectrum" => self.open_spectrum(),
                                         "Contrast" => self.contrast_win = Some(crate::analyze_ui::ContrastWindow::new()),
+                                        "NoiseReduction" => {
+                                            self.fx_dialog = crate::fx_ui::EffectDialog::open(id);
+                                            let key = self.input_device_key();
+                                            if let (Some(d), Some(fx)) = (self.fx_dialog.as_mut(), self.room_noise.offline_effect(&key)) {
+                                                d.effect = Box::new(fx);
+                                                d.has_profile = true;
+                                                d.report = "Using the captured room noise profile. Use Get Noise Profile to replace it.".into();
+                                            }
+                                        }
                                         _ => self.fx_dialog = crate::fx_ui::EffectDialog::open(id),
                                     }
                                 }

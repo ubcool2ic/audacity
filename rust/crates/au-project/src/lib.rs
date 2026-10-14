@@ -6,6 +6,7 @@
 pub mod aup3;
 pub mod binxml;
 pub mod blocks;
+pub mod noise_profiles;
 
 use au_core::{
     timeline::{Clip, EnvPoint, Envelope, Label, LabelTrack, WaveClips},

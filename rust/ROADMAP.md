@@ -309,3 +309,18 @@ See `docs/PLUGIN_HOSTING.md`. New crate `crates/au-plugin-host` (code generated 
 - [x] VST3 SDK licence verified (MIT since 3.8, GPL-compatible) — documented
 - [~] Plugin editors: API implemented (X11 embed for both, CLAP floating, VST3 IRunLoop); not yet working under headless Xvfb (AGain segfaults in `attached`, JUCE BadAtom) — needs a real desktop / WM and an out-of-process editor host
 - [ ] au-app wiring (effect menu, realtime stacks using `registry()`), LV2/LADSPA (other worker), Nyquist (Stage 9)
+
+## Noise Reduction and room noise profile (2026-10-14)
+- **Noise Reduction** (`fx/fix_noisereduction.rs`) is a literal port of `NoiseReductionBase` 3.7.3, covering SpectrumTransformer, the RealFFTf port, statistics, Classify, gain smoothing and Reduce/Isolate/Residue.
+  - Luna wrote the first pass; it differed by −13 to −26 dB. Sol's review of that pass made it bit-identical.
+  - Reference: `tools/aud_ref/noise_reduction_ref.cpp`, which is Audacity's worker code verbatim on top of the installed `lib-fft.so` SpectrumTransformer. Run `tools/compare_noise_reduction.py`.
+  - Result: 6/6 parameter sets bit-identical (−240 dB). See `docs/noise-reduction-compare-3.7.3.jsonl`.
+- **Room noise profile** (`au-app/src/room_noise.rs`; GUI section in Recording options):
+  - "Capture Noise Profile (10 s)" records from the current input and learns a profile.
+  - Profiles are stored per input device (`~/.config/audacity-rs/noise-profiles/<device>.aunp`) and per project (`aurs_noise_profiles` table in the .aup3/.aurs SQLite file, via `au-project/src/noise_profiles.rs`). Audacity ignores unknown tables.
+  - Offline: the Noise Reduction dialog automatically uses the captured profile.
+  - Live: optional suppression with `StreamingNoiseReducer` (allocation-free after start, no locks), with reduction dB, sensitivity, smoothing and a bypass switch. The raw take is kept as recorded, and a time-aligned "(noise suppressed)" track is added next to it.
+  - Tests:
+    - live and offline outputs are identical (offline uses the same streaming path);
+    - profile save/load round-trips for the user directory, the project table and bytes;
+    - tone+noise SNR improves by more than 6 dB at 24 dB reduction. This is Audacity-exact behaviour: +3.6/+7.2/+13.8 dB at 12/24/48 dB.
