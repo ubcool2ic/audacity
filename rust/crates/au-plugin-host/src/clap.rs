@@ -18,11 +18,19 @@ use clap_sys::{
         latency::{clap_host_latency, clap_plugin_latency, CLAP_EXT_LATENCY},
         log::{clap_host_log, CLAP_EXT_LOG},
         params::{clap_host_params, clap_param_info, clap_plugin_params, CLAP_EXT_PARAMS},
+        posix_fd_support::{
+            clap_host_posix_fd_support, clap_plugin_posix_fd_support, clap_posix_fd_flags,
+            CLAP_EXT_POSIX_FD_SUPPORT, CLAP_POSIX_FD_READ, CLAP_POSIX_FD_WRITE,
+        },
         state::{clap_host_state, clap_plugin_state, CLAP_EXT_STATE},
         thread_check::{clap_host_thread_check, CLAP_EXT_THREAD_CHECK},
+        timer_support::{
+            clap_host_timer_support, clap_plugin_timer_support, CLAP_EXT_TIMER_SUPPORT,
+        },
     },
     factory::plugin_factory::{clap_plugin_factory, CLAP_PLUGIN_FACTORY_ID},
     host::clap_host,
+    id::clap_id,
     plugin::clap_plugin,
     process::clap_process,
     stream::{clap_istream, clap_ostream},
@@ -41,9 +49,11 @@ use std::{
         Arc, Mutex, OnceLock, Weak,
     },
     thread::{self, ThreadId},
+    time::{Duration, Instant},
 };
 
 static MODULES: OnceLock<Mutex<HashMap<PathBuf, Weak<ClapModule>>>> = OnceLock::new();
+static LIVE_INSTANCES: OnceLock<Mutex<Vec<(usize, usize)>>> = OnceLock::new();
 
 struct ClapModule {
     entry: *const clap_plugin_entry,
@@ -121,8 +131,7 @@ fn path_cstring(path: &Path) -> Result<CString, PluginError> {
 }
 
 fn plugin_id_cstring(id: &str) -> Result<CString, PluginError> {
-    CString::new(id)
-        .map_err(|_| PluginError::LoadFailed("plugin id contains a NUL byte".into()))
+    CString::new(id).map_err(|_| PluginError::LoadFailed("plugin id contains a NUL byte".into()))
 }
 
 fn read_c_string(value: *const c_char) -> String {
@@ -275,7 +284,13 @@ pub fn scan_file(path: &Path) -> Result<Vec<PluginDescriptor>, PluginError> {
 
         let ports = get_plugin_extension::<clap_plugin_audio_ports>(plugin, CLAP_EXT_AUDIO_PORTS);
         descriptors.push(PluginDescriptor {
-            id: crate::state::effect_id(PluginFormat::Clap, path, &id),
+            id: crate::state::effect_id(
+                PluginFormat::Clap,
+                path,
+                &id,
+                &read_c_string(factory_descriptor.vendor),
+                &read_c_string(factory_descriptor.name),
+            ),
             name: read_c_string(factory_descriptor.name),
             vendor: read_c_string(factory_descriptor.vendor),
             format: PluginFormat::Clap,
@@ -355,6 +370,23 @@ pub fn candidates(paths: &[PathBuf]) -> Vec<PathBuf> {
     result
 }
 
+struct TimerRegistration {
+    id: clap_id,
+    period: Duration,
+    next_due: Instant,
+}
+
+struct FdRegistration {
+    fd: i32,
+    flags: clap_posix_fd_flags,
+}
+
+struct HostLoopState {
+    next_timer_id: clap_id,
+    timers: Vec<TimerRegistration>,
+    fds: Vec<FdRegistration>,
+}
+
 struct HostData {
     host: clap_host,
     main_thread: ThreadId,
@@ -368,6 +400,8 @@ struct HostData {
     editor_open: AtomicBool,
     resize_width: AtomicU32,
     resize_height: AtomicU32,
+    loop_state: Mutex<HostLoopState>,
+    timer_support: Mutex<Option<usize>>,
 }
 
 impl HostData {
@@ -396,6 +430,12 @@ impl HostData {
             editor_open: AtomicBool::new(false),
             resize_width: AtomicU32::new(0),
             resize_height: AtomicU32::new(0),
+            loop_state: Mutex::new(HostLoopState {
+                next_timer_id: 1,
+                timers: Vec::new(),
+                fds: Vec::new(),
+            }),
+            timer_support: Mutex::new(None),
         });
         let self_ptr = (&mut *data) as *mut HostData;
         data.host.host_data = self_ptr.cast();
@@ -431,6 +471,10 @@ unsafe extern "C" fn host_get_extension(
         (&HOST_STATE as *const clap_host_state).cast()
     } else if requested == CLAP_EXT_GUI {
         (&HOST_GUI as *const clap_host_gui).cast()
+    } else if requested == CLAP_EXT_TIMER_SUPPORT {
+        (&HOST_TIMER_SUPPORT as *const clap_host_timer_support).cast()
+    } else if requested == CLAP_EXT_POSIX_FD_SUPPORT {
+        (&HOST_POSIX_FD_SUPPORT as *const clap_host_posix_fd_support).cast()
     } else {
         ptr::null()
     }
@@ -452,6 +496,121 @@ unsafe extern "C" fn host_request_callback(host: *const clap_host) {
     if let Some(data) = unsafe { host_data(host) } {
         data.request_callback.store(true, Ordering::Relaxed);
     }
+}
+
+unsafe extern "C" fn host_timer_register(
+    host: *const clap_host,
+    period_ms: u32,
+    timer_id: *mut clap_id,
+) -> bool {
+    if timer_id.is_null() {
+        return false;
+    }
+    let Some(data) = (unsafe { host_data(host) }) else {
+        return false;
+    };
+
+    let mut state = data
+        .loop_state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let first_candidate = state.next_timer_id;
+    let mut candidate = first_candidate;
+    while state.timers.iter().any(|timer| timer.id == candidate) {
+        candidate = candidate.wrapping_add(1);
+        if candidate == first_candidate {
+            return false;
+        }
+    }
+
+    state.next_timer_id = candidate.wrapping_add(1);
+    let period = Duration::from_millis(period_ms as u64);
+    let now = Instant::now();
+    let next_due = now.checked_add(period).unwrap_or(now);
+    state.timers.push(TimerRegistration {
+        id: candidate,
+        period,
+        next_due,
+    });
+    unsafe {
+        *timer_id = candidate;
+    }
+    true
+}
+
+unsafe extern "C" fn host_timer_unregister(
+    host: *const clap_host,
+    timer_id: clap_id,
+) -> bool {
+    let Some(data) = (unsafe { host_data(host) }) else {
+        return false;
+    };
+    let mut state = data
+        .loop_state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(index) = state.timers.iter().position(|timer| timer.id == timer_id) else {
+        return false;
+    };
+    state.timers.swap_remove(index);
+    true
+}
+
+unsafe extern "C" fn host_posix_fd_register(
+    host: *const clap_host,
+    fd: i32,
+    flags: clap_posix_fd_flags,
+) -> bool {
+    let Some(data) = (unsafe { host_data(host) }) else {
+        return false;
+    };
+    let mut state = data
+        .loop_state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if state.fds.iter().any(|registration| registration.fd == fd) {
+        return false;
+    }
+    state.fds.push(FdRegistration { fd, flags });
+    true
+}
+
+unsafe extern "C" fn host_posix_fd_modify(
+    host: *const clap_host,
+    fd: i32,
+    flags: clap_posix_fd_flags,
+) -> bool {
+    let Some(data) = (unsafe { host_data(host) }) else {
+        return false;
+    };
+    let mut state = data
+        .loop_state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(registration) = state.fds.iter_mut().find(|registration| registration.fd == fd) else {
+        return false;
+    };
+    registration.flags = flags;
+    true
+}
+
+unsafe extern "C" fn host_posix_fd_unregister(host: *const clap_host, fd: i32) -> bool {
+    let Some(data) = (unsafe { host_data(host) }) else {
+        return false;
+    };
+    let mut state = data
+        .loop_state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(index) = state
+        .fds
+        .iter()
+        .position(|registration| registration.fd == fd)
+    else {
+        return false;
+    };
+    state.fds.swap_remove(index);
+    true
 }
 
 unsafe extern "C" fn host_log(
@@ -553,6 +712,117 @@ static HOST_GUI: clap_host_gui = clap_host_gui {
     request_hide: Some(host_gui_request_hide),
     closed: Some(host_gui_closed),
 };
+static HOST_TIMER_SUPPORT: clap_host_timer_support = clap_host_timer_support {
+    register_timer: Some(host_timer_register),
+    unregister_timer: Some(host_timer_unregister),
+};
+static HOST_POSIX_FD_SUPPORT: clap_host_posix_fd_support = clap_host_posix_fd_support {
+    register_fd: Some(host_posix_fd_register),
+    modify_fd: Some(host_posix_fd_modify),
+    unregister_fd: Some(host_posix_fd_unregister),
+};
+
+fn register_live_instance(host: &HostData, plugin: *const clap_plugin) {
+    let instances = LIVE_INSTANCES.get_or_init(|| Mutex::new(Vec::new()));
+    let mut instances = instances
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    instances.push((host as *const HostData as usize, plugin as usize));
+}
+
+fn unregister_live_instance(host: &HostData, plugin: *const clap_plugin) {
+    let instances = LIVE_INSTANCES.get_or_init(|| Mutex::new(Vec::new()));
+    let mut instances = instances
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let host_address = host as *const HostData as usize;
+    let plugin_address = plugin as usize;
+    instances.retain(|instance| *instance != (host_address, plugin_address));
+}
+
+pub fn run_loop_idle() {
+    let instances = LIVE_INSTANCES.get_or_init(|| Mutex::new(Vec::new()));
+    let live_instances = instances
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+
+    for (host_address, plugin_address) in live_instances {
+        let host = unsafe { &*(host_address as *const HostData) };
+        let plugin = plugin_address as *const clap_plugin;
+
+        if host.request_callback.swap(false, Ordering::Relaxed) {
+            if let Some(callback) = unsafe { (*plugin).on_main_thread } {
+                unsafe { callback(plugin) };
+            }
+        }
+
+        let now = Instant::now();
+        let due_timers = {
+            let mut state = host
+                .loop_state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut due = Vec::new();
+            for timer in &mut state.timers {
+                if timer.next_due <= now {
+                    due.push(timer.id);
+                    timer.next_due = now.checked_add(timer.period).unwrap_or(now);
+                }
+            }
+            due
+        };
+
+        let timer_support = *host
+            .timer_support
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(timer_support) = timer_support
+            .filter(|extension| *extension != 0)
+            .map(|extension| extension as *const clap_plugin_timer_support)
+        {
+            if let Some(on_timer) = unsafe { (*timer_support).on_timer } {
+                for timer_id in due_timers {
+                    unsafe { on_timer(plugin, timer_id) };
+                }
+            }
+        }
+
+        let fds = {
+            let state = host
+                .loop_state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state
+                .fds
+                .iter()
+                .filter(|registration| registration.flags & CLAP_POSIX_FD_READ != 0)
+                .map(|registration| (registration.fd, registration.flags))
+                .collect::<Vec<_>>()
+        };
+
+        if !fds.is_empty() {
+            if let Some(posix_fd_support) =
+                get_plugin_extension::<clap_plugin_posix_fd_support>(
+                    plugin,
+                    CLAP_EXT_POSIX_FD_SUPPORT,
+                )
+            {
+                if let Some(on_fd) = unsafe { (*posix_fd_support).on_fd } {
+                    for (fd, flags) in fds {
+                        unsafe {
+                            on_fd(
+                                plugin,
+                                fd,
+                                flags & (CLAP_POSIX_FD_READ | CLAP_POSIX_FD_WRITE),
+                            )
+                        };
+                    }
+                }
+            }
+        }
+    }
+}
 
 unsafe extern "C" fn input_events_size(list: *const clap_input_events) -> u32 {
     if list.is_null() {
@@ -810,12 +1080,9 @@ impl PluginHost for ClapHost {
             )));
         }
 
-        Ok(Box::new(ClapInstance::new(
-            module,
-            host,
-            plugin,
-            descriptor.clone(),
-        )))
+        let instance = ClapInstance::new(module, host, plugin, descriptor.clone());
+        register_live_instance(&instance.host, plugin);
+        Ok(Box::new(instance))
     }
 }
 
@@ -857,6 +1124,13 @@ impl ClapInstance {
         let audio_ports =
             get_plugin_extension::<clap_plugin_audio_ports>(plugin, CLAP_EXT_AUDIO_PORTS);
         let gui = get_plugin_extension::<clap_plugin_gui>(plugin, CLAP_EXT_GUI);
+        let timer_support =
+            get_plugin_extension::<clap_plugin_timer_support>(plugin, CLAP_EXT_TIMER_SUPPORT)
+                .map_or(0, |extension| extension as usize);
+        *host
+            .timer_support
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(timer_support);
 
         let (input_channels, output_channels) = if audio_ports.is_some() {
             (
@@ -1137,7 +1411,6 @@ impl ClapInstance {
                             "CLAP plugin does not support a floating GUI".into(),
                         ));
                     }
-                    // The API pointer belongs to the plugin and remains valid for the call.
                     let api = unsafe { CStr::from_ptr(api.as_ptr()) };
                     return self.create_and_show_gui(gui, create, api, true, None);
                 }
@@ -1270,7 +1543,10 @@ impl PluginInstance for ClapInstance {
                         "CLAP plugin failed to save state".into(),
                     ));
                 }
-                state.push((crate::state::CLAP_STATE.into(), crate::state::b64_encode(&bytes)));
+                state.push((
+                    crate::state::CLAP_STATE.into(),
+                    crate::state::b64_encode(&bytes),
+                ));
             }
         }
 
@@ -1425,6 +1701,7 @@ impl PluginInstance for ClapInstance {
 
 impl Drop for ClapInstance {
     fn drop(&mut self) {
+        unregister_live_instance(&self.host, self.plugin);
         self.close_gui();
         self.deactivate();
         if let Some(destroy) = unsafe { (*self.plugin).destroy } {

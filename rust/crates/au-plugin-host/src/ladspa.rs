@@ -320,11 +320,13 @@ fn plugin_meta(
 
     let unique_id = descriptor.UniqueID.to_string();
     let path = path.to_path_buf();
-    let id = crate::state::effect_id(PluginFormat::Ladspa, &path, &unique_id);
+    let plugin_name = c_string(descriptor.Name).unwrap_or_else(|| "Unknown LADSPA plugin".into());
+    let plugin_vendor = c_string(descriptor.Maker).unwrap_or_default();
+    let id = crate::state::effect_id(PluginFormat::Ladspa, &path, &unique_id, &plugin_vendor, &plugin_name);
     let plugin_descriptor = PluginDescriptor {
         id,
-        name: c_string(descriptor.Name).unwrap_or_else(|| "Unknown LADSPA plugin".into()),
-        vendor: c_string(descriptor.Maker).unwrap_or_default(),
+        name: plugin_name,
+        vendor: plugin_vendor,
         format: PluginFormat::Ladspa,
         path: Some(path),
         params,

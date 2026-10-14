@@ -341,6 +341,7 @@ dependencies = [
  "au-effects",
  "au-io",
  "au-plugin-api",
+ "au-plugin-host",
  "au-project",
  "au-runtime",
  "eframe",

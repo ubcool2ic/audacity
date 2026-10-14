@@ -8,13 +8,13 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
-use vst3::Steinberg::Vst::{BusDirections_::*, BusTypes_::*, MediaTypes_::*, ProcessModes_::*, SymbolicSampleSizes_::*, SpeakerArr::{kMono, kStereo}};
+use vst3::Steinberg::Vst::{
+    BusDirections_::*, BusTypes_::*, MediaTypes_::*, ProcessModes_::*,
+    SpeakerArr::{kMono, kStereo}, SymbolicSampleSizes_::*,
+};
 use vst3::Steinberg::IBStream_::IStreamSeekMode_::*;
 use vst3::{
-    Class, ComPtr, ComWrapper, Interface,
-    Steinberg::*,
-    Steinberg::Vst::*,
-    Steinberg::Linux::{IEventHandlerTrait, ITimerHandlerTrait},
+    Class, ComPtr, ComWrapper, Interface, Steinberg::*, Steinberg::Linux::*, Steinberg::Vst::*,
 };
 
 const AUDIO_MODULE_CLASS: &str = "Audio Module Class";
@@ -206,6 +206,7 @@ impl Vst3Module {
             // SAFETY: GetPluginFactory returns an owned COM reference.
             let factory = unsafe { ComPtr::<IPluginFactory>::from_raw(factory_ptr) }
                 .ok_or_else(|| load_error("VST3 returned an invalid plugin factory"))?;
+            set_factory_host_context(&factory);
             return Ok(Self {
                 factory: Some(factory),
                 library: Some(library),
@@ -252,6 +253,7 @@ impl Vst3Module {
             // SAFETY: GetPluginFactory returns an owned COM reference.
             let factory = unsafe { ComPtr::<IPluginFactory>::from_raw(factory_ptr) }
                 .ok_or_else(|| load_error("VST3 returned an invalid plugin factory"))?;
+            set_factory_host_context(&factory);
             Ok(Self {
                 factory: Some(factory),
                 library: Some(library),
@@ -360,7 +362,7 @@ pub fn scan_file(path: &Path) -> Result<Vec<PluginDescriptor>, PluginError> {
         let n_outputs = class_channel_count(factory, &info.cid, kOutput as i32);
         let params = class_parameters(factory, &info.cid);
         descriptors.push(PluginDescriptor {
-            id: crate::state::effect_id(PluginFormat::Vst3, path, &uid),
+            id: crate::state::effect_id(PluginFormat::Vst3, path, &uid, &vendor, &name),
             name,
             vendor: vendor.clone(),
             format: PluginFormat::Vst3,
@@ -394,7 +396,7 @@ fn class_channel_count(
         ComPtr::<IComponent>::from_raw(raw.cast())
             .expect("createInstance returned a non-null IComponent")
     };
-    if !result_ok(unsafe { component.initialize(std::ptr::null_mut()) }) {
+    if !initialize_component(&component) {
         return 0;
     }
     let mut bus: BusInfo = unsafe { std::mem::zeroed() };
@@ -427,7 +429,7 @@ fn class_parameters(factory: &ComPtr<IPluginFactory>, cid: &TUID) -> Vec<ParamIn
         ComPtr::<IComponent>::from_raw(raw.cast())
             .expect("createInstance returned a non-null IComponent")
     };
-    if !result_ok(unsafe { component.initialize(std::ptr::null_mut()) }) {
+    if !initialize_component(&component) {
         return Vec::new();
     }
     let mut controller: Option<ComPtr<IEditController>> = component.cast();
@@ -449,7 +451,8 @@ fn class_parameters(factory: &ComPtr<IPluginFactory>, cid: &TUID) -> Vec<ParamIn
                     ComPtr::<IEditController>::from_raw(controller_raw.cast())
                         .expect("createInstance returned a non-null IEditController")
                 };
-                if result_ok(unsafe { created.initialize(std::ptr::null_mut()) }) {
+                let host_ptr = host_application_ptr();
+                if result_ok(unsafe { created.initialize(host_ptr.as_ptr().cast()) }) {
                     controller = Some(created);
                     separate = true;
                 }
@@ -593,13 +596,8 @@ impl PluginHost for Vst3Host {
             ComPtr::<IComponent>::from_raw(raw.cast())
                 .expect("createInstance returned a non-null IComponent")
         };
-        let host_app = ComWrapper::new(HostApp);
-        let host_ptr = host_app
-            .to_com_ptr::<IHostApplication>()
-            .expect("HostApp exposes IHostApplication");
-        if !result_ok(unsafe {
-            component.initialize(host_ptr.as_ptr().cast::<FUnknown>())
-        }) {
+        let host_ptr = host_application_ptr();
+        if !result_ok(unsafe { component.initialize(host_ptr.as_ptr().cast()) }) {
             return Err(load_error("VST3 component initialization failed"));
         }
 
@@ -637,7 +635,7 @@ impl PluginHost for Vst3Host {
                         .expect("createInstance returned a non-null IEditController")
                 };
                 if !result_ok(unsafe {
-                    controller.initialize(host_ptr.as_ptr().cast::<FUnknown>())
+                    controller.initialize(host_ptr.as_ptr().cast())
                 }) {
                     let _ = unsafe { component.terminate() };
                     return Err(load_error("VST3 controller initialization failed"));
@@ -695,7 +693,6 @@ impl PluginHost for Vst3Host {
                 n_outputs,
             },
             module: Some(module),
-            host_app: Some(host_app),
             component: Some(component),
             processor: Some(processor),
             controller: Some(controller),
@@ -757,13 +754,26 @@ fn controller_parameters(controller: &ComPtr<IEditController>) -> Vec<ParamInfo>
         .collect()
 }
 
-struct HostApp;
+#[cfg(target_os = "linux")]
+struct LoopState {
+    fds: Vec<(usize, Linux::FileDescriptor)>,
+    timers: Vec<(usize, Linux::TimerInterval, std::time::Instant)>,
+}
 
-impl Class for HostApp {
+struct HostContext {
+    #[cfg(target_os = "linux")]
+    state: Mutex<LoopState>,
+}
+
+impl Class for HostContext {
+    #[cfg(target_os = "linux")]
+    type Interfaces = (IHostApplication, Linux::IRunLoop);
+
+    #[cfg(not(target_os = "linux"))]
     type Interfaces = (IHostApplication,);
 }
 
-impl IHostApplicationTrait for HostApp {
+impl IHostApplicationTrait for HostContext {
     unsafe fn getName(&self, name: *mut String128) -> tresult {
         if name.is_null() {
             return kInvalidArgument;
@@ -789,6 +799,70 @@ impl IHostApplicationTrait for HostApp {
         // SAFETY: The caller supplies a writable object pointer.
         unsafe { *obj = std::ptr::null_mut() };
         kResultFalse
+    }
+}
+
+fn host_context() -> &'static ComWrapper<HostContext> {
+    static HOST_CONTEXT: OnceLock<ComWrapper<HostContext>> = OnceLock::new();
+    HOST_CONTEXT.get_or_init(|| {
+        #[cfg(target_os = "linux")]
+        {
+            ComWrapper::new(HostContext {
+                state: Mutex::new(LoopState {
+                    fds: Vec::new(),
+                    timers: Vec::new(),
+                }),
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            ComWrapper::new(HostContext {})
+        }
+    })
+}
+
+fn host_application_ptr() -> ComPtr<IHostApplication> {
+    host_context()
+        .to_com_ptr::<IHostApplication>()
+        .expect("HostContext exposes IHostApplication")
+}
+
+fn initialize_component(component: &ComPtr<IComponent>) -> bool {
+    let host_ptr = host_application_ptr();
+    result_ok(unsafe { component.initialize(host_ptr.as_ptr().cast()) })
+}
+
+fn set_factory_host_context(factory: &ComPtr<IPluginFactory>) {
+    if let Some(factory3) = factory.cast::<IPluginFactory3>() {
+        let host_ptr = host_application_ptr();
+        let _ = unsafe { factory3.setHostContext(host_ptr.as_ptr().cast::<FUnknown>()) };
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Linux::IRunLoopTrait for HostContext {
+    unsafe fn registerEventHandler(
+        &self,
+        handler: *mut Linux::IEventHandler,
+        fd: Linux::FileDescriptor,
+    ) -> tresult {
+        register_event_handler(handler, fd)
+    }
+
+    unsafe fn unregisterEventHandler(&self, handler: *mut Linux::IEventHandler) -> tresult {
+        unregister_event_handler(handler)
+    }
+
+    unsafe fn registerTimer(
+        &self,
+        handler: *mut Linux::ITimerHandler,
+        milliseconds: Linux::TimerInterval,
+    ) -> tresult {
+        register_timer(handler, milliseconds)
+    }
+
+    unsafe fn unregisterTimer(&self, handler: *mut Linux::ITimerHandler) -> tresult {
+        unregister_timer(handler)
     }
 }
 
@@ -1099,26 +1173,120 @@ fn make_param_queues(events: &[(ParamID, ParamValue)]) -> Vec<ComWrapper<ParamQu
 }
 
 #[cfg(target_os = "linux")]
-struct LoopState {
-    fds: Vec<(usize, Linux::FileDescriptor)>,
-    timers: Vec<(usize, Linux::TimerInterval, std::time::Instant)>,
+fn register_event_handler(handler: *mut Linux::IEventHandler, fd: Linux::FileDescriptor) -> tresult {
+    if handler.is_null() {
+        return kInvalidArgument;
+    }
+    let address = handler as usize;
+    let mut state = host_context()
+        .state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    state.fds.retain(|(registered, _)| *registered != address);
+    state.fds.push((address, fd));
+    kResultOk
 }
 
 #[cfg(target_os = "linux")]
-struct PlugFrame {
-    state: Mutex<LoopState>,
+fn unregister_event_handler(handler: *mut Linux::IEventHandler) -> tresult {
+    let address = handler as usize;
+    host_context()
+        .state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .fds
+        .retain(|(registered, _)| *registered != address);
+    kResultOk
 }
 
 #[cfg(target_os = "linux")]
-impl Class for PlugFrame {
-    type Interfaces = (IPlugFrame, Linux::IRunLoop);
+fn register_timer(
+    handler: *mut Linux::ITimerHandler,
+    milliseconds: Linux::TimerInterval,
+) -> tresult {
+    if handler.is_null() {
+        return kInvalidArgument;
+    }
+    let address = handler as usize;
+    let interval = std::time::Duration::from_millis(milliseconds.max(1) as u64);
+    let mut state = host_context()
+        .state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    state
+        .timers
+        .retain(|(registered, _, _)| *registered != address);
+    state.timers.push((
+        address,
+        milliseconds.max(1),
+        std::time::Instant::now() + interval,
+    ));
+    kResultOk
+}
+
+#[cfg(target_os = "linux")]
+fn unregister_timer(handler: *mut Linux::ITimerHandler) -> tresult {
+    let address = handler as usize;
+    host_context()
+        .state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .timers
+        .retain(|(registered, _, _)| *registered != address);
+    kResultOk
+}
+
+#[cfg(target_os = "linux")]
+pub fn run_loop_idle() {
+    let now = std::time::Instant::now();
+    let (fds, due_timers) = {
+        let mut state = host_context()
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let fds = state.fds.clone();
+        let mut due = Vec::new();
+        for timer in &mut state.timers {
+            if timer.2 <= now {
+                due.push(timer.0);
+                timer.2 = now + std::time::Duration::from_millis(timer.1.max(1) as u64);
+            }
+        }
+        (fds, due)
+    };
+
+    for (address, fd) in fds {
+        // SAFETY: The plugin's registered handler remains owned by the editor until it unregisters.
+        let Some(handler) = (unsafe {
+            ComPtr::<Linux::IEventHandler>::from_raw(address as *mut Linux::IEventHandler)
+        }) else {
+            continue;
+        };
+        unsafe { handler.onFDIsSet(fd) };
+        std::mem::forget(handler);
+    }
+    for address in due_timers {
+        // SAFETY: The plugin's registered handler remains owned by the editor until it unregisters.
+        let Some(handler) = (unsafe {
+            ComPtr::<Linux::ITimerHandler>::from_raw(address as *mut Linux::ITimerHandler)
+        }) else {
+            continue;
+        };
+        unsafe { handler.onTimer() };
+        std::mem::forget(handler);
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
+pub fn run_loop_idle() {}
+
 struct PlugFrame;
 
-#[cfg(not(target_os = "linux"))]
 impl Class for PlugFrame {
+    #[cfg(target_os = "linux")]
+    type Interfaces = (IPlugFrame, Linux::IRunLoop);
+
+    #[cfg(not(target_os = "linux"))]
     type Interfaces = (IPlugFrame,);
 }
 
@@ -1135,27 +1303,11 @@ impl Linux::IRunLoopTrait for PlugFrame {
         handler: *mut Linux::IEventHandler,
         fd: Linux::FileDescriptor,
     ) -> tresult {
-        if handler.is_null() {
-            return kInvalidArgument;
-        }
-        let address = handler as usize;
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.fds.retain(|(registered, _)| *registered != address);
-        state.fds.push((address, fd));
-        kResultOk
+        register_event_handler(handler, fd)
     }
 
     unsafe fn unregisterEventHandler(&self, handler: *mut Linux::IEventHandler) -> tresult {
-        let address = handler as usize;
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .fds
-            .retain(|(registered, _)| *registered != address);
-        kResultOk
+        unregister_event_handler(handler)
     }
 
     unsafe fn registerTimer(
@@ -1163,46 +1315,19 @@ impl Linux::IRunLoopTrait for PlugFrame {
         handler: *mut Linux::ITimerHandler,
         milliseconds: Linux::TimerInterval,
     ) -> tresult {
-        if handler.is_null() {
-            return kInvalidArgument;
-        }
-        let address = handler as usize;
-        let interval = std::time::Duration::from_millis(milliseconds.max(1) as u64);
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state
-            .timers
-            .retain(|(registered, _, _)| *registered != address);
-        state.timers.push((
-            address,
-            milliseconds.max(1),
-            std::time::Instant::now() + interval,
-        ));
-        kResultOk
+        register_timer(handler, milliseconds)
     }
 
     unsafe fn unregisterTimer(&self, handler: *mut Linux::ITimerHandler) -> tresult {
-        let address = handler as usize;
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .timers
-            .retain(|(registered, _, _)| *registered != address);
-        kResultOk
+        unregister_timer(handler)
     }
 }
 
-#[cfg(target_os = "linux")]
-type EditorFrame = ComWrapper<PlugFrame>;
-#[cfg(not(target_os = "linux"))]
 type EditorFrame = ComWrapper<PlugFrame>;
 
 pub struct Vst3Instance {
     descriptor: PluginDescriptor,
     module: Option<Arc<Vst3Module>>,
-    host_app: Option<ComWrapper<HostApp>>,
     component: Option<ComPtr<IComponent>>,
     processor: Option<ComPtr<IAudioProcessor>>,
     controller: Option<ComPtr<IEditController>>,
@@ -1454,52 +1579,9 @@ impl Vst3Instance {
         }
     }
 
-    #[cfg(target_os = "linux")]
     pub fn idle_editor(&mut self) {
-        let Some(frame) = self.frame.as_ref() else {
-            return;
-        };
-        let now = std::time::Instant::now();
-        let (fds, due_timers) = {
-            let mut state = frame
-                .state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let fds = state.fds.clone();
-            let mut due = Vec::new();
-            for timer in &mut state.timers {
-                if timer.2 <= now {
-                    due.push(timer.0);
-                    timer.2 = now + std::time::Duration::from_millis(timer.1.max(1) as u64);
-                }
-            }
-            (fds, due)
-        };
-
-        for (address, fd) in fds {
-            // SAFETY: The plugin's registered handler remains owned by the editor until it unregisters.
-            let Some(handler) = (unsafe {
-                ComPtr::<Linux::IEventHandler>::from_raw(address as *mut Linux::IEventHandler)
-            }) else {
-                continue;
-            };
-            unsafe { handler.onFDIsSet(fd) };
-            std::mem::forget(handler);
-        }
-        for address in due_timers {
-            // SAFETY: The plugin's registered handler remains owned by the editor until it unregisters.
-            let Some(handler) = (unsafe {
-                ComPtr::<Linux::ITimerHandler>::from_raw(address as *mut Linux::ITimerHandler)
-            }) else {
-                continue;
-            };
-            unsafe { handler.onTimer() };
-            std::mem::forget(handler);
-        }
+        run_loop_idle();
     }
-
-    #[cfg(not(target_os = "linux"))]
-    pub fn idle_editor(&mut self) {}
 }
 
 impl PluginInstance for Vst3Instance {
@@ -1625,13 +1707,7 @@ impl PluginInstance for Vst3Instance {
             return Err(load_error("VST3 editor does not support this window system"));
         }
 
-        let frame = ComWrapper::new(PlugFrame {
-            #[cfg(target_os = "linux")]
-            state: Mutex::new(LoopState {
-                fds: Vec::new(),
-                timers: Vec::new(),
-            }),
-        });
+        let frame = ComWrapper::new(PlugFrame);
         let frame_ptr = frame
             .to_com_ptr::<IPlugFrame>()
             .expect("PlugFrame exposes IPlugFrame");
@@ -1816,7 +1892,6 @@ impl Drop for Vst3Instance {
         self.controller.take();
         self.component.take();
         self.handler.take();
-        self.host_app.take();
         self.parameter_changes.take();
         self.module.take();
     }

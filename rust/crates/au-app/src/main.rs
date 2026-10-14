@@ -12,6 +12,7 @@ use au_effects::{Amplify, Effect, FadeIn, FadeOut, Normalize, Reverse};
 use std::path::Path;
 
 pub mod fx_bridge;
+pub mod plugin_bridge;
 pub mod transport;
 #[cfg(feature = "gui")]
 mod gui;

@@ -325,8 +325,8 @@ See `docs/PLUGIN_HOSTING.md`. New crate `crates/au-plugin-host` (code generated 
 - [x] Out-of-process sandboxed scanning (`au-plugin-scan`, `au-runtime` jobs + panic isolation); crashing plugin reported, app survives
 - [x] Real plugins verified: Surge XT Effects (CLAP), Steinberg AGain + ADelay (VST3, SDK 3.8.1)
 - [x] VST3 SDK licence verified (MIT since 3.8, GPL-compatible) — documented
-- [~] Plugin editors: API implemented (X11 embed for both, CLAP floating, VST3 IRunLoop); not yet working under headless Xvfb (AGain segfaults in `attached`, JUCE BadAtom) — needs a real desktop / WM and an out-of-process editor host
-- [ ] au-app wiring (effect menu, realtime stacks using `registry()`), LV2/LADSPA (other worker), Nyquist (Stage 9)
+- [x] Plugin editors: out-of-process host `au-plugin-editor` (crash-isolated; AGain + Surge XT verified under Xvfb+openbox, crash reported as signal 11 and app unaffected). Separate top-level window, not embedded in egui yet
+- [x] au-app wiring (Stage 8). [ ] LV2/LADSPA (other worker), Nyquist (Stage 9)
 
 ## Noise Reduction and room noise profile (2026-10-14)
 - **Noise Reduction** (`fx/fix_noisereduction.rs`) is a literal port of `NoiseReductionBase` 3.7.3, covering SpectrumTransformer, the RealFFTf port, statistics, Classify, gain smoothing and Reduce/Isolate/Residue.
@@ -342,3 +342,9 @@ See `docs/PLUGIN_HOSTING.md`. New crate `crates/au-plugin-host` (code generated 
     - live and offline outputs are identical (offline uses the same streaming path);
     - profile save/load round-trips for the user directory, the project table and bytes;
     - tone+noise SNR improves by more than 6 dB at 24 dB reduction. This is Audacity-exact behaviour: +3.6/+7.2/+13.8 dB at 12/24/48 dB.
+## Stage 8 status — plugins in the app (2026-10-14)
+- [x] PluginRegistry wired into au-app (`plugin_bridge.rs`): background scan at startup, plugins in the Effect menu, addable to realtime stacks via `EffectStack.slots` (public API) and saved/restored in `RealtimeEffectList`.
+- [x] Out-of-process plugin editor ("Open editor" in the effect dialog), param/state sync back to the dialog.
+- [x] Audacity 3.7.3 (official AppImage) reads our VST3 state from .aup3: AGain gain 0.5 → exported peak 0.4001 (input 0.8). See `tools/aup3-verify/`.
+- [ ] au-effects API changes requested (dynamic ids, push_effect/factory hook) — see PLUGIN_HOSTING.md.
+- [ ] Embed editor inside the egui window; avoid Mutex on RT path; CLAP fd polling uses poll() instead of per-tick callbacks.

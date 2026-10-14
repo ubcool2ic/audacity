@@ -162,49 +162,119 @@ pub enum RtTarget {
 
 /// Panel listing a realtime effect stack (add / bypass / reorder / remove / edit).
 /// Returns true when the list changed (caller restarts playback / marks dirty).
-pub fn realtime_panel(ui: &mut egui::Ui, list: &mut RealtimeEffectList, editing: &mut Option<usize>) -> bool {
+
+pub fn realtime_panel(
+    ui: &mut egui::Ui,
+    list: &mut RealtimeEffectList,
+    editing: &mut Option<usize>,
+    plugins: &crate::plugin_bridge::PluginCatalog,
+) -> bool {
     let mut changed = false;
-    if ui.checkbox(&mut list.active, "Stack enabled").changed() { changed = true; }
+    if ui.checkbox(&mut list.active, "Stack enabled").changed() {
+        changed = true;
+    }
+
     let mut action: Option<(usize, i32)> = None; // (index, -1 up / +1 down / 0 remove)
     for (i, e) in list.effects.iter_mut().enumerate() {
         ui.horizontal(|ui| {
-            if ui.checkbox(&mut e.active, "").on_hover_text("Bypass").changed() { changed = true; }
-            let name = stack::symbol_from_plugin_id(&e.id).unwrap_or_else(|| e.id.clone());
-            if ui.selectable_label(*editing == Some(i), name).clicked() { *editing = if *editing == Some(i) { None } else { Some(i) }; }
-            if ui.small_button("▲").clicked() { action = Some((i, -1)); }
-            if ui.small_button("▼").clicked() { action = Some((i, 1)); }
-            if ui.small_button("✖").clicked() { action = Some((i, 0)); }
+            if ui.checkbox(&mut e.active, "").on_hover_text("Bypass").changed() {
+                changed = true;
+            }
+            let name = if crate::plugin_bridge::is_plugin_id(&e.id) {
+                au_plugin_host::state::effect_name(&e.id).unwrap_or_else(|| e.id.clone())
+            } else {
+                stack::symbol_from_plugin_id(&e.id).unwrap_or_else(|| e.id.clone())
+            };
+            if ui.selectable_label(*editing == Some(i), name).clicked() {
+                *editing = if *editing == Some(i) { None } else { Some(i) };
+            }
+            if ui.small_button("▲").clicked() {
+                action = Some((i, -1));
+            }
+            if ui.small_button("▼").clicked() {
+                action = Some((i, 1));
+            }
+            if ui.small_button("✖").clicked() {
+                action = Some((i, 0));
+            }
         });
     }
+
     if let Some((i, d)) = action {
         changed = true;
         match d {
-            0 => { list.effects.remove(i); *editing = None; }
+            0 => {
+                list.effects.remove(i);
+                *editing = None;
+            }
             -1 if i > 0 => list.effects.swap(i, i - 1),
             1 if i + 1 < list.effects.len() => list.effects.swap(i, i + 1),
             _ => {}
         }
     }
+
     ui.menu_button("Add effect…", |ui| {
         for e in registry::all().into_iter().filter(|e| e.supports_realtime()) {
             if ui.button(e.name()).clicked() {
                 let mut st = au_effects::stack::EffectStack::new();
                 st.push(e.id());
-                list.effects.extend(crate::fx_bridge::list_from_stack(&st).effects);
+                list.effects
+                    .extend(crate::fx_bridge::list_from_stack(&st).effects);
                 changed = true;
                 ui.close_menu();
             }
         }
+
+        ui.separator();
+        ui.label("Plugins");
+        for d in &plugins.plugins {
+            let format_debug = format!("{:?}", d.format).to_ascii_lowercase();
+            let format = if format_debug.contains("vst3") {
+                "VST3"
+            } else {
+                "CLAP"
+            };
+            if ui.button(format!("{} ({format})", d.name)).clicked() {
+                if let Ok(eff) = plugins.instantiate(&d.id) {
+                    if let Some(saved) =
+                        crate::plugin_bridge::saved_from_effect(&eff, true)
+                    {
+                        list.effects.push(saved);
+                        changed = true;
+                    }
+                }
+                ui.close_menu();
+            }
+        }
     });
+
     if let Some(i) = *editing {
         if let Some(saved) = list.effects.get_mut(i) {
-            let sym = stack::symbol_from_plugin_id(&saved.id).unwrap_or_default();
-            if let Some(mut e) = registry::create(&sym) {
-                stack::params_from_strings(e.as_mut(), &saved.params);
-                ui.separator();
-                if param_grid(ui, e.as_mut()) { saved.params = stack::params_to_strings(e.as_ref()); changed = true; }
+            ui.separator();
+            if crate::plugin_bridge::is_plugin_id(&saved.id) {
+                if let Some(mut slot) = crate::plugin_bridge::slot_from_saved(saved) {
+                    if param_grid(ui, slot.effect.as_mut()) {
+                        if let Some(updated) = crate::plugin_bridge::saved_from_effect(
+                            slot.effect.as_ref(),
+                            slot.active,
+                        ) {
+                            saved.params = updated.params;
+                            changed = true;
+                        }
+                    }
+                }
+            } else {
+                let sym = stack::symbol_from_plugin_id(&saved.id).unwrap_or_default();
+                if let Some(mut e) = registry::create(&sym) {
+                    stack::params_from_strings(e.as_mut(), &saved.params);
+                    if param_grid(ui, e.as_mut()) {
+                        saved.params = stack::params_to_strings(e.as_ref());
+                        changed = true;
+                    }
+                }
             }
         }
     }
+
     changed
 }

@@ -10,18 +10,61 @@ use au_effects::stack::{EffectStack, SlotDesc};
 use au_io::engine::{render_offline_with_effects, MixTrack};
 use au_project::aup3::{Aup3Extras, RealtimeEffect, RealtimeEffectList};
 
-/// Converts a saved list to a live stack. Unknown (non built-in) effects are skipped.
+
+/// Converts a saved list to a live stack. Unknown effects and plugins that fail
+/// to load are skipped, while the remaining slots retain their original order.
 pub fn stack_from_list(l: &RealtimeEffectList) -> EffectStack {
-    let slots: Vec<SlotDesc> = l.effects.iter().map(|e| SlotDesc { plugin_id: e.id.clone(), active: e.active, params: e.params.clone() }).collect();
-    EffectStack::from_desc(l.active, &slots).0
+    let builtins: Vec<SlotDesc> = l
+        .effects
+        .iter()
+        .filter(|e| !crate::plugin_bridge::is_plugin_id(&e.id))
+        .map(|e| SlotDesc {
+            plugin_id: e.id.clone(),
+            active: e.active,
+            params: e.params.clone(),
+        })
+        .collect();
+
+    let mut stack = EffectStack::from_desc(l.active, &builtins).0;
+    let mut builtin_slots = std::mem::take(&mut stack.slots).into_iter();
+    let mut slots = Vec::with_capacity(l.effects.len());
+
+    for e in &l.effects {
+        if crate::plugin_bridge::is_plugin_id(&e.id) {
+            if let Some(slot) = crate::plugin_bridge::slot_from_saved(e) {
+                slots.push(slot);
+            }
+        } else if let Some(slot) = builtin_slots.next() {
+            slots.push(slot);
+        }
+    }
+
+    stack.slots = slots;
+    stack
 }
 
 /// Converts a live stack to the saved form.
 pub fn list_from_stack(s: &EffectStack) -> RealtimeEffectList {
-    let (active, slots) = s.describe();
-    RealtimeEffectList { active, effects: slots.into_iter().map(|d| RealtimeEffect { id: d.plugin_id, active: d.active, params: d.params }).collect() }
-}
+    let (active, described) = s.describe();
+    let effects = s
+        .slots
+        .iter()
+        .zip(described)
+        .filter_map(|(slot, desc)| {
+            if crate::plugin_bridge::is_plugin_id(slot.effect.id()) {
+                crate::plugin_bridge::saved_from_effect(slot.effect.as_ref(), slot.active)
+            } else {
+                Some(RealtimeEffect {
+                    id: desc.plugin_id,
+                    active: desc.active,
+                    params: desc.params,
+                })
+            }
+        })
+        .collect();
 
+    RealtimeEffectList { active, effects }
+}
 /// Builds engine stacks for every track plus master from `.aup3` extras.
 pub fn stacks_for(extras: &Aup3Extras, n_tracks: usize) -> (Vec<Option<EffectStack>>, Option<EffectStack>) {
     let tracks = (0..n_tracks).map(|i| extras.track_effects.get(i).filter(|l| !l.effects.is_empty()).map(stack_from_list)).collect();

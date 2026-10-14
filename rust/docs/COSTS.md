@@ -173,3 +173,6 @@ Luna 4 calls, $0.0451. Sol: none. **Total: $0.0451**
 ## BizyBot — Stage 7 CLAP/VST3 hosting (2026-10-14)
 `openai/gpt-6-luna` only (no Sol escalation needed): 11 calls — lib+state 1, clap.rs 2 (first was a skeleton, retried at high effort) + 1 compile-fix pass, vst3.rs 2 + 1 compile-fix pass, sandbox.rs 1, tests 1, two small logic/test fixes. Hand edits: import paths, Option/Result mismatches, `Symbol<*const clap_plugin_entry>`, test fixture paths/segfault line.
 **Spend: $0.0588** (per-call `usage.cost`). Earlier Performance & reliability stage: $0.00 (hand-written before the Luna requirement).
+
+## BizyBot — Stage 8 plugins in app / editor host / Audacity check (2026-10-14)
+openai/gpt-6-luna only (no Sol escalation): vst3 run loop, clap timer/fd, state ids, editor host, editor tests, aup3 example (2 tries), plugin_bridge, GUI integration. Total ≈ $0.043.

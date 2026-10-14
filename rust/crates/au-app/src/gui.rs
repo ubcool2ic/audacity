@@ -169,6 +169,10 @@ struct AudacityApp {
     selection_end_text: String,
     selection_length_text: String,
     fx_dialog: Option<crate::fx_ui::EffectDialog>,
+    /// Catalog of discovered CLAP and VST3 plugins.
+    plugins: crate::plugin_bridge::PluginCatalog,
+    /// Crash-isolated editor process for the currently edited plugin, if any.
+    plugin_editor: Option<(String, au_plugin_host::editor::EditorProcess)>,
     spectrum_win: Option<crate::analyze_ui::SpectrumWindow>,
     contrast_win: Option<crate::analyze_ui::ContrastWindow>,
     rt_window: bool,
@@ -243,6 +247,12 @@ impl Default for AudacityApp {
             selection_end_text: "00:00:00.000".to_owned(),
             selection_length_text: "00:00:00.000".to_owned(),
             fx_dialog: None,
+            plugins: {
+                let mut catalog = crate::plugin_bridge::PluginCatalog::new();
+                catalog.start_scan();
+                catalog
+            },
+            plugin_editor: None,
             rt_window: false,
             rt_target: crate::fx_ui::RtTarget::Master,
             spectrum_win: None,
@@ -977,86 +987,289 @@ impl AudacityApp {
         }
     }
 
+
     fn effect_windows(&mut self, ctx: &egui::Context) {
+        if self.plugins.poll() {
+            self.status = format!("{} plugins found", self.plugins.plugins.len());
+        }
+
         self.analyzer_windows(ctx);
-        let names: Vec<String> = self.editor.state().tracks.iter().map(|t| t.name.clone()).collect();
+        let names: Vec<String> = self
+            .editor
+            .state()
+            .tracks
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+
         if let Some(mut dlg) = self.fx_dialog.take() {
             let action = dlg.show(ctx, &names);
             let sel = self.selected_track.map(|i| self.selection_for_track(i));
-            let aux = dlg.aux_track.and_then(|i| self.editor.state().tracks.get(i)).map(|t| t.render());
+            let aux = dlg
+                .aux_track
+                .and_then(|i| self.editor.state().tracks.get(i))
+                .map(|t| t.render());
             let mut keep = true;
+
             match action {
                 crate::fx_ui::DialogAction::None => {}
                 crate::fx_ui::DialogAction::Close => keep = false,
-                _ if sel.is_none() => dlg.report = "Select a track (and a time range) first".into(),
+                _ if sel.is_none() => {
+                    dlg.report = "Select a track (and a time range) first".into()
+                }
                 crate::fx_ui::DialogAction::GetProfile => {
                     let sel = sel.unwrap().normalized();
                     let t = &self.editor.state().tracks[sel.track];
-                    match t.clips.render_range(sel.start, sel.end).map_err(|e| e.to_string()).and_then(|b| dlg.effect.learn_profile(&b).map_err(|e| e.to_string())) {
-                        Ok(()) => { dlg.has_profile = true; dlg.report = "Noise profile captured. Now select the audio to clean and press Apply.".into(); }
+                    match t
+                        .clips
+                        .render_range(sel.start, sel.end)
+                        .map_err(|e| e.to_string())
+                        .and_then(|b| dlg.effect.learn_profile(&b).map_err(|e| e.to_string()))
+                    {
+                        Ok(()) => {
+                            dlg.has_profile = true;
+                            dlg.report =
+                                "Noise profile captured. Now select the audio to clean and press Apply."
+                                    .into();
+                        }
                         Err(e) => dlg.report = e,
                     }
                 }
                 crate::fx_ui::DialogAction::Preview => {
-                    match crate::fx_bridge::preview(self.editor.state(), sel.unwrap(), dlg.effect.as_mut(), 6.0) {
+                    match crate::fx_bridge::preview(
+                        self.editor.state(),
+                        sel.unwrap(),
+                        dlg.effect.as_mut(),
+                        6.0,
+                    ) {
                         Ok(buf) => {
                             self.player = None;
                             let rate = buf.sample_rate;
-                            let mt = au_io::engine::MixTrack { audio: std::sync::Arc::new(buf), offset: 0, params: Default::default() };
-                            match Player::start(vec![mt], rate, self.master_gain, 0, 1.0, None) {
-                                Ok(p) => { self.player = Some(p); self.status = "Previewing".into(); }
-                                Err(e) => dlg.report = format!("Preview playback failed: {e:?}"),
+                            let mt = au_io::engine::MixTrack {
+                                audio: std::sync::Arc::new(buf),
+                                offset: 0,
+                                params: Default::default(),
+                            };
+                            match Player::start(
+                                vec![mt],
+                                rate,
+                                self.master_gain,
+                                0,
+                                1.0,
+                                None,
+                            ) {
+                                Ok(p) => {
+                                    self.player = Some(p);
+                                    self.status = "Previewing".into();
+                                }
+                                Err(e) => {
+                                    dlg.report = format!("Preview playback failed: {e:?}")
+                                }
                             }
                         }
                         Err(e) => dlg.report = e,
                     }
                 }
                 crate::fx_ui::DialogAction::Apply => {
-                    match crate::fx_bridge::apply_builtin(&mut self.editor, sel.unwrap(), dlg.effect.as_mut(), aux.as_ref()) {
+                    match crate::fx_bridge::apply_builtin(
+                        &mut self.editor,
+                        sel.unwrap(),
+                        dlg.effect.as_mut(),
+                        aux.as_ref(),
+                    ) {
                         Ok(out) => {
                             dlg.report = out.report;
-                            if !out.labels.is_empty() { dlg.report.push_str(&format!("\n{} labels added", out.labels.len())); }
+                            if !out.labels.is_empty() {
+                                dlg.report
+                                    .push_str(&format!("\n{} labels added", out.labels.len()));
+                            }
                             self.status = format!("Applied {}", dlg.effect.name());
-                            if dlg.effect.kind() != EffectKind::Analyze { keep = false; }
+                            if dlg.effect.kind() != EffectKind::Analyze {
+                                keep = false;
+                            }
                         }
                         Err(e) => dlg.report = e,
                     }
                 }
             }
-            if keep { self.fx_dialog = Some(dlg); }
+
+            if keep && crate::plugin_bridge::is_plugin_id(dlg.effect.id()) {
+                let id = dlg.effect.id().to_string();
+
+                if self
+                    .plugin_editor
+                    .as_ref()
+                    .is_some_and(|(editor_id, _)| editor_id != &id)
+                {
+                    if let Some((_, editor)) = self.plugin_editor.take() {
+                        editor.close();
+                    }
+                }
+
+                let editor_open = self
+                    .plugin_editor
+                    .as_ref()
+                    .is_some_and(|(editor_id, _)| editor_id == &id);
+                let mut open_editor = false;
+                let mut close_editor = false;
+
+                egui::Window::new("Plugin editor").show(ctx, |ui| {
+                    if editor_open {
+                        if ui.button("Close editor").clicked() {
+                            close_editor = true;
+                        }
+                        ui.label("Editor process active");
+                    } else {
+                        if ui.button("Open editor").clicked() {
+                            open_editor = true;
+                        }
+                        ui.label("Editor is not running");
+                    }
+                });
+
+                if close_editor {
+                    if let Some((_, editor)) = self.plugin_editor.take() {
+                        editor.close();
+                    }
+                } else if open_editor {
+                    if let Some(desc) = self.plugins.find(&id).cloned() {
+                        let state: Vec<(String, String)> = dlg
+                            .effect
+                            .text_keys()
+                            .into_iter()
+                            .filter_map(|key| {
+                                dlg.effect
+                                    .get_text(&key)
+                                    .map(|value| (key.to_string(), value))
+                            })
+                            .collect();
+
+                        match au_plugin_host::editor::EditorProcess::spawn(&desc, &state) {
+                            Ok(editor) => self.plugin_editor = Some((id.clone(), editor)),
+                            Err(e) => self.status = e.to_string(),
+                        }
+                    } else {
+                        self.status = format!("Plugin not found: {id}");
+                    }
+                }
+
+                let mut drop_editor = false;
+                if let Some((editor_id, editor)) = self.plugin_editor.as_mut() {
+                    if editor_id == &id {
+                        for event in editor.poll() {
+                            match event {
+                                au_plugin_host::editor::EditorEvent::Ready { .. } => {}
+                                au_plugin_host::editor::EditorEvent::Param { id, value } => {
+                                    dlg.effect.set(&format!("p{id}"), value as f64);
+                                }
+                                au_plugin_host::editor::EditorEvent::State(pairs) => {
+                                    for (key, value) in pairs {
+                                        dlg.effect.set_text(&key, &value);
+                                    }
+                                }
+                                au_plugin_host::editor::EditorEvent::Error(error) => {
+                                    self.status = format!("Plugin editor: {error}");
+                                }
+                                au_plugin_host::editor::EditorEvent::Closed => {
+                                    drop_editor = true;
+                                }
+                                au_plugin_host::editor::EditorEvent::Crashed { status } => {
+                                    drop_editor = true;
+                                    self.status = format!(
+                                        "Plugin editor crashed ({status}); Audacity-RS is unaffected"
+                                    );
+                                }
+                            }
+                        }
+
+                        if editor.is_running() {
+                            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                        } else {
+                            drop_editor = true;
+                        }
+                    }
+                }
+
+                if drop_editor {
+                    if let Some((_, editor)) = self.plugin_editor.take() {
+                        editor.close();
+                    }
+                }
+            } else if let Some((_, editor)) = self.plugin_editor.take() {
+                editor.close();
+            }
+
+            if keep {
+                self.fx_dialog = Some(dlg);
+            }
         }
+
+        if self.fx_dialog.is_none() {
+            if let Some((_, editor)) = self.plugin_editor.take() {
+                editor.close();
+            }
+        }
+
         if self.rt_window {
             let mut open = true;
             let n = self.editor.state().tracks.len();
             self.aup3_extras.track_effects.resize_with(n, Default::default);
             let mut changed = false;
-            egui::Window::new("Realtime Effects").open(&mut open).show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.rt_target, crate::fx_ui::RtTarget::Master, "Master");
-                    for (i, name) in names.iter().enumerate() {
-                        ui.selectable_value(&mut self.rt_target, crate::fx_ui::RtTarget::Track(i), name);
-                    }
+            let plugins = std::mem::take(&mut self.plugins);
+
+            egui::Window::new("Realtime Effects")
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(
+                            &mut self.rt_target,
+                            crate::fx_ui::RtTarget::Master,
+                            "Master",
+                        );
+                        for (i, name) in names.iter().enumerate() {
+                            ui.selectable_value(
+                                &mut self.rt_target,
+                                crate::fx_ui::RtTarget::Track(i),
+                                name,
+                            );
+                        }
+                    });
+                    ui.separator();
+
+                    let list = match self.rt_target {
+                        crate::fx_ui::RtTarget::Master => {
+                            &mut self.aup3_extras.master_effects
+                        }
+                        crate::fx_ui::RtTarget::Track(i) if i < n => {
+                            &mut self.aup3_extras.track_effects[i]
+                        }
+                        _ => &mut self.aup3_extras.master_effects,
+                    };
+                    changed = crate::fx_ui::realtime_panel(
+                        ui,
+                        list,
+                        &mut self.rt_editing,
+                        &plugins,
+                    );
+                    ui.label(
+                        "Effects here are non-destructive: heard on playback, rendered on export, saved in .aup3.",
+                    );
                 });
-                ui.separator();
-                let list = match self.rt_target {
-                    crate::fx_ui::RtTarget::Master => &mut self.aup3_extras.master_effects,
-                    crate::fx_ui::RtTarget::Track(i) if i < n => &mut self.aup3_extras.track_effects[i],
-                    _ => &mut self.aup3_extras.master_effects,
-                };
-                changed = crate::fx_ui::realtime_panel(ui, list, &mut self.rt_editing);
-                ui.label("Effects here are non-destructive: heard on playback, rendered on export, saved in .aup3.");
-            });
+
+            self.plugins = plugins;
+
             if changed && self.player.is_some() {
                 // Restart playback so the engine picks up the new stack.
                 let pos = self.player.as_ref().map(|p| p.position()).unwrap_or(0);
                 self.player = None;
                 self.play();
-                if let Some(p) = self.player.as_mut() { p.handle.send(EngineCommand::Seek(pos)); }
+                if let Some(p) = self.player.as_mut() {
+                    p.handle.send(EngineCommand::Seek(pos));
+                }
             }
             self.rt_window = open;
         }
     }
-
     #[allow(dead_code)]
     fn apply_effect(&mut self, description: &'static str, effect: impl FnOnce(&mut AudioBuffer)) {
         let Some(index) = self.selected_track else {
@@ -2830,9 +3043,16 @@ impl AudacityApp {
                         self.editor.set_sync_lock(sync_lock);
                     }
                 });
-                for (menu, kind) in [("Generate", EffectKind::Generate), ("Effect", EffectKind::Process), ("Analyze", EffectKind::Analyze)] {
+
+                for (menu, kind) in [
+                    ("Generate", EffectKind::Generate),
+                    ("Effect", EffectKind::Process),
+                    ("Analyze", EffectKind::Analyze),
+                ] {
                     ui.menu_button(menu, |ui| {
-                        if kind == EffectKind::Process && ui.button("Realtime Effects…").clicked() {
+                        if kind == EffectKind::Process
+                            && ui.button("Realtime Effects…").clicked()
+                        {
                             ui.close_menu();
                             self.rt_window = true;
                         }
@@ -2859,7 +3079,43 @@ impl AudacityApp {
                                     }
                                 }
                             }
-                        });
+
+                                if kind == EffectKind::Process {
+                                    ui.separator();
+                                    if self.plugins.is_scanning() {
+                                        ui.add_enabled(
+                                            false,
+                                            egui::Button::new("Scanning plugins…"),
+                                        );
+                                    } else {
+                                        for d in &self.plugins.plugins {
+                                            let id = d.id.clone();
+                                            if ui.button(format!("{}…", d.name)).clicked() {
+                                                ui.close_menu();
+                                                match self.plugins.instantiate(&id) {
+                                                    Ok(eff) => {
+                                                        self.fx_dialog = Some(
+                                                            crate::fx_ui::EffectDialog {
+                                                                effect: Box::new(eff),
+                                                                preset_name: String::new(),
+                                                                aux_track: None,
+                                                                report: String::new(),
+                                                                has_profile: false,
+                                                            },
+                                                        );
+                                                    }
+                                                    Err(e) => self.status = e,
+                                                }
+                                            }
+                                        }
+
+                                        if ui.button("Rescan plugins").clicked() {
+                                            self.plugins.start_scan();
+                                            ui.close_menu();
+                                        }
+                                    }
+                                }
+                            });
                     });
                 }
                 self.toolbar(ui);

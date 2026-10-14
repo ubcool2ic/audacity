@@ -13,6 +13,7 @@ au-effects = { path = "../au-effects" }
 au-plugin-api = { path = "../au-plugin-api" }
 au-project = { path = "../au-project" }
 au-runtime = { path = "../au-runtime" }
+au-plugin-host = { path = "../au-plugin-host" }
 eframe = { version = "0.29", optional = true, default-features = false, features = ["glow","default_fonts","x11","wayland"] }
 rfd = { version = "0.15", optional = true }
 

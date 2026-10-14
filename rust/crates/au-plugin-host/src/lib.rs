@@ -6,6 +6,7 @@ pub mod vst3;
 pub mod sandbox;
 pub mod ladspa;
 pub mod lv2;
+pub mod editor;
 
 pub use clap::ClapHost;
 pub use sandbox::{SandboxedHost, ScanOutcome};

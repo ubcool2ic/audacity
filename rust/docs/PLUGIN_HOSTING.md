@@ -33,3 +33,16 @@ Crate: `crates/au-plugin-host` — one module per format (`clap.rs`, `vst3.rs`; 
 ## Tests (`cargo test -p au-plugin-host`)
 Real plugins (each test skips if the file is absent; override with `AU_TEST_CLAP` / `AU_TEST_VST3`): Surge XT Effects `.clap` load + process + state round trip; Steinberg AGain gain 0.5 ⇒ output RMS ratio 0.5, latency 0, state round trip through a saved `.aup3` file; Steinberg ADelay process; sandboxed scan of both; a deliberately segfaulting CLAP built with `cc` is reported as `Crashed` while the test process survives.
 Build the test plugins: `git clone --recursive https://github.com/steinbergmedia/vst3sdk && cmake -S vst3sdk -B vst3sdk/build-gui -G Ninja -DCMAKE_BUILD_TYPE=Release -DSMTG_RUN_VST_VALIDATOR=OFF && ninja -C vst3sdk/build-gui again adelay`; Surge XT: `surge-xt-linux-1.3.4-pluginsonly.tar.gz` from github.com/surge-synthesizer/releases-xt.
+
+## Update (Stage 8)
+**Effect ids** now use Audacity's PluginID: `Effect_<VST3|CLAP>_<vendor>_<name>_<path>` (VST3 path = `<bundle>;<UID>`). Legacy `VST3:`/`CLAP:` ids still parse. Audacity only matches if the path equals what its pluginregistry.cfg holds.
+
+**Editors** run out of process (`au-plugin-editor`, `au_plugin_host::editor::EditorProcess`), line protocol on stdin/stdout (STATE/LOAD/GETSTATE/SETPARAM/CLOSE → READY/PARAM/STATE/STATEEND/ERROR/CLOSED). A crash in the editor is reported as `Crashed{status}` and the app continues. Fixes that made them work on X11: VST3 needs `IPluginFactory3::setHostContext` with a host context exposing `Linux::IRunLoop` (VSTGUI otherwise null-derefs its RunLoop); JUCE CLAP plugins (Surge) need `timer-support` and `posix-fd-support`. Screenshots: `img/again_editor.png`, `img/surge_editor.png`. Tests: `tests/editor_host.rs` (needs DISPLAY + WM).
+
+**Audacity 3.7.3 interop: PASS.** Debian's build lacks VST3; the official AppImage was used. `examples/aup3_vst3_state.rs` writes a project with AGain (keys ProcessorState/ControllerState/Parameters); `tools/aup3-verify/{run,probe}.sh` open it under Xvfb+openbox and export via mod-script-pipe. Gain 0.5 → peak 0.4001 / rms 0.2828; gain 1.0 → peak 0.8001 (0.8 sine input).
+
+### au-effects change request (for Chief of Staff)
+1. `BuiltinEffect::id()` returns `&'static str` → need owned/dynamic ids (`Cow<'static, str>` or `String`); au-app currently interns (leaks) plugin ids.
+2. `EffectStack::describe()` wraps `plugin_id(effect.id())` builtin-style → pass through ids that are already full PluginIDs (e.g. starting with `Effect_`), or add a `fn plugin_id(&self) -> String` to the trait with that default.
+3. `EffectStack::from_desc`/`push` only call `registry::create` → add `push_effect(Box<dyn BuiltinEffect>)` and a pluggable factory (`from_desc_with(&desc, &dyn Fn(&str)->Option<Box<dyn BuiltinEffect>>)`) so plugin entries restore without app-side slot rebuilding.
+4. `get_text(&self)` — plugin state save needs `&mut` (app wraps instance in a Mutex, also taken on the RT process path, uncontended).

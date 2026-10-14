@@ -145,21 +145,57 @@ pub fn get<'a>(state: &'a [(String, String)], key: &str) -> Option<&'a str> {
 }
 
 /// Builds an Audacity-compatible effect id.
-pub fn effect_id(format: PluginFormat, path: &Path, uid: &str) -> String {
-    let prefix = match format {
+pub fn effect_id(
+    format: PluginFormat,
+    path: &Path,
+    uid: &str,
+    vendor: &str,
+    name: &str,
+) -> String {
+    let family = match format {
         PluginFormat::Vst3 => "VST3",
         PluginFormat::Clap => "CLAP",
-        _ => return format!("{format:?}:{};{uid}", path.display()),
+        PluginFormat::Lv2 => "LV2",
+        PluginFormat::Ladspa => "LADSPA",
+        PluginFormat::Nyquist => "Nyquist",
+        PluginFormat::Native => "Native",
     };
-    format!("{prefix}:{};{uid}", path.display())
+    let vendor = vendor.replace('_', " ");
+    let name = name.replace('_', " ");
+    format!("Effect_{family}_{vendor}_{name}_{};{uid}", path.display())
 }
 
-/// Parses a VST3 or CLAP effect id, splitting at its final semicolon.
+/// Parses a new Audacity PluginID or a legacy VST3/CLAP effect id.
 pub fn parse_effect_id(id: &str) -> Option<(PluginFormat, PathBuf, String)> {
-    let (prefix, remainder) = id.split_once(':')?;
-    let format = match prefix {
+    if let Some((prefix, remainder)) = id.split_once(':') {
+        let format = match prefix {
+            "VST3" => PluginFormat::Vst3,
+            "CLAP" => PluginFormat::Clap,
+            _ => return None,
+        };
+        let (path, uid) = remainder.rsplit_once(';')?;
+        if path.is_empty() || uid.is_empty() {
+            return None;
+        }
+        return Some((format, PathBuf::from(path), uid.to_owned()));
+    }
+
+    let mut fields = id.splitn(5, '_');
+    if fields.next()? != "Effect" {
+        return None;
+    }
+    let family = fields.next()?;
+    let _vendor = fields.next()?;
+    let _name = fields.next()?;
+    let remainder = fields.next()?;
+
+    let format = match family {
         "VST3" => PluginFormat::Vst3,
         "CLAP" => PluginFormat::Clap,
+        "LV2" => PluginFormat::Lv2,
+        "LADSPA" => PluginFormat::Ladspa,
+        "Nyquist" => PluginFormat::Nyquist,
+        "Native" => PluginFormat::Native,
         _ => return None,
     };
     let (path, uid) = remainder.rsplit_once(';')?;
@@ -167,6 +203,23 @@ pub fn parse_effect_id(id: &str) -> Option<(PluginFormat, PathBuf, String)> {
         return None;
     }
     Some((format, PathBuf::from(path), uid.to_owned()))
+}
+
+/// Returns the symbol field from a new Audacity PluginID.
+pub fn effect_name(id: &str) -> Option<String> {
+    let mut fields = id.splitn(5, '_');
+    if fields.next()? != "Effect" {
+        return None;
+    }
+    fields.next()?;
+    fields.next()?;
+    let name = fields.next()?;
+    let remainder = fields.next()?;
+    let (path, uid) = remainder.rsplit_once(';')?;
+    if path.is_empty() || uid.is_empty() {
+        return None;
+    }
+    Some(name.to_owned())
 }
 
 #[cfg(test)]
@@ -196,28 +249,38 @@ mod tests {
     }
 
     #[test]
-    fn effect_id_parse() {
+    fn effect_id_round_trip_with_spaces_and_sanitized_vendor() {
         let id = effect_id(
             PluginFormat::Vst3,
-            Path::new("/plugins/example.vst3"),
+            Path::new("/x/Surge XT.vst3"),
             "vendor.class",
+            "Surge_XT",
+            "Surge",
         );
+        assert_eq!(id, "Effect_VST3_Surge XT_Surge_/x/Surge XT.vst3;vendor.class");
         assert_eq!(
             parse_effect_id(&id),
+            Some((
+                PluginFormat::Vst3,
+                PathBuf::from("/x/Surge XT.vst3"),
+                "vendor.class".to_owned()
+            ))
+        );
+        assert_eq!(effect_name(&id), Some("Surge".to_owned()));
+    }
+
+    #[test]
+    fn old_effect_id_still_parses() {
+        assert_eq!(
+            parse_effect_id("VST3:/plugins/example.vst3;vendor.class"),
             Some((
                 PluginFormat::Vst3,
                 PathBuf::from("/plugins/example.vst3"),
                 "vendor.class".to_owned()
             ))
         );
-
-        let id = effect_id(
-            PluginFormat::Clap,
-            Path::new("/plugins/example.clap"),
-            "org.example.plugin",
-        );
         assert_eq!(
-            parse_effect_id(&id),
+            parse_effect_id("CLAP:/plugins/example.clap;org.example.plugin"),
             Some((
                 PluginFormat::Clap,
                 PathBuf::from("/plugins/example.clap"),
