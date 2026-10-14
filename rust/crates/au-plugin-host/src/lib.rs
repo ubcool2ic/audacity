@@ -7,6 +7,7 @@ pub mod sandbox;
 pub mod ladspa;
 pub mod lv2;
 pub mod editor;
+pub mod nyquist;
 
 pub use clap::ClapHost;
 pub use sandbox::{SandboxedHost, ScanOutcome};
@@ -27,6 +28,7 @@ pub fn registry() -> PluginRegistry {
         Box::new(SandboxedHost::new(ClapHost::new())),
         Box::new(SandboxedHost::new(lv2::Lv2Host::new())),
         Box::new(SandboxedHost::new(ladspa::LadspaHost::new())),
+        Box::new(nyquist::NyquistHost::new()),
     ])
 }
 
@@ -73,6 +75,7 @@ pub fn restore_effect(
                 PluginFormat::Vst3 => Vst3Host::new().instantiate(&descriptor)?,
                 PluginFormat::Ladspa => ladspa::LadspaHost::new().instantiate(&descriptor)?,
                 PluginFormat::Lv2 => lv2::Lv2Host::new().instantiate(&descriptor)?,
+                PluginFormat::Nyquist => nyquist::NyquistHost::new().instantiate(&descriptor)?,
                 _ => return Err(registry_error),
             };
             instance.load_state(&effect.params)?;

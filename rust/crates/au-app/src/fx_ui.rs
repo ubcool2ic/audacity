@@ -228,7 +228,7 @@ pub fn realtime_panel(
 
         ui.separator();
         ui.label("Plugins");
-        for d in &plugins.plugins {
+        for d in plugins.enabled() {
             let format_debug = format!("{:?}", d.format).to_ascii_lowercase();
             let format = if format_debug.contains("vst3") {
                 "VST3"

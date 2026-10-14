@@ -169,6 +169,8 @@ struct AudacityApp {
     selection_end_text: String,
     selection_length_text: String,
     fx_dialog: Option<crate::fx_ui::EffectDialog>,
+    /// Plugin Manager window state (open when Some).
+    plugin_manager: Option<crate::plugin_manager::PluginManagerState>,
 
 /// Active mod-script-pipe server, when enabled.
 script_pipe: Option<crate::script_bridge::ScriptPipe>,
@@ -258,6 +260,7 @@ impl Default for AudacityApp {
             selection_end_text: "00:00:00.000".to_owned(),
             selection_length_text: "00:00:00.000".to_owned(),
             fx_dialog: None,
+            plugin_manager: None,
 
 script_pipe: None,
 script_pipe_enabled: std::env::var("AU_SCRIPT_PIPE")
@@ -1117,6 +1120,15 @@ fn export_midi(&mut self) {
 
 
     fn effect_windows(&mut self, ctx: &egui::Context) {
+        if let Some(mut state) = self.plugin_manager.take() {
+            let mut open = true;
+            egui::Window::new("Plugin Manager").open(&mut open).default_size([760.0, 420.0]).show(ctx, |ui| {
+                crate::plugin_manager::plugin_manager_ui(ui, &mut self.plugins, &mut state);
+            });
+            if open {
+                self.plugin_manager = Some(state);
+            }
+        }
         if self.plugins.poll() {
             self.status = format!("{} plugins found", self.plugins.plugins.len());
         }
@@ -3431,7 +3443,7 @@ if response.changed() && self.script_pipe_enabled {
                                             egui::Button::new("Scanning plugins…"),
                                         );
                                     } else {
-                                        for d in &self.plugins.plugins {
+                                        for d in self.plugins.enabled() {
                                             let id = d.id.clone();
                                             if ui.button(format!("{}…", d.name)).clicked() {
                                                 ui.close_menu();
@@ -3452,6 +3464,10 @@ if response.changed() && self.script_pipe_enabled {
                                             }
                                         }
 
+                                        if ui.button("Plugin Manager…").clicked() {
+                                            self.plugin_manager = Some(Default::default());
+                                            ui.close_menu();
+                                        }
                                         if ui.button("Rescan plugins").clicked() {
                                             self.plugins.start_scan();
                                             ui.close_menu();

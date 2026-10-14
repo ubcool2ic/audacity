@@ -320,22 +320,135 @@ pub fn saved_from_effect(
 
 /// Asynchronous catalog of available hosted plugins.
 pub struct PluginCatalog {
-    /// Discovered VST3 and CLAP plugin descriptors.
+    /// Discovered VST3, CLAP, LV2, LADSPA, and Nyquist plugin descriptors.
     pub plugins: Vec<PluginDescriptor>,
     rt: au_runtime::Runtime,
     job: Option<au_runtime::JobHandle<Vec<PluginDescriptor>>>,
-    /// The most recent scanning error, if any.
+    /// Plugin ids disabled in the persisted plugin-manager settings.
+    pub disabled: std::collections::BTreeSet<String>,
+    /// Path used to persist disabled plugin ids, if configuration is available.
+    pub config_path: Option<std::path::PathBuf>,
+    /// The most recent scanning or configuration error, if any.
     pub last_error: Option<String>,
 }
 
 impl PluginCatalog {
-    /// Creates an empty catalog.
+    /// Creates a catalog and loads disabled plugin ids from the default config path.
     pub fn new() -> Self {
-        Self {
+        Self::with_config_path(Self::default_config_path())
+    }
+
+    /// Creates a catalog and loads disabled plugin ids from `path`, if present.
+    pub fn with_config_path(path: Option<std::path::PathBuf>) -> Self {
+        let mut catalog = Self {
             plugins: Vec::new(),
             rt: au_runtime::Runtime::new(1, 2),
             job: None,
+            disabled: std::collections::BTreeSet::new(),
+            config_path: path,
             last_error: None,
+        };
+
+        if let Some(path) = catalog.config_path.as_ref() {
+            match std::fs::read_to_string(path) {
+                Ok(contents) => {
+                    catalog.disabled = contents
+                        .lines()
+                        .map(str::trim)
+                        .filter(|id| !id.is_empty())
+                        .map(str::to_owned)
+                        .collect();
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    catalog.last_error = Some(format!(
+                        "Could not read disabled plugin list {}: {error}",
+                        path.display()
+                    ));
+                }
+            }
+        }
+
+        catalog
+    }
+
+    fn default_config_path() -> Option<std::path::PathBuf> {
+        let config_dir = std::env::var_os("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(std::path::PathBuf::from)
+                    .map(|home| home.join(".config"))
+            })?;
+
+        Some(
+            config_dir
+                .join("audacity-rs")
+                .join("plugins-disabled.txt"),
+        )
+    }
+
+    fn save_disabled(&mut self) {
+        let Some(path) = self.config_path.as_ref() else {
+            return;
+        };
+
+        let result = (|| {
+            if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            let contents = self
+                .disabled
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join("\n");
+            std::fs::write(path, contents)
+        })();
+
+        match result {
+            Ok(()) => self.last_error = None,
+            Err(error) => {
+                self.last_error = Some(format!(
+                    "Could not save disabled plugin list {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+
+    /// Returns whether the plugin with `id` is enabled.
+    pub fn is_enabled(&self, id: &str) -> bool {
+        !self.disabled.contains(id)
+    }
+
+    /// Enables or disables a plugin and immediately persists the change.
+    pub fn set_enabled(&mut self, id: &str, enabled: bool) {
+        if enabled {
+            self.disabled.remove(id);
+        } else {
+            self.disabled.insert(id.to_owned());
+        }
+        self.save_disabled();
+    }
+
+    /// Iterates over enabled plugin descriptors.
+    pub fn enabled(&self) -> impl Iterator<Item = &PluginDescriptor> {
+        self.plugins
+            .iter()
+            .filter(|descriptor| self.is_enabled(&descriptor.id))
+    }
+
+    /// Returns the display label for a plugin format.
+    pub fn format_label(format: PluginFormat) -> &'static str {
+        match format {
+            PluginFormat::Vst3 => "VST3",
+            PluginFormat::Clap => "CLAP",
+            PluginFormat::Lv2 => "LV2",
+            PluginFormat::Ladspa => "LADSPA",
+            PluginFormat::Nyquist => "Nyquist",
+            PluginFormat::Native => "Built-in",
         }
     }
 
@@ -355,7 +468,11 @@ impl PluginCatalog {
                 .filter(|descriptor| {
                     matches!(
                         descriptor.format,
-                        PluginFormat::Vst3 | PluginFormat::Clap
+                        PluginFormat::Vst3
+                            | PluginFormat::Clap
+                            | PluginFormat::Lv2
+                            | PluginFormat::Ladspa
+                            | PluginFormat::Nyquist
                     )
                 })
                 .collect();
@@ -405,6 +522,10 @@ impl PluginCatalog {
             .find(id)
             .ok_or_else(|| format!("Plugin not found: {id}"))?;
 
+        if !self.is_enabled(id) {
+            return Err(format!("Plugin is disabled: {}", descriptor.name));
+        }
+
         let instance: Box<dyn PluginInstance> = match descriptor.format {
             PluginFormat::Vst3 => au_plugin_host::Vst3Host::new()
                 .instantiate(descriptor)
@@ -412,7 +533,18 @@ impl PluginCatalog {
             PluginFormat::Clap => au_plugin_host::ClapHost::new()
                 .instantiate(descriptor)
                 .map_err(|error| format!("{error:?}"))?,
-            _ => return Err(format!("Unsupported plugin format for {id}")),
+            PluginFormat::Lv2 => au_plugin_host::lv2::Lv2Host::new()
+                .instantiate(descriptor)
+                .map_err(|error| format!("{error:?}"))?,
+            PluginFormat::Ladspa => au_plugin_host::ladspa::LadspaHost::new()
+                .instantiate(descriptor)
+                .map_err(|error| format!("{error:?}"))?,
+            PluginFormat::Nyquist => au_plugin_host::nyquist::NyquistHost::new()
+                .instantiate(descriptor)
+                .map_err(|error| format!("{error:?}"))?,
+            PluginFormat::Native => {
+                return Err(format!("Unsupported plugin format for {id}"));
+            }
         };
 
         Ok(PluginEffect::new(instance))
@@ -424,6 +556,7 @@ impl Default for PluginCatalog {
         Self::new()
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -499,5 +632,63 @@ mod tests {
         let restored = slot_from_saved(&saved).unwrap();
         let restored_gain = restored.effect.get(gain_key).unwrap();
         assert!((restored_gain - 0.5).abs() < 0.01);
+    }
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_TEST_ID: AtomicUsize = AtomicUsize::new(0);
+
+    fn test_path() -> PathBuf {
+        let id = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "audacity-rs-plugin-catalog-{}-{id}-disabled.txt",
+            std::process::id()
+        ))
+    }
+
+    fn fake_descriptor(id: &str) -> PluginDescriptor {
+        PluginDescriptor {
+            id: id.to_owned(),
+            name: "Test plugin".to_owned(),
+            vendor: "Test vendor".to_owned(),
+            path: PathBuf::from("/tmp/test-plugin.vst3"),
+            format: PluginFormat::Vst3,
+        }
+    }
+
+    #[test]
+    fn disabled_plugins_persist_and_cannot_be_instantiated() {
+        let path = test_path();
+        let id = "test.plugin.disabled";
+
+        let mut catalog = PluginCatalog::with_config_path(Some(path.clone()));
+        catalog.plugins.push(fake_descriptor(id));
+        catalog.set_enabled(id, false);
+
+        assert!(!catalog.is_enabled(id));
+        let persisted = PluginCatalog::with_config_path(Some(path.clone()));
+        assert!(!persisted.is_enabled(id));
+
+        assert_eq!(
+            catalog.instantiate(id).unwrap_err(),
+            "Plugin is disabled: Test plugin"
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn format_labels_match_plugin_manager_labels() {
+        assert_eq!(PluginCatalog::format_label(PluginFormat::Vst3), "VST3");
+        assert_eq!(PluginCatalog::format_label(PluginFormat::Clap), "CLAP");
+        assert_eq!(PluginCatalog::format_label(PluginFormat::Lv2), "LV2");
+        assert_eq!(PluginCatalog::format_label(PluginFormat::Ladspa), "LADSPA");
+        assert_eq!(PluginCatalog::format_label(PluginFormat::Nyquist), "Nyquist");
+        assert_eq!(PluginCatalog::format_label(PluginFormat::Native), "Built-in");
     }
 }
