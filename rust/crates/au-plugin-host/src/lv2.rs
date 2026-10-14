@@ -1238,11 +1238,18 @@ impl PluginHost for Lv2Host {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .clone();
-            if cached.is_empty() {
+            let mut paths = if cached.is_empty() {
                 self.default_search_paths()
             } else {
                 cached
+            };
+            // Out-of-process scans report the LV2 directory the plugin was found in.
+            if let Some(dir) = &descriptor.path {
+                if !paths.contains(dir) {
+                    paths.insert(0, dir.clone());
+                }
             }
+            paths
         };
 
         let world = open_world(api, &paths)?;

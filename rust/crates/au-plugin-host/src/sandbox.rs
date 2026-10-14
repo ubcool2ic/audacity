@@ -1,4 +1,5 @@
 use au_plugin_api::{PluginDescriptor, PluginError, PluginFormat, PluginHost, PluginInstance};
+use std::collections::HashSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -49,6 +50,8 @@ pub fn encode(ds: &[PluginDescriptor]) -> String {
         let format = match descriptor.format {
             PluginFormat::Clap => "CLAP",
             PluginFormat::Vst3 => "VST3",
+            PluginFormat::Ladspa => "LADSPA",
+            PluginFormat::Lv2 => "LV2",
             _ => continue,
         };
         let path = descriptor
@@ -107,6 +110,8 @@ pub fn decode(s: &str) -> Result<Vec<PluginDescriptor>, String> {
                 let format = match fields[1] {
                     "CLAP" => PluginFormat::Clap,
                     "VST3" => PluginFormat::Vst3,
+                    "LADSPA" => PluginFormat::Ladspa,
+                    "LV2" => PluginFormat::Lv2,
                     other => {
                         return Err(format!(
                             "invalid plugin format on line {}: {other}",
@@ -172,20 +177,26 @@ pub fn decode(s: &str) -> Result<Vec<PluginDescriptor>, String> {
 
 pub fn scanner_main(args: &[String]) -> i32 {
     if args.len() != 3 || args[0] != "--format" {
-        eprintln!("usage: au-plugin-scan --format <clap|vst3> <path>");
+        eprintln!("usage: au-plugin-scan --format <clap|vst3|ladspa|lv2> <path>");
         return 2;
     }
 
     let format = match args[1].as_str() {
         "clap" => PluginFormat::Clap,
         "vst3" => PluginFormat::Vst3,
+        "ladspa" => PluginFormat::Ladspa,
+        "lv2" => PluginFormat::Lv2,
         _ => {
-            eprintln!("usage: au-plugin-scan --format <clap|vst3> <path>");
+            eprintln!("usage: au-plugin-scan --format <clap|vst3|ladspa|lv2> <path>");
             return 2;
         }
     };
 
-    if std::env::var("AU_SCAN_TEST_CRASH").as_deref() == Ok("1") {
+    if std::env::var("AU_SCAN_TEST_CRASH").as_deref() == Ok("1")
+        && std::env::var("AU_SCAN_TEST_CRASH_FORMAT")
+            .map(|value| value == args[1])
+            .unwrap_or(true)
+    {
         std::process::abort();
     }
 
@@ -194,6 +205,16 @@ pub fn scanner_main(args: &[String]) -> i32 {
         let descriptors = match format {
             PluginFormat::Clap => crate::clap::scan_file(&path),
             PluginFormat::Vst3 => crate::vst3::scan_file(&path),
+            PluginFormat::Ladspa => Ok(crate::ladspa::LadspaHost::new().scan(&[path.clone()])),
+            PluginFormat::Lv2 => {
+                let mut descriptors = crate::lv2::Lv2Host::new().scan(&[path.clone()]);
+                for descriptor in &mut descriptors {
+                    if descriptor.path.is_none() {
+                        descriptor.path = Some(path.clone());
+                    }
+                }
+                Ok(descriptors)
+            }
             _ => unreachable!(),
         };
         descriptors.map_err(|e| au_runtime::JobError::Failed(e.to_string()))
@@ -264,6 +285,8 @@ pub fn scan_one(format: PluginFormat, path: &Path, timeout: Duration) -> ScanOut
     let format_arg = match format {
         PluginFormat::Clap => "clap",
         PluginFormat::Vst3 => "vst3",
+        PluginFormat::Ladspa => "ladspa",
+        PluginFormat::Lv2 => "lv2",
         _ => return failed(format!("unsupported scan format: {format:?}")),
     };
 
@@ -359,17 +382,63 @@ pub fn scan_one(format: PluginFormat, path: &Path, timeout: Duration) -> ScanOut
     }
 }
 
+fn ladspa_candidates(paths: &[PathBuf]) -> Vec<PathBuf> {
+    fn is_ladspa_file(path: &Path) -> bool {
+        let is_candidate_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.ends_with(".so") || name.contains(".so."))
+            .unwrap_or(false);
+        is_candidate_name && path.is_file()
+    }
+
+    let mut candidates = Vec::new();
+    for path in paths {
+        if is_ladspa_file(path) {
+            candidates.push(path.clone());
+        } else if path.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    let candidate = entry.path();
+                    if is_ladspa_file(&candidate) {
+                        candidates.push(candidate);
+                    }
+                }
+            }
+        }
+    }
+
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
+fn lv2_candidates(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    paths
+        .iter()
+        .filter(|path| path.is_dir() && seen.insert((*path).clone()))
+        .cloned()
+        .collect()
+}
+
+fn candidates(format: PluginFormat, paths: &[PathBuf]) -> Vec<PathBuf> {
+    match format {
+        PluginFormat::Clap => crate::clap::candidates(paths),
+        PluginFormat::Vst3 => crate::vst3::candidates(paths),
+        PluginFormat::Ladspa => ladspa_candidates(paths),
+        PluginFormat::Lv2 => lv2_candidates(paths),
+        _ => Vec::new(),
+    }
+}
+
 pub fn scan_all(
     format: PluginFormat,
     paths: &[PathBuf],
     rt: &au_runtime::Runtime,
     timeout: Duration,
 ) -> Vec<ScanOutcome> {
-    let candidates = match format {
-        PluginFormat::Clap => crate::clap::candidates(paths),
-        PluginFormat::Vst3 => crate::vst3::candidates(paths),
-        _ => Vec::new(),
-    };
+    let candidates = candidates(format, paths);
 
     let jobs: Vec<_> = candidates
         .into_iter()
@@ -499,6 +568,65 @@ mod tests {
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].name, "A B");
         assert_eq!(decoded[0].params[0].id, 7);
+    }
+
+    #[test]
+    fn encode_decode_round_trip_ladspa_and_lv2() {
+        let descriptors = [
+            PluginDescriptor {
+                id: "ladspa:test".to_owned(),
+                name: "LADSPA plugin".to_owned(),
+                vendor: "Vendor".to_owned(),
+                format: PluginFormat::Ladspa,
+                path: Some(PathBuf::from("/test.so")),
+                params: Vec::new(),
+                n_inputs: 1,
+                n_outputs: 2,
+            },
+            PluginDescriptor {
+                id: "lv2:test".to_owned(),
+                name: "LV2 plugin".to_owned(),
+                vendor: "Vendor".to_owned(),
+                format: PluginFormat::Lv2,
+                path: Some(PathBuf::from("/test.lv2")),
+                params: Vec::new(),
+                n_inputs: 2,
+                n_outputs: 2,
+            },
+        ];
+
+        let decoded = decode(&encode(&descriptors)).unwrap();
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].format, PluginFormat::Ladspa);
+        assert_eq!(decoded[0].id, descriptors[0].id);
+        assert_eq!(decoded[1].format, PluginFormat::Lv2);
+        assert_eq!(decoded[1].id, descriptors[1].id);
+    }
+
+    #[test]
+    fn ladspa_candidates_picks_only_so_files() {
+        let unique = format!(
+            "au-plugin-sandbox-ladspa-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let directory = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&directory).unwrap();
+
+        let so_file = directory.join("plugin.so");
+        let versioned_so_file = directory.join("plugin.so.1");
+        let other_file = directory.join("plugin.txt");
+        std::fs::write(&so_file, []).unwrap();
+        std::fs::write(&versioned_so_file, []).unwrap();
+        std::fs::write(&other_file, []).unwrap();
+
+        let candidates = ladspa_candidates(std::slice::from_ref(&directory));
+        assert_eq!(candidates, vec![so_file, versioned_so_file]);
+
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

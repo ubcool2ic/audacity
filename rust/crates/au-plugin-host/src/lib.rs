@@ -25,8 +25,8 @@ pub fn registry() -> PluginRegistry {
         Box::new(NativeHost::new()) as Box<dyn PluginHost>,
         Box::new(SandboxedHost::new(Vst3Host::new())),
         Box::new(SandboxedHost::new(ClapHost::new())),
-        Box::new(lv2::Lv2Host::new()),
-        Box::new(ladspa::LadspaHost::new()),
+        Box::new(SandboxedHost::new(lv2::Lv2Host::new())),
+        Box::new(SandboxedHost::new(ladspa::LadspaHost::new())),
     ])
 }
 
