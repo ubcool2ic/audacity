@@ -13,3 +13,4 @@ thiserror = "1"
 
 [dev-dependencies]
 tempfile = "3"
+au-io = { path = "../au-io", default-features = false }

@@ -24,7 +24,7 @@ fn synth() -> Aup3Project {
     let mut lt = LabelTrack::new("Marks");
     lt.labels.push(Label { start: 0.1, end: 0.4, text: "região ✓".into() });
     Aup3Project {
-        state: ProjectState { tracks: vec![t], sample_rate: 44100, labels: vec![lt], sync_lock: false },
+        state: ProjectState { tracks: vec![t], sample_rate: 44100, labels: vec![lt], sync_lock: false, note_tracks: Vec::new() },
         extras: Aup3Extras { selection: (0.1, 0.3), track_formats: vec![au_project::blocks::SampleFormat::Int24], track_selected: vec![true], ..Default::default() },
     }
 }

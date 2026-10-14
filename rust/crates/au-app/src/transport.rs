@@ -14,15 +14,38 @@ use std::sync::Arc;
 /// Builds engine tracks from project state (each track rendered once,
 /// envelope applied, gaps as silence).
 pub fn mix_tracks(state: &ProjectState) -> Vec<MixTrack> {
-    state
+    let mut tracks = state
         .tracks
         .iter()
         .map(|t| MixTrack {
             audio: Arc::new(t.render()),
             offset: 0,
-            params: TrackParams { gain: t.gain, pan: t.pan, mute: t.mute, solo: t.solo },
+            params: TrackParams {
+                gain: t.gain,
+                pan: t.pan,
+                mute: t.mute,
+                solo: t.solo,
+            },
         })
-        .collect()
+        .collect::<Vec<_>>();
+
+    let rate = if state.sample_rate == 0 {
+        44_100
+    } else {
+        state.sample_rate
+    };
+    tracks.extend(state.note_tracks.iter().map(|nt| MixTrack {
+        audio: Arc::new(nt.render(rate)),
+        offset: 0,
+        params: TrackParams {
+            gain: 1.0,
+            pan: 0.0,
+            mute: nt.mute,
+            solo: nt.solo,
+        },
+    }));
+
+    tracks
 }
 
 /// Gate applied before samples reach the take.

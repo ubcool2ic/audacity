@@ -337,6 +337,7 @@ fn from_xml(root: &XmlNode, c: &Connection) -> Result<Aup3Project> {
     let mut cache = HashMap::new();
     let mut tracks = Vec::new();
     let mut labels = Vec::new();
+    let mut note_tracks = Vec::new();
     let kids: Vec<&XmlNode> = root.children.iter().collect();
     let mut i = 0;
     while i < kids.len() {
@@ -415,6 +416,30 @@ fn from_xml(root: &XmlNode, c: &Connection) -> Result<Aup3Project> {
                 lt.labels.sort_by(|a, b| a.start.total_cmp(&b.start));
                 labels.push(lt);
             }
+"notetrack" => {
+    let name = n.str("name").unwrap_or("Note Track").to_string();
+    let mut nt = n
+        .str("data")
+        .and_then(|data| au_core::notes::NoteTrack::from_allegro(data).ok())
+        .unwrap_or_else(|| au_core::notes::NoteTrack::new(name.clone()));
+
+    nt.name = name;
+    nt.offset = n.f64("offset").unwrap_or(0.0);
+    nt.visible_channels = n
+        .i64("visiblechannels")
+        .unwrap_or(i64::from(nt.visible_channels))
+        .clamp(0, i64::from(u32::MAX)) as u32;
+    nt.velocity = n.f64("velocity").unwrap_or(f64::from(nt.velocity)) as f32;
+    nt.mute = n
+        .get("mute")
+        .and_then(V::as_bool)
+        .unwrap_or_else(|| n.i64("mute").unwrap_or(0) != 0);
+    nt.solo = n
+        .get("solo")
+        .and_then(V::as_bool)
+        .unwrap_or_else(|| n.i64("solo").unwrap_or(0) != 0);
+    note_tracks.push(nt);
+}
             "effects" => extras.master_effects = effects_from_xml(n),
             _ => {} // tags, timetrack, notetrack: not modelled yet
         }
@@ -425,6 +450,7 @@ fn from_xml(root: &XmlNode, c: &Connection) -> Result<Aup3Project> {
             sample_rate: proj_rate.round() as u32,
             labels,
             sync_lock: false,
+            note_tracks,
         },
         extras,
     })
@@ -564,6 +590,28 @@ fn build_xml(c: &Connection, p: &Aup3Project) -> Result<XmlNode> {
         }
         root.children.push(n);
     }
+for nt in &st.note_tracks {
+    let (bottom_note, top_note) = nt
+        .pitch_range()
+        .map(|(bottom, top)| (bottom.round() as i32, top.round() as i32))
+        .unwrap_or((24, 96));
+
+    root.children.push(
+        XmlNode::new("notetrack")
+            .attr("name", V::Str(nt.name.clone()))
+            .attr("isSelected", V::Bool(false))
+            .attr("height", V::Int(170))
+            .attr("minimized", V::Bool(false))
+            .attr("mute", V::Bool(nt.mute))
+            .attr("solo", V::Bool(nt.solo))
+            .attr("offset", V::Double(nt.offset, -1))
+            .attr("visiblechannels", V::Int(nt.visible_channels as i32))
+            .attr("velocity", V::Double(f64::from(nt.velocity), -1))
+            .attr("bottomnote", V::Int(bottom_note))
+            .attr("topnote", V::Int(top_note))
+            .attr("data", V::Str(nt.to_allegro())),
+    );
+}
     Ok(root)
 }
 

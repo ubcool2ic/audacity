@@ -169,6 +169,10 @@ struct AudacityApp {
     selection_end_text: String,
     selection_length_text: String,
     fx_dialog: Option<crate::fx_ui::EffectDialog>,
+/// Whether the FFmpeg status window is open.
+ffmpeg_window: bool,
+/// Detected FFmpeg availability and version or missing-library explanation.
+ffmpeg_status: au_io::ffmpeg::FfmpegStatus,
     /// Catalog of discovered CLAP and VST3 plugins.
     plugins: crate::plugin_bridge::PluginCatalog,
     /// Crash-isolated editor process for the currently edited plugin, if any.
@@ -247,6 +251,8 @@ impl Default for AudacityApp {
             selection_end_text: "00:00:00.000".to_owned(),
             selection_length_text: "00:00:00.000".to_owned(),
             fx_dialog: None,
+ffmpeg_window: false,
+ffmpeg_status: au_io::ffmpeg::status(),
             plugins: {
                 let mut catalog = crate::plugin_bridge::PluginCatalog::new();
                 catalog.start_scan();
@@ -349,8 +355,44 @@ impl AudacityApp {
         self.track_mix.truncate(count);
     }
 
-    fn import_file(&mut self) {
-        if let Some(path) = rfd::FileDialog::new().pick_file() {
+fn import_file(&mut self) {
+    if let Some(path) = rfd::FileDialog::new()
+        .add_filter(
+            "All supported",
+            &[
+                "wav", "flac", "mp3", "ogg", "m4a", "aac", "mp4", "mov", "mkv", "webm",
+                "avi", "wmv", "wma", "ac3", "mid", "midi",
+            ],
+        )
+        .add_filter("MIDI", &["mid", "midi"])
+        .add_filter(
+            "Audio/video via FFmpeg",
+            &[
+                "m4a", "aac", "mp4", "mov", "mkv", "webm", "avi", "wmv", "wma", "ac3",
+            ],
+        )
+        .pick_file()
+    {
+        let is_midi = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| {
+                extension.eq_ignore_ascii_case("mid")
+                    || extension.eq_ignore_ascii_case("midi")
+            })
+            .unwrap_or(false);
+
+        if is_midi {
+            match au_io::midi::import_midi(&path) {
+                Ok(track) => {
+                    let note_count = track.notes.len();
+                    self.editor.add_note_track(track);
+                    self.ensure_track_mix();
+                    self.status = format!("Imported MIDI: {note_count} notes");
+                }
+                Err(error) => self.status = format!("Import failed: {error:?}"),
+            }
+        } else {
             match au_io::import_file(&path) {
                 Ok(buffer) => {
                     let name = path
@@ -363,10 +405,83 @@ impl AudacityApp {
                     self.ensure_track_mix();
                     self.status = "Imported audio".to_owned();
                 }
+                Err(au_io::IoError::FfmpegMissing(_)) => {
+                    self.status =
+                        "FFmpeg is not installed — see File > FFmpeg status".to_owned();
+                    self.ffmpeg_window = true;
+                    self.ffmpeg_status = au_io::ffmpeg::status();
+                }
                 Err(error) => self.status = format!("Import failed: {error:?}"),
             }
         }
     }
+}
+
+fn export_ffmpeg(&mut self, format: au_io::ffmpeg::ExportFormat) {
+    let ffmpeg = match au_io::ffmpeg::get() {
+        Ok(ffmpeg) => ffmpeg,
+        Err(_) => {
+            self.status = "FFmpeg is not installed — see File > FFmpeg status".to_owned();
+            self.ffmpeg_window = true;
+            self.ffmpeg_status = au_io::ffmpeg::status();
+            return;
+        }
+    };
+
+    if format == au_io::ffmpeg::ExportFormat::Ac3
+        && !matches!(self.project_rate(), 48_000 | 44_100 | 32_000)
+    {
+        self.status = "AC3 export requires a project rate of 48000, 44100, or 32000 Hz".to_owned();
+        return;
+    }
+
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter(format.label(), &[format.extension()])
+        .set_file_name(format!("export.{}", format.extension()))
+        .save_file()
+    else {
+        return;
+    };
+
+    let buffer = crate::fx_bridge::render_mix(
+        self.editor.state(),
+        &self.aup3_extras,
+        self.master_gain,
+        2,
+    );
+
+    match ffmpeg.export(&path, &buffer, format, format.default_bit_rate()) {
+        Ok(()) => self.status = format!("Exported {}", format.label()),
+        Err(error) => self.status = format!("Export failed: {error:?}"),
+    }
+}
+
+fn export_midi(&mut self) {
+    let note_tracks = &self.editor.state().note_tracks;
+    if note_tracks.is_empty() {
+        self.status = "No note track to export".to_owned();
+        return;
+    }
+
+    let track_index = note_tracks
+        .iter()
+        .position(|track| !track.mute)
+        .unwrap_or(0);
+    let track = note_tracks[track_index].clone();
+
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter("MIDI", &["mid"])
+        .set_file_name("export.mid")
+        .save_file()
+    else {
+        return;
+    };
+
+    match au_io::midi::export_midi(&path, &track) {
+        Ok(()) => self.status = "Exported MIDI".to_owned(),
+        Err(error) => self.status = format!("MIDI export failed: {error:?}"),
+    }
+}
 
     fn is_aup3(path: &std::path::Path) -> bool {
         path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("aup3"))
@@ -1983,6 +2098,139 @@ impl AudacityApp {
         }
     }
 
+fn draw_note_tracks(&mut self, ui: &mut egui::Ui) {
+    let note_tracks = self
+        .editor
+        .state()
+        .note_tracks
+        .iter()
+        .map(|track| {
+            (
+                track.name.clone(),
+                track.notes.clone(),
+                track.offset,
+                track.visible_channels,
+                track.mute,
+                track.solo,
+                track.velocity,
+                track.pitch_range(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let zoom = self.zoom.clone();
+    let mut mix_changes = Vec::new();
+    let mut removals = Vec::new();
+
+    for (track_index, (name, notes, offset, visible_channels, initial_mute, initial_solo, initial_velocity, pitch_range))
+        in note_tracks.into_iter().enumerate()
+    {
+        let (rect, _response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width().max(1.0), 120.0),
+            egui::Sense::click_and_drag(),
+        );
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 3.0, egui::Color32::from_gray(30));
+        painter.text(
+            rect.left_top() + egui::vec2(7.0, 3.0),
+            egui::Align2::LEFT_TOP,
+            format!("{name} ({} notes)", notes.len()),
+            egui::FontId::proportional(11.0),
+            egui::Color32::LIGHT_GRAY,
+        );
+
+        let (mut min_pitch, mut max_pitch) = pitch_range.unwrap_or((48.0, 60.0));
+        min_pitch -= 2.0;
+        max_pitch += 2.0;
+        if max_pitch - min_pitch < 12.0 {
+            let center = (min_pitch + max_pitch) * 0.5;
+            min_pitch = center - 6.0;
+            max_pitch = center + 6.0;
+        }
+        let pitch_span = max_pitch - min_pitch;
+        let pitch_to_y = |pitch: f64| {
+            rect.bottom() - (((pitch - min_pitch) / pitch_span) as f32 * rect.height())
+        };
+
+        let mut c_pitch = (min_pitch / 12.0).ceil() * 12.0;
+        while c_pitch <= max_pitch {
+            let y = pitch_to_y(c_pitch);
+            painter.line_segment(
+                [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+                egui::Stroke::new(1.0, egui::Color32::from_gray(55)),
+            );
+            c_pitch += 12.0;
+        }
+
+        for note in &notes {
+            let channel = note.channel;
+            if !(0..32).contains(&channel) {
+                continue;
+            }
+            let channel_bit = 1_u32 << channel as u32;
+            if visible_channels & channel_bit == 0 {
+                continue;
+            }
+
+            let x0 = rect.left() + zoom.time_to_x(offset + note.start) as f32;
+            let x1 = rect.left() + zoom.time_to_x(offset + note.start + note.duration) as f32;
+            let note_height = (rect.height() / pitch_span as f32).max(2.0);
+            let note_rect = egui::Rect::from_min_size(
+                egui::pos2(
+                    x0,
+                    pitch_to_y(note.pitch) - note_height * 0.5,
+                ),
+                egui::vec2((x1 - x0).max(1.0), note_height),
+            );
+            let alpha = 0.4 + 0.6 * (note.loudness.clamp(0.0, 127.0) as f32 / 127.0);
+            let hue = ((channel as f32 * 37.0).rem_euclid(360.0)) / 360.0;
+            let color: egui::Color32 =
+                egui::ecolor::Hsva::new(hue, 0.75, 0.95, alpha).into();
+            painter.rect_filled(note_rect, 1.0, color);
+        }
+
+        let mut mute = initial_mute;
+        let mut solo = initial_solo;
+        let mut velocity = initial_velocity;
+        let mut remove = false;
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut mute, "Mute");
+            ui.checkbox(&mut solo, "Solo");
+            ui.label("Velocity dB");
+            ui.add(egui::DragValue::new(&mut velocity));
+            velocity = velocity.clamp(-36.0, 36.0);
+            remove = ui.button("Remove").clicked();
+        });
+
+        if remove {
+            removals.push(track_index);
+        } else if mute != initial_mute || solo != initial_solo || velocity != initial_velocity {
+            mix_changes.push((track_index, mute, solo, velocity));
+        }
+        ui.add_space(4.0);
+    }
+
+    for (track_index, mute, solo, velocity) in mix_changes {
+        match self
+            .editor
+            .set_note_track_mix(track_index, mute, solo, velocity)
+        {
+            Ok(()) => self.ensure_track_mix(),
+            Err(error) => self.status = format!("Could not update note track: {error:?}"),
+        }
+    }
+
+    removals.sort_unstable_by(|left, right| right.cmp(left));
+    for track_index in removals {
+        match self.editor.remove_note_track(track_index) {
+            Ok(()) => {
+                self.ensure_track_mix();
+                self.status = "Removed note track".to_owned();
+            }
+            Err(error) => self.status = format!("Could not remove note track: {error:?}"),
+        }
+    }
+}
+
     fn draw_labels(&mut self, ui: &mut egui::Ui) {
         let label_tracks = self
             .editor
@@ -2394,6 +2642,28 @@ impl AudacityApp {
     }
 
     fn draw_windows(&mut self, ctx: &egui::Context) {
+if self.ffmpeg_window {
+    let mut retry_requested = false;
+    egui::Window::new("FFmpeg")
+        .open(&mut self.ffmpeg_window)
+        .show(ctx, |ui| match &self.ffmpeg_status {
+            au_io::ffmpeg::FfmpegStatus::Available { version } => {
+                ui.label(format!(
+                    "FFmpeg {version} loaded — M4A/AAC, WMA, AC3 and audio from video files can be imported and exported."
+                ));
+            }
+            au_io::ffmpeg::FfmpegStatus::Missing { message } => {
+                ui.label(egui::RichText::new(message).monospace());
+                ui.label(format!("Required: {}", au_io::ffmpeg::SUPPORTED));
+                if ui.button("Retry detection").clicked() {
+                    retry_requested = true;
+                }
+            }
+        });
+    if retry_requested {
+        self.status = "Restart Audacity-RS after installing FFmpeg to load it.".to_owned();
+    }
+}
         if self.speed_window {
             let mut open = self.speed_window;
             let mut apply = false;
@@ -2940,6 +3210,38 @@ impl AudacityApp {
                         ui.close_menu();
                         self.export(true);
                     }
+ui.separator();
+
+for format in au_io::ffmpeg::ExportFormat::all() {
+    let enabled = matches!(
+        &self.ffmpeg_status,
+        au_io::ffmpeg::FfmpegStatus::Available { .. }
+    );
+    let response = ui
+        .add_enabled(
+            enabled,
+            egui::Button::new(format!("Export {} (FFmpeg)…", format.label())),
+        )
+        .on_disabled_hover_text("FFmpeg is not installed — see FFmpeg status");
+    if response.clicked() {
+        ui.close_menu();
+        self.export_ffmpeg(format);
+    }
+}
+
+let has_note_tracks = !self.editor.state().note_tracks.is_empty();
+if ui
+    .add_enabled(has_note_tracks, egui::Button::new("Export MIDI…"))
+    .clicked()
+{
+    ui.close_menu();
+    self.export_midi();
+}
+
+if ui.button("FFmpeg status…").clicked() {
+    ui.close_menu();
+    self.ffmpeg_window = true;
+}
                     if ui.button("Export options…").clicked() {
                         ui.close_menu();
                         self.export_options_window = true;
@@ -3228,8 +3530,9 @@ impl AudacityApp {
                     self.draw_track(ui, index);
                     ui.add_space(5.0);
                 }
+                self.draw_note_tracks(ui);
                 self.draw_labels(ui);
-                if count == 0 && self.editor.state().labels.is_empty() {
+                if count == 0 && self.editor.state().labels.is_empty() && self.editor.state().note_tracks.is_empty() {
                     ui.centered_and_justified(|ui| {
                         ui.label("Open or import audio to begin.");
                     });

@@ -46,6 +46,8 @@ fn save_in_transaction(transaction: &Transaction<'_>, state: &ProjectState) -> R
          DROP TABLE IF EXISTS label_tracks;
          DROP TABLE IF EXISTS tracks;
          DROP TABLE IF EXISTS project;
+         DROP TABLE IF EXISTS note_tracks;
+         CREATE TABLE note_tracks(idx INTEGER PRIMARY KEY, name TEXT, offset REAL, mute INTEGER, solo INTEGER, velocity REAL, visible INTEGER, tempo REAL, data TEXT);
          CREATE TABLE project(key TEXT PRIMARY KEY, value TEXT);
          CREATE TABLE tracks(
              idx INTEGER PRIMARY KEY,
@@ -191,6 +193,25 @@ fn save_in_transaction(transaction: &Transaction<'_>, state: &ProjectState) -> R
             ])?;
         }
     }
+
+for (idx, nt) in state.note_tracks.iter().enumerate() {
+    transaction.execute(
+        "INSERT INTO note_tracks(idx, name, offset, mute, solo, velocity, visible, tempo, data)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            idx as i64,
+            nt.name,
+            nt.offset,
+            i64::from(nt.mute),
+            i64::from(nt.solo),
+            f64::from(nt.velocity),
+            i64::from(nt.visible_channels),
+            nt.tempo_bpm,
+            nt.to_allegro()
+        ],
+    )?;
+}
+
 
     Ok(())
 }
@@ -494,11 +515,54 @@ pub fn load_project(path: &Path) -> Result<ProjectState> {
         }
     }
 
+let mut note_tracks = Vec::new();
+let has_note_tracks = connection
+    .query_row(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='note_tracks'",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .is_ok();
+
+if has_note_tracks {
+    let mut statement = connection.prepare(
+        "SELECT name, offset, mute, solo, velocity, visible, tempo, data
+         FROM note_tracks ORDER BY idx",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, f64>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, i64>(3)?,
+            row.get::<_, f64>(4)?,
+            row.get::<_, i64>(5)?,
+            row.get::<_, f64>(6)?,
+            row.get::<_, String>(7)?,
+        ))
+    })?;
+
+    for row in rows {
+        let (name, offset, mute, solo, velocity, visible, tempo, data) = row?;
+        let mut nt = au_core::notes::NoteTrack::from_allegro(&data)
+            .unwrap_or_else(|_| au_core::notes::NoteTrack::new(name.clone()));
+        nt.name = name;
+        nt.offset = offset;
+        nt.mute = mute != 0;
+        nt.solo = solo != 0;
+        nt.velocity = velocity as f32;
+        nt.visible_channels = visible.clamp(0, i64::from(u32::MAX)) as u32;
+        nt.tempo_bpm = tempo;
+        note_tracks.push(nt);
+    }
+}
+
     Ok(ProjectState {
         tracks,
         sample_rate,
         labels,
         sync_lock,
+        note_tracks,
     })
 }
 
@@ -586,6 +650,7 @@ mod tests {
         let state = ProjectState {
             tracks: vec![track],
             sample_rate: 48_000,
+            note_tracks: Vec::new(),
             labels: vec![LabelTrack {
                 name: "Labels".to_string(),
                 labels: vec![

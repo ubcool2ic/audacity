@@ -176,3 +176,6 @@ Luna 4 calls, $0.0451. Sol: none. **Total: $0.0451**
 
 ## BizyBot — Stage 8 plugins in app / editor host / Audacity check (2026-10-14)
 openai/gpt-6-luna only (no Sol escalation): vst3 run loop, clap timer/fd, state ids, editor host, editor tests, aup3 example (2 tries), plugin_bridge, GUI integration. Total ≈ $0.043.
+
+## BizyBot — Stage 8B FFmpeg / MIDI / LADSPA-LV2 sandbox (2026-10-14)
+openai/gpt-6-luna only (no Sol): sandbox.rs (+1 wasted call from a shell-quoting mistake in the prompt), LADSPA/LV2 tests, ffmpeg.rs, FFmpeg tests, notes.rs, midi.rs + aup3/aurs + tests, MIDI velocity fix, Audacity fixture tests, GUI wiring. Total ≈ $0.044.

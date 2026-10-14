@@ -348,3 +348,9 @@ See `docs/PLUGIN_HOSTING.md`. New crate `crates/au-plugin-host` (code generated 
 - [x] Audacity 3.7.3 (official AppImage) reads our VST3 state from .aup3: AGain gain 0.5 → exported peak 0.4001 (input 0.8). See `tools/aup3-verify/`.
 - [ ] au-effects API changes requested (dynamic ids, push_effect/factory hook) — see PLUGIN_HOSTING.md.
 - [ ] Embed editor inside the egui window; avoid Mutex on RT path; CLAP fd polling uses poll() instead of per-tick callbacks.
+
+## Stage 8B status — FFmpeg, MIDI/note tracks, sandboxed LADSPA/LV2 (2026-10-14)
+- [x] Optional FFmpeg (`au-io/src/ffmpeg.rs`): dlopen of libavformat.so.61/libavcodec.so.61/libavutil.so.59/libswresample.so.5 at runtime (no link-time dependency), version-checked; `AU_FFMPEG_LIBDIR` = Audacity's "FFmpeg library location". Import: M4A/AAC, WMA, AC3, audio from video (mp4/mkv/mov/webm/avi/wmv…); export M4A (AAC), AC3, WMA v2. Missing FFmpeg → clear message in File ▸ FFmpeg status, export items disabled, WAV/FLAC/MP3/Ogg unaffected. Tests: present (round trips, video audio, CLI-made WMA/AC3, ffprobe reads our files) and absent.
+- [x] Note tracks (`au-core/src/notes.rs`) modelled on NoteTrack: Allegro text serializer/parser following portsmf; `.aup3` `<notetrack … data="…">` exactly like Audacity 3.7.3 (verified both ways with the official 3.7.3 AppImage, fixtures in `tests/fixtures/aup3/notetrack_*`), native .aurs table; MIDI import/export (`au-io/src/midi.rs`, midly); piano-roll display, mute/solo/velocity, built-in synth playback via the mixer.
+- [x] LADSPA (per .so) and LV2 (per search directory) scanning out of process through `au-plugin-scan`; crash containment tests.
+- [ ] FFmpeg majors other than 7.x (struct offsets are per major), FFmpeg export options dialog, MIDI out device, note editing, per-note-track Allegro tempo maps beyond the first tempo on export.

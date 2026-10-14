@@ -3,6 +3,7 @@
 
 //! Core audio data types and editing operations.
 
+pub mod notes;
 pub mod timeline;
 
 /// A single audio sample.
@@ -264,6 +265,8 @@ pub struct ProjectState {
     pub labels: Vec<timeline::LabelTrack>,
     /// Whether sync-lock is on (edits ripple across all tracks and labels).
     pub sync_lock: bool,
+    /// Note (MIDI) tracks.
+    pub note_tracks: Vec<notes::NoteTrack>,
 }
 
 /// Linear, unlimited snapshot history for project states.
@@ -360,6 +363,52 @@ impl Editor {
     /// Returns the current project state.
     pub fn state(&self) -> &ProjectState {
         self.history.current()
+    }
+
+    /// Adds a MIDI note track and records an undo step.
+    pub fn add_note_track(&mut self, track: notes::NoteTrack) -> usize {
+        let mut state = self.state().clone();
+        state.note_tracks.push(track);
+        let index = state.note_tracks.len() - 1;
+        self.history.push("Import MIDI", state);
+        index
+    }
+
+    /// Updates a note track's mix settings and records an undo step if they changed.
+    pub fn set_note_track_mix(
+        &mut self,
+        idx: usize,
+        mute: bool,
+        solo: bool,
+        velocity: f32,
+    ) -> Result<()> {
+        let Some(current) = self.state().note_tracks.get(idx) else {
+            return Err(CoreError::TrackNotFound(idx));
+        };
+
+        if current.mute == mute && current.solo == solo && current.velocity == velocity {
+            return Ok(());
+        }
+
+        let mut state = self.state().clone();
+        let track = &mut state.note_tracks[idx];
+        track.mute = mute;
+        track.solo = solo;
+        track.velocity = velocity;
+        self.history.push("Note Track Mix", state);
+        Ok(())
+    }
+
+    /// Removes a note track and records an undo step.
+    pub fn remove_note_track(&mut self, idx: usize) -> Result<()> {
+        if idx >= self.state().note_tracks.len() {
+            return Err(CoreError::TrackNotFound(idx));
+        }
+
+        let mut state = self.state().clone();
+        state.note_tracks.remove(idx);
+        self.history.push("Remove Note Track", state);
+        Ok(())
     }
 
     /// Adds a track and records an undo entry.

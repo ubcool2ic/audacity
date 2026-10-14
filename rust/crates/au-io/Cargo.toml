@@ -12,6 +12,8 @@ au-effects = { path = "../au-effects" }
 thiserror = "1"
 symphonia = { version = "0.5", features = ["wav","flac","mp3","vorbis","ogg","pcm"] }
 hound = "3.5"
+libloading = "0.8"
+midly = "0.5"
 rubato = "0.15"
 rtrb = "0.3"
 flacenc = "0.4"

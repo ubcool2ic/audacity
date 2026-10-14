@@ -6,6 +6,8 @@ use std::path::Path;
 use thiserror::Error;
 
 pub mod dsp;
+pub mod ffmpeg;
+pub mod midi;
 pub mod engine;
 pub mod record;
 
@@ -21,9 +23,30 @@ pub enum IoError {
     Device(String),
     #[error("unsupported format: {0}")]
     Unsupported(String),
+    #[error("{0}")]
+    FfmpegMissing(String),
 }
 
 pub fn import_file(path: &Path) -> Result<AudioBuffer, IoError> {
+    let ext = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    if ffmpeg::handles_extension(&ext) {
+        return ffmpeg::get()?.import(path);
+    }
+    match import_native(path) {
+        Ok(buffer) => Ok(buffer),
+        // Like Audacity, fall back to FFmpeg for anything the built-in importers reject.
+        Err(error) => match ffmpeg::get() {
+            Ok(ffmpeg) => ffmpeg.import(path).map_err(|_| error),
+            Err(_) => Err(error),
+        },
+    }
+}
+
+fn import_native(path: &Path) -> Result<AudioBuffer, IoError> {
     use symphonia::core::{
         audio::SampleBuffer,
         codecs::DecoderOptions,
