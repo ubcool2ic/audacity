@@ -58,8 +58,8 @@ static PREF_DEFS: &[PrefDef] = &[
     PrefDef { page: "Quality", key: "/SamplingRate/DefaultProjectSampleRate", default: PrefDefault::Int(44100), label: "Default project sample rate" },
     PrefDef { page: "Quality", key: "/SamplingRate/DefaultProjectSampleFormatChoice", default: PrefDefault::Str("Format32BitFloat"), label: "Default project sample format" },
     PrefDef { page: "Quality", key: "/SamplingRate/DefaultProjectSampleFormat", default: PrefDefault::Int(3), label: "Legacy default project sample format" },
-    PrefDef { page: "Quality", key: "/Quality/DitherAlgorithmChoice", default: PrefDefault::Str("Triangle"), label: "Real-time dither" },
-    PrefDef { page: "Quality", key: "/Quality/DitherAlgorithmChoiceHigh", default: PrefDefault::Str("Shaped"), label: "High-quality dither" },
+    PrefDef { page: "Quality", key: "/Quality/DitherAlgorithmChoice", default: PrefDefault::Str("None"), label: "Real-time dither" },
+    PrefDef { page: "Quality", key: "/Quality/HQDitherAlgorithmChoice", default: PrefDefault::Str("Shaped"), label: "High-quality dither" },
 
     PrefDef { page: "Interface", key: "/Locale/Language", default: PrefDefault::Str("System"), label: "Language" },
     PrefDef { page: "Interface", key: "/GUI/ShowSplashScreen", default: PrefDefault::Bool(true), label: "Show splash screen" },
@@ -111,7 +111,7 @@ static PREF_DEFS: &[PrefDef] = &[
     PrefDef { page: "Recording", key: "/AudioIO/DeltaPeakVolume", default: PrefDefault::Double(5.0), label: "Peak tolerance" },
     PrefDef { page: "Recording", key: "/AudioIO/AnalysisTime", default: PrefDefault::Int(100), label: "Analysis time" },
     PrefDef { page: "Recording", key: "/AudioIO/NumberAnalysis", default: PrefDefault::Int(0), label: "Number of consecutive analyses" },
-    PrefDef { page: "Recording", key: "/AudioIO/PreRoll", default: PrefDefault::Double(1.0), label: "Punch and roll pre-roll" },
+    PrefDef { page: "Recording", key: "/AudioIO/PreRoll", default: PrefDefault::Double(5.0), label: "Punch and roll pre-roll" },
     PrefDef { page: "Recording", key: "/AudioIO/RollCrossfade", default: PrefDefault::Double(10.0), label: "Punch and roll crossfade" },
     PrefDef { page: "Recording", key: "/AudioIO/SoundActivatedRecord", default: PrefDefault::Bool(false), label: "Sound-activated recording" },
 
@@ -317,7 +317,7 @@ impl Prefs {
 
     /// Returns the configured high-quality dither symbol.
     pub fn high_quality_dither_kind(&self) -> String {
-        self.get_string("/Quality/DitherAlgorithmChoiceHigh")
+        self.get_string("/Quality/HQDitherAlgorithmChoice")
     }
 
     /// Returns the configured UI language code.
@@ -680,7 +680,7 @@ mod tests {
         let prefs = Prefs::new();
         assert_eq!(prefs.quality_default_rate(), 44100);
         assert_eq!(prefs.quality_default_format(), "Format32BitFloat");
-        assert_eq!(prefs.dither_kind(), "Triangle");
+        assert_eq!(prefs.dither_kind(), "None");
         assert_eq!(prefs.get_bool("/GUI/ShowSplashScreen"), true);
         assert_eq!(prefs.get_bool("/GUI/SelectAllOnNone"), false);
         assert_eq!(prefs.get_double("/AudioIO/EffectsPreviewLen"), 6.0);

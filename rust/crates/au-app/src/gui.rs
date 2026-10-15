@@ -798,7 +798,10 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             let name = crate::settings::unique_track_name(&self.settings.default_audio_track_name, &existing);
             let channels = if command == "NewStereoTrack" { 2 } else { 1 };
             let rate = self.project_rate();
-            self.editor.add_track(Track::new(name.clone(), au_core::AudioBuffer::from_channels(rate, vec![Vec::new(); channels])));
+            let mut track = Track::new(name.clone(), au_core::AudioBuffer::from_channels(rate, vec![Vec::new(); channels]));
+            // Quality > Default Sample Format: new tracks use it.
+            track.int_bits = crate::settings::quantize_needed(self.settings.default_format);
+            self.editor.add_track(track);
             self.ensure_track_mix();
             self.apply_default_view(self.editor.state().tracks.len() - 1);
             return Some((String::new(), true));
@@ -951,8 +954,10 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     Some(value) if value.is_finite() => value.max(0.0),
                     _ => return Some(("Invalid or missing End".to_string(), false)),
                 };
-                let start = au_core::secs_to_frames(start_secs, rate).min(len);
-                let end = au_core::secs_to_frames(end_secs, rate).min(len);
+                // Like Audacity, a time selection may extend past the end of the audio.
+                let _ = len;
+                let start = au_core::secs_to_frames(start_secs, rate);
+                let end = au_core::secs_to_frames(end_secs, rate);
                 let selection = Selection {
                     track,
                     start: start.min(end),
@@ -1901,10 +1906,9 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         self.record_buffer.clear();
         self.record_opts_window = false;
 
-        if matches!(
-            self.record_mode,
-            RecordModeUi::Overdub | RecordModeUi::PunchAndRoll
-        ) {
+        // Recording > "Hear other tracks during recording" (/AudioIO/Duplex, Audacity's overdub):
+        // other tracks play while recording; punch-and-roll always plays its pre-roll.
+        if self.settings.duplex || matches!(self.record_mode, RecordModeUi::PunchAndRoll) {
             let project_rate = self.project_rate();
             let start_secs = au_core::frames_to_secs(start, rate);
             let playback_start = au_core::secs_to_frames(start_secs, project_rate);
@@ -1945,6 +1949,15 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     self.live_take_active = false;
                     // Recording > Name newly recorded track (ProjectAudioManager naming).
                     if track >= names_before.len() {
+                        // Recorded tracks use the default sample format (quantized on write).
+                        let bits = crate::settings::quantize_needed(self.settings.default_format);
+                        self.editor.history.modify_current(|st| {
+                            if let Some(t) = st.tracks.get_mut(track) {
+                                t.int_bits = bits;
+                                let len = t.len();
+                                crate::fx_bridge::quantize_track_range(t, 0, len, crate::fx_bridge::hq_dither());
+                            }
+                        });
                         let names = crate::settings::recording_track_names(
                             &self.settings, &names_before, names_before.len(), rec_channels, local_now());
                         if let Some(name) = names.into_iter().next() {
@@ -4912,8 +4925,21 @@ impl au_script::ScriptHost for AppScriptHost<'_> {
         for track in tracks {
             let rate = self.app.editor.state().tracks[track].sample_rate();
             let len = self.app.editor.state().tracks[track].len();
-            let a = au_core::secs_to_frames(self.sel.t0.max(0.0), rate).min(len);
-            let b = au_core::secs_to_frames(self.sel.t1.max(0.0), rate).min(len);
+            let a = au_core::secs_to_frames(self.sel.t0.max(0.0), rate);
+            let b = au_core::secs_to_frames(self.sel.t1.max(0.0), rate);
+            // Generators fill the whole selected time, also past the end of the track.
+            let (a, b) = if effect.kind() == au_effects::core::EffectKind::Generate {
+                if b.max(a) > len {
+                    let n_ch = self.app.editor.state().tracks[track].clips.n_channels.max(1);
+                    let pad = au_core::AudioBuffer::from_channels(rate, vec![vec![0.0; b.max(a) - len]; n_ch]);
+                    self.app.editor.history.modify_current(|st| {
+                        let _ = st.tracks[track].clips.insert(len, &pad);
+                    });
+                }
+                (a, b)
+            } else {
+                (a.min(len), b.min(len))
+            };
             let out = crate::fx_bridge::apply_builtin(
                 &mut self.app.editor,
                 Selection { track, start: a.min(b), end: a.max(b) },
@@ -4932,7 +4958,10 @@ impl au_script::ScriptHost for AppScriptHost<'_> {
                     e.id().to_string(),
                     e.params()
                         .iter()
-                        .map(|p| (p.key.to_string(), "double".to_string(), p.default.to_string()))
+                        .map(|p| {
+                            let ty = if matches!(p.ty, au_effects::core::ParamType::Choice(_)) { "enum" } else { "double" };
+                            (p.key.to_string(), ty.to_string(), p.default.to_string())
+                        })
                         .collect(),
                 )
             })
@@ -5315,6 +5344,10 @@ impl AudacityApp {
             self.record_trigger = RecordTriggerUi::Immediate;
         }
         self.record_latency_ms = -s.latency_correction_ms;
+        // Recording > Punch and Roll: pre-roll seconds (/AudioIO/PreRoll).
+        self.record_preroll_secs = s.pre_roll;
+        // Quality > High-quality conversion dither: used when writing into 16/24-bit tracks.
+        crate::fx_bridge::set_hq_dither(&s.hq_dither);
         // Interface > Theme: only when the preference changes (theme.cfg remains the theme menu's store).
         match &self.applied_theme_pref {
             None => self.applied_theme_pref = Some(s.theme.clone()),
@@ -5537,26 +5570,6 @@ fn local_now() -> (i32, u32, u32, u32, u32, u32) {
 
 /// Quality > Default Sample Format: new 16/24-bit tracks hold quantized samples, converted with
 /// the real-time Dither setting like Audacity's SampleFormat conversion on import.
-fn quantize_to_project_format(mut buffer: au_core::AudioBuffer, settings: &crate::settings::AppSettings) -> au_core::AudioBuffer {
-    use au_io::export::intfmt::{AudDither, DitherState};
-    let Some(bits) = crate::settings::quantize_needed(settings.default_format) else { return buffer };
-    let dither = match settings.dither.as_str() {
-        "Rectangle" => AudDither::Rectangle,
-        "Triangle" => AudDither::Triangle,
-        "Shaped" => AudDither::Shaped,
-        _ => AudDither::None,
-    };
-    let scale = if bits == 16 { 32_768.0f32 } else { 8_388_608.0f32 };
-    let mut state = DitherState::new();
-    for ch in &mut buffer.channels {
-        let mut ints = vec![0i32; ch.len()];
-        state.convert(ch, bits, dither, &mut ints);
-        for (s, i) in ch.iter_mut().zip(ints) {
-            *s = i as f32 / scale;
-        }
-    }
-    buffer
-}
 
 /// Generate / Effect / Analyze menu layout. Analyze starts with Audacity's non-effect commands
 /// (Contrast…, Plot Spectrum…) and a separator, then the grouped analyzers (MenuHelper).

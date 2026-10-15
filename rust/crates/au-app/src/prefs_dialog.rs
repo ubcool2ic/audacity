@@ -583,7 +583,7 @@ fn render_quality(ui: &mut egui::Ui, prefs: &mut Prefs) {
         string_choice(
             ui,
             prefs,
-            "/Quality/DitherAlgorithmChoiceHigh",
+            "/Quality/HQDitherAlgorithmChoice",
             "Dit&her:",
             &dither_choices,
         );

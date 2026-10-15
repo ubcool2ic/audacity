@@ -195,6 +195,10 @@ pub struct Track {
     pub mute: bool,
     /// Whether this track is soloed.
     pub solo: bool,
+    /// Integer sample format of the track (16 or 24 bits); `None` = 32-bit float.
+    /// Audacity stores audio written into such a track (generators, effects,
+    /// recordings) quantized to this format.
+    pub int_bits: Option<u32>,
 }
 
 impl Track {
@@ -207,6 +211,29 @@ impl Track {
             pan: 0.0,
             mute: false,
             solo: false,
+            int_bits: None,
+        }
+    }
+
+    /// Rounds `[start, end)` to the track's integer format (no dither), as
+    /// Audacity does when writing float samples into a 16/24-bit track.
+    pub fn quantize_range(&mut self, start: usize, end: usize) {
+        let Some(bits) = self.int_bits else { return };
+        let scale = (1u32 << (bits - 1)) as f32;
+        let (lo, hi) = (-scale, scale - 1.0);
+        for clip in &mut self.clips.clips {
+            let (c0, c1) = (clip.start, clip.end());
+            if c1 <= start || c0 >= end || (clip.stretch_ratio - 1.0).abs() > f64::EPSILON {
+                continue;
+            }
+            let a = start.saturating_sub(c0);
+            let b = (end - c0).min(clip.buffer.len());
+            for ch in &mut clip.buffer.channels {
+                let e = b.min(ch.len());
+                for v in &mut ch[a.min(e)..e] {
+                    *v = (*v * scale).round().clamp(lo, hi) / scale;
+                }
+            }
         }
     }
 

@@ -404,6 +404,7 @@ fn from_xml(root: &XmlNode, c: &Connection) -> Result<Aup3Project> {
                     pan: n.f64("pan").unwrap_or(0.0) as f32,
                     mute: n.get("mute").and_then(V::as_bool).unwrap_or(false),
                     solo: n.get("solo").and_then(V::as_bool).unwrap_or(false),
+                    int_bits: match fmt { SampleFormat::Int16 => Some(16), SampleFormat::Int24 => Some(24), SampleFormat::Float => None },
                 });
                 extras.track_formats.push(fmt);
                 extras.track_effects.push(n.children_named("effects").next().map(effects_from_xml).unwrap_or_default());
@@ -526,7 +527,11 @@ fn build_xml(c: &Connection, p: &Aup3Project) -> Result<XmlNode> {
         root.children.push(effects_to_xml(&p.extras.master_effects));
     }
     for (ti, t) in st.tracks.iter().enumerate() {
-        let fmt = p.extras.track_formats.get(ti).copied().unwrap_or(SampleFormat::Float);
+        let fmt = match t.int_bits {
+            Some(16) => SampleFormat::Int16,
+            Some(24) => SampleFormat::Int24,
+            _ => p.extras.track_formats.get(ti).copied().unwrap_or(SampleFormat::Float),
+        };
         let sel = p.extras.track_selected.get(ti).copied().unwrap_or(false);
         let n_ch = t.clips.clips.iter().map(|c| c.buffer.n_channels()).max().unwrap_or(t.clips.n_channels).clamp(1, 2);
         let trate = t.clips.sample_rate as f64;

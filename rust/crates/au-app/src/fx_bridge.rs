@@ -108,6 +108,17 @@ pub fn apply_builtin(editor: &mut Editor, sel: Selection, effect: &mut dyn Built
         report = ctx.report;
     }).map_err(|e| e.to_string())?;
     if let Some(e) = err { let _ = editor.undo(); return Err(e); }
+    // Audio written into a 16/24-bit track is stored in that format (Audacity 3.7.3
+    // verified for Generate > Tone into a 16-bit track: values land on the int16 grid).
+    if editor.state().tracks.get(sel.track).is_some_and(|t| t.int_bits.is_some()) {
+        let dither = hq_dither();
+        editor.history.modify_current(|st| {
+            if let Some(t) = st.tracks.get_mut(sel.track) {
+                let len = t.len();
+                quantize_track_range(t, sel.start, len, dither);
+            }
+        });
+    }
     out.report = report;
     Ok(out)
 }
@@ -216,5 +227,59 @@ mod tests {
         assert_eq!(ed.state().tracks[0].render().channels[0][10], before.channels[0][10]);
         let mut duck = registry::create("AutoDuck").unwrap();
         assert!(apply_builtin(&mut ed, sel, duck.as_mut(), None).is_err());
+    }
+}
+
+/// Quality > High-quality conversion dither, read when audio is written into
+/// an integer track (Audacity's Dither::BestSetting, default Shaped).
+pub fn hq_dither() -> au_io::export::intfmt::AudDither {
+    use au_io::export::intfmt::AudDither;
+    match HQ_DITHER.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => AudDither::None,
+        1 => AudDither::Rectangle,
+        2 => AudDither::Triangle,
+        _ => AudDither::Shaped,
+    }
+}
+
+static HQ_DITHER: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(3);
+
+/// Sets the dither used when writing into integer tracks (from Preferences).
+pub fn set_hq_dither(symbol: &str) {
+    let d = match symbol {
+        "None" => 0,
+        "Rectangle" => 1,
+        "Triangle" => 2,
+        _ => 3,
+    };
+    HQ_DITHER.store(d, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Converts `[start, end)` of an integer-format track to its format with
+/// `dither`, as Audacity does when float audio is written into a 16/24-bit track.
+pub fn quantize_track_range(t: &mut au_core::Track, start: usize, end: usize, dither: au_io::export::intfmt::AudDither) {
+    let Some(bits) = t.int_bits else { return };
+    if dither == au_io::export::intfmt::AudDither::None {
+        t.quantize_range(start, end);
+        return;
+    }
+    let scale = (1u32 << (bits - 1)) as f32;
+    for clip in &mut t.clips.clips {
+        let (c0, c1) = (clip.start, clip.end());
+        if c1 <= start || c0 >= end || (clip.stretch_ratio - 1.0).abs() > f64::EPSILON {
+            continue;
+        }
+        let a = start.saturating_sub(c0);
+        let b = (end - c0).min(clip.buffer.len());
+        for ch in &mut clip.buffer.channels {
+            let e = b.min(ch.len());
+            let seg = &mut ch[a.min(e)..e];
+            let mut ints = vec![0i32; seg.len()];
+            let mut state = au_io::export::intfmt::DitherState::new();
+            state.convert(seg, bits, dither, &mut ints);
+            for (v, i) in seg.iter_mut().zip(ints) {
+                *v = i as f32 / scale;
+            }
+        }
     }
 }

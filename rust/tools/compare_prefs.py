@@ -108,7 +108,7 @@ def main():
             import numpy as np
             n = min(a.shape[1], b.shape[1]); d = float(np.max(np.abs(a[:, :n] - b[:, :n]))) if n and a.shape[0] == b.shape[0] else float("nan")
             report(f"default format {fmt} import", a.shape == b.shape and d == 0.0, f"max diff {d:g} shapes {a.shape} {b.shape}")
-            A("SetPreference: Name=/SamplingRate/DefaultProjectSampleFormatChoice Value=Format32BitFloat")
+        A("SetPreference: Name=/SamplingRate/DefaultProjectSampleFormatChoice Value=Format32BitFloat")
     # 4. Tracks Behaviors editing: EditClipsCanMove, PasteAsNewClips (fresh app of ours per case)
     with C.Aud() as A:
       def clips(X):
@@ -132,6 +132,43 @@ def main():
               steps.append(clips(X))
               got[tag] = steps
           report(f"editing {name}", got["aud"] == got["rs"], f"aud {got['aud']} ours {got['rs']}")
+
+    # 5. Quality > Default Sample Format: generated audio in a new 16/24-bit track is stored quantized
+    import numpy as np
+    cfgp = os.path.expanduser("~/.config/audacity/audacity.cfg")
+    for fmt, hq in (("Format16Bit", "None"), ("Format24Bit", "None"), ("Format16Bit", "Shaped")):
+     # Audacity caches Dither::BestSetting; set it in its cfg before launching.
+     c = open(cfgp).read(); c = re.sub(r"HQDitherAlgorithmChoice=.*\n", "", c)
+     c = c.replace("[Quality]\n", f"[Quality]\nHQDitherAlgorithmChoice={hq}\n", 1) if "[Quality]\n" in c else c + f"\n[Quality]\nHQDitherAlgorithmChoice={hq}\n"; open(cfgp, "w").write(c)
+     with C.Aud() as A:
+        with Ours() as O:
+          out = {}
+          for tag, X in (("aud", A), ("rs", O)):
+              X(f"SetPreference: Name=/SamplingRate/DefaultProjectSampleFormatChoice Value={fmt}")
+              if X is O: X(f"SetPreference: Name=/Quality/HQDitherAlgorithmChoice Value={hq}")
+              if X is A: X("SelectAll:"); X("RemoveTracks:")
+              X("NewMonoTrack:"); X("Select: Start=0 End=1 Track=0")
+              X("Chirp: StartFreq=441 EndFreq=441 StartAmp=0.5 EndAmp=0.5 Waveform=Sine Interpolation=Linear")  # Tone via pipe skips PostSet in 3.7.3; Chirp == Tone dialog
+              ap = f"{W}/gen_{fmt}.{tag}.aup3"
+              if os.path.exists(ap): os.remove(ap)
+              X(f"SaveProject2: Filename={ap}"); time.sleep(1)
+              for _ in range(40):  # wait for Audacity to checkpoint the WAL
+                  if not os.path.exists(ap + "-wal"): break
+                  time.sleep(0.25)
+              subprocess.run([f"{R}/target/release/examples/fx_tool", "aup3wav", ap, f"{W}/gen_{fmt}.{tag}.wav"], check=True, capture_output=True)
+              out[tag] = C.read_wav(f"{W}/gen_{fmt}.{tag}.wav")
+          a, b = out["aud"], out["rs"]
+          scale = 32768.0 if fmt == "Format16Bit" else 8388608.0
+          on_grid = float(np.max(np.abs(b * scale - np.round(b * scale)))) if b.size else 1.0
+          n = min(a.shape[1], b.shape[1]); d = float(np.max(np.abs(a[:, :n] - b[:, :n]))) * scale if n else float("nan")
+          if hq != "None":  # random dither: compare noise level, not samples
+              ideal = 0.5 * np.sin(2 * np.pi * 441 * np.arange(a.shape[1]) / 44100)
+              ea = float(np.std(a[0] - ideal)) * scale; eb = float(np.std(b[0] - ideal)) * scale
+              report(f"generate into {fmt} track, HQ dither {hq}", a.shape == b.shape and on_grid < 1e-3 and abs(ea - eb) < 0.3 * ea,
+                     f"error vs ideal sine: aud {ea:.2f} LSB rms, ours {eb:.2f} LSB rms"); continue
+          report(f"generate into {fmt} track", a.shape == b.shape and on_grid < 1e-3 and d <= 1.0,
+                 f"ours off-grid {on_grid:g}, max diff {d:g} LSB, shapes {a.shape} {b.shape}")
+        A("SetPreference: Name=/SamplingRate/DefaultProjectSampleFormatChoice Value=Format32BitFloat")
 
     print(f"{sum(1 for r in res if r[1])}/{len(res)} pass")
 

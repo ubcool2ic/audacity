@@ -691,6 +691,7 @@ mod tests {
                 pan: 0.0,
                 mute: false,
                 solo: false,
+                int_bits: None,
             }],
             sample_rate: 10,
             ..Default::default()
