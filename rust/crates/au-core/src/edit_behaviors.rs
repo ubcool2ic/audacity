@@ -854,3 +854,20 @@ mod tests {
         assert_eq!(editor.history.undo_description(), Some("Paste"));
     }
 }
+
+#[cfg(test)]
+mod paste_regression {
+    use super::*;
+    use crate::{AudioBuffer, Editor, ProjectState, Selection, Track};
+
+    #[test]
+    fn paste_at_clip_start_without_moving_grows_the_clip() {
+        let mut state = ProjectState::default();
+        state.sample_rate = 100;
+        state.tracks.push(Track::new("a", AudioBuffer::from_channels(100, vec![vec![0.1; 150]])));
+        let mut editor = Editor::new(state);
+        editor.copy(Selection { track: 0, start: 0, end: 150 }).unwrap();
+        editor.paste_with(0, 0, &EditBehavior::default()).unwrap();
+        assert_eq!(editor.state().tracks[0].len(), 300);
+    }
+}

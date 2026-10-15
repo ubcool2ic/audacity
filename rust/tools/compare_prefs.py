@@ -135,4 +135,10 @@ def main():
 
     print(f"{sum(1 for r in res if r[1])}/{len(res)} pass")
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    # The run changes Audacity's own preferences; put the user's file back afterwards.
+    cfg = os.path.expanduser("~/.config/audacity/audacity.cfg"); saved = open(cfg).read()
+    try:
+        main()
+    finally:
+        open(cfg, "w").write(saved)

@@ -149,6 +149,7 @@ fn gui_script_pipe_runs_python_batch() {
     let app = Command::new(env!("CARGO_BIN_EXE_audacity-rs"))
         .env("AU_SCRIPT_PIPE", "1")
         .env("AU_SCRIPT_PIPE_DIR", &temp_dir)
+            .env("AU_PREFS_PATH", std::path::Path::new(&&temp_dir).join("audacity.cfg"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

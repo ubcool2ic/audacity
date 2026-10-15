@@ -53,6 +53,7 @@ impl App {
         let mut child = Command::new(env!("CARGO_BIN_EXE_audacity-rs"))
             .env("AU_SCRIPT_PIPE", "1")
             .env("AU_SCRIPT_PIPE_DIR", dir)
+            .env("AU_PREFS_PATH", std::path::Path::new(&dir).join("audacity.cfg"))
             .env("AU_TOOLBARS_CFG", dir.join("toolbars.cfg"))
             .env("AU_THEME_DIR", dir.join("theme"))
             .env("AUDACITY_RS_CRASH_DIR", dir.join("crash"))
