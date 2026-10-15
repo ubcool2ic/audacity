@@ -101,6 +101,12 @@ pub struct Mixer {
     scratch: Vec<Vec<f32>>,
     mix_scratch: Vec<Vec<f32>>,
     positions: Vec<f64>,
+    /// Playback > Micro-fades (/AudioIO/Microfades): volume changes ramp linearly over one
+    /// buffer instead of jumping (AudioIoCallback::FillOutputBuffers).
+    microfades: bool,
+    master_old: f32,
+    fade_target: f32,
+    fade_old: f32,
 }
 
 impl Mixer {
@@ -127,6 +133,10 @@ impl Mixer {
             scratch: Vec::new(),
             mix_scratch: Vec::new(),
             positions: Vec::new(),
+            microfades: false,
+            master_old: master_gain,
+            fade_target: 1.0,
+            fade_old: 1.0,
         }
     }
 
@@ -200,7 +210,13 @@ impl Mixer {
             }
             self.track_meters[index] = acc.reading(frames);
         }
-        for m in &mut self.mix_scratch { for v in m.iter_mut() { *v *= self.master_gain; } }
+        let (m0, dm, f0, df) = self.gain_ramp(n);
+        for m in &mut self.mix_scratch {
+            for (i, v) in m.iter_mut().enumerate() {
+                *v *= (m0 + dm * i as f32) * (f0 + df * i as f32);
+            }
+        }
+        self.end_block();
         if let Some(stack) = self.master_fx.as_mut() { stack.process_block(&mut self.mix_scratch); }
         let mut master = MeterAccumulator::default();
         for f in 0..n {
@@ -248,6 +264,35 @@ impl Mixer {
         if let Some(track) = self.tracks.get_mut(index) {
             track.params = params;
         }
+    }
+
+    /// Enables Audacity's micro-fades.
+    pub fn set_microfades(&mut self, on: bool) {
+        self.microfades = on;
+    }
+
+    /// Target playback volume for the fade (1 playing, 0 paused/stopping). With micro-fades the
+    /// next block ramps to it; otherwise it applies at once.
+    pub fn set_fade_target(&mut self, target: f32) {
+        self.fade_target = target;
+    }
+
+    /// The fade volume reached at the end of the last block.
+    pub fn fade_level(&self) -> f32 {
+        self.fade_old
+    }
+
+    /// Per-frame output gain for a block of `len` frames, as Audacity's linear interpolation
+    /// `oldVolume + (volume - oldVolume) / len * i`.
+    fn gain_ramp(&self, len: usize) -> (f32, f32, f32, f32) {
+        let (m0, f0) = if self.microfades { (self.master_old, self.fade_old) } else { (self.master_gain, self.fade_target) };
+        let n = len.max(1) as f32;
+        (m0, (self.master_gain - m0) / n, f0, (self.fade_target - f0) / n)
+    }
+
+    fn end_block(&mut self) {
+        self.master_old = self.master_gain;
+        self.fade_old = self.fade_target;
     }
 
     /// Sets the master output gain.
@@ -300,6 +345,7 @@ impl Mixer {
         let frames = out.len() / out_channels;
         let mut master_accumulator = MeterAccumulator::default();
         let any_solo = self.tracks.iter().any(|track| track.params.solo);
+        let (m0, dm, f0, df) = self.gain_ramp(frames);
 
         for frame in 0..frames {
             self.normalize_loop_position();
@@ -326,8 +372,9 @@ impl Mixer {
                 mix_right += right;
             }
 
-            let raw_left = mix_left * self.master_gain;
-            let raw_right = mix_right * self.master_gain;
+            let g = (m0 + dm * frame as f32) * (f0 + df * frame as f32);
+            let raw_left = mix_left * g;
+            let raw_right = mix_right * g;
 
             if out_channels == 1 {
                 let raw_mono = (raw_left + raw_right) * 0.5;
@@ -353,6 +400,7 @@ impl Mixer {
 
             self.position += self.speed;
         }
+        self.end_block();
 
         for (meter, accumulator) in self
             .track_meters
@@ -632,6 +680,8 @@ pub enum EngineCommand {
     SetTrack(usize, TrackParams),
     /// Set master gain.
     SetMasterGain(f32),
+    /// Enable or disable micro-fades.
+    SetMicrofades(bool),
 }
 
 /// Control-thread handle for a lock-free audio engine.
@@ -662,6 +712,8 @@ impl EngineHandle {
 /// Audio-thread side of the lock-free engine.
 pub struct AudioCallback {
     mixer: Mixer,
+    /// A pause/stop waiting for its micro-fade-out block: `Some(stop)`.
+    pending_halt: Option<bool>,
     rx: rtrb::Consumer<EngineCommand>,
     meters: Arc<SharedMeters>,
     playing: Arc<AtomicBool>,
@@ -673,7 +725,16 @@ impl AudioCallback {
         while let Ok(command) = self.rx.pop() {
             match command {
                 EngineCommand::Play => {
+                    self.pending_halt = None;
+                    self.mixer.set_fade_target(1.0);
                     self.playing.store(true, Ordering::Relaxed);
+                }
+                // With micro-fades, pause/stop first plays one block fading to silence.
+                EngineCommand::Pause | EngineCommand::Stop if self.mixer.microfades
+                    && self.playing.load(Ordering::Relaxed) =>
+                {
+                    self.mixer.set_fade_target(0.0);
+                    self.pending_halt = Some(command == EngineCommand::Stop);
                 }
                 EngineCommand::Pause => {
                     self.playing.store(false, Ordering::Relaxed);
@@ -682,6 +743,7 @@ impl AudioCallback {
                     self.mixer.set_position(0);
                     self.playing.store(false, Ordering::Relaxed);
                 }
+                EngineCommand::SetMicrofades(on) => self.mixer.set_microfades(on),
                 EngineCommand::Seek(frame) => self.mixer.set_position(frame),
                 EngineCommand::SetSpeed(speed) => self.mixer.set_speed(speed),
                 EngineCommand::SetLoop(loop_range) => self.mixer.set_loop(loop_range),
@@ -695,6 +757,13 @@ impl AudioCallback {
         if self.playing.load(Ordering::Relaxed) {
             if !self.mixer.process(out, channels) {
                 self.playing.store(false, Ordering::Relaxed);
+            }
+            if let Some(stop) = self.pending_halt.take() {
+                // The faded-out block has been rendered; now halt (resume fades back in).
+                self.playing.store(false, Ordering::Relaxed);
+                if stop {
+                    self.mixer.set_position(0);
+                }
             }
         } else {
             out.fill(0.0);
@@ -720,6 +789,7 @@ pub fn engine(mixer: Mixer) -> (EngineHandle, AudioCallback) {
         },
         AudioCallback {
             mixer,
+            pending_halt: None,
             rx,
             meters,
             playing,
@@ -803,6 +873,57 @@ impl InputSource for NullInput {
         out[..copied].copy_from_slice(&self.data[self.pos..self.pos + copied]);
         self.pos += copied;
         copied / channels
+    }
+}
+
+#[cfg(test)]
+mod microfade_tests {
+    use super::*;
+
+    fn dc_mixer() -> Mixer {
+        let audio = Arc::new(AudioBuffer::from_channels(100, vec![vec![0.5; 1000]]));
+        Mixer::new(vec![MixTrack { audio, offset: 0, params: TrackParams::default() }], 1.0)
+    }
+
+    #[test]
+    fn gain_change_ramps_over_one_block_with_microfades() {
+        let mut m = dc_mixer();
+        m.set_microfades(true);
+        let mut out = vec![0.0f32; 10];
+        m.process(&mut out, 1);
+        m.set_master_gain(0.0);
+        m.process(&mut out, 1);
+        // Mono track: 0.5 panned centre = 0.5 per side, averaged to mono.
+        assert!((out[0] - 0.5).abs() < 1e-6);
+        assert!((out[5] - 0.25).abs() < 1e-6);
+        assert!(out[9] > 0.0);
+        m.process(&mut out, 1);
+        assert!(out.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn without_microfades_gain_jumps() {
+        let mut m = dc_mixer();
+        let mut out = vec![0.0f32; 10];
+        m.process(&mut out, 1);
+        m.set_master_gain(0.0);
+        m.process(&mut out, 1);
+        assert!(out.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn stop_with_microfades_plays_a_fade_out_block() {
+        let (mut h, mut cb) = engine(dc_mixer());
+        h.send(EngineCommand::SetMicrofades(true));
+        h.send(EngineCommand::Play);
+        let mut out = vec![0.0f32; 20];
+        cb.render(&mut out, 2);
+        h.send(EngineCommand::Stop);
+        cb.render(&mut out, 2);
+        assert!(out[0] > 0.4 && out[18].abs() < 0.06);
+        assert!(!h.is_playing());
+        cb.render(&mut out, 2);
+        assert!(out.iter().all(|&v| v == 0.0));
     }
 }
 

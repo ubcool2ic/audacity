@@ -261,7 +261,7 @@ This roadmap describes intended scope, not a claim that planned features are imp
 | Spectrogram (Frequencies bit-exact, EAC ≤4e-7), spectral selection | Analysis | 9 | Done; Reassignment checked against lib-fft (tools/specref, 11 window/zero-padding configs × 2 zoom levels; ≤2 bins of ~150k flip on rounding). Not reproduced: Audacity's stale scratch at the extra window sample when zero padding > 1 |
 | mod-script-pipe + scripting commands, macros (.txt byte-identical) | Automation | 9 | Done; macro *application* not yet compared against Audacity (BizyBot) |
 | Toolbars, themes, AccessKit, UI automation | Application | 10 | Done (BizyBot) |
-| Preferences (3.7.3 keys/defaults, audacity.cfg I/O, Edit > Preferences pages, Get/SetPreference) | Preferences | 10 | Done. Applied: language, shortcuts, default project rate, export HQ dither. Most other keys are stored/edited but not yet consumed (Tracks Behaviors, Warnings, Effects grouping, devices) |
+| Preferences (3.7.3 keys/defaults, audacity.cfg I/O, Edit > Preferences pages, Get/SetPreference) | Preferences | 10 | Done. All keys on our pages are consumed except scrubbing, RTL=off and the compile-time-disabled AIL (see "Preferences wiring status"). `tools/compare_prefs.py` vs Audacity 3.7.3: **30/30** |
 | Localization (gettext .po/.mo, runtime switch) | Localization | 10 | Done: 249 UI literals via `tr_ui()` (Audacity msgids, accelerators stripped); Xvfb test switches to German at runtime. Strings built with `format!` are still English; catalog packaging is BizyBot's |
 | Keyboard shortcuts (Audacity Standard/Full defaults, remapping, shortcuts XML import/export, /NewKeys) | Application | 10 | Done. Standard set checked against 3.7.3 GetInfo Menus (73 menu shortcuts); non-menu (Extra) defaults taken from source, not checked against a running Audacity |
 | audio.com cloud save/share | Application | 10 | Deferred: needs an audio.com account and Audacity's private API |
@@ -435,3 +435,22 @@ Exporters link the same system libraries Audacity 3.7.3's export modules use (LA
 - Open:
   - Preferences workflows in the automation suite are waiting on the partner's preferences model.
   - Translated-catalog layout runs are waiting on the partner's gettext work.
+
+## Preferences wiring status (2026-10-15)
+Every setting is checked against Audacity 3.7.3 sources. Where the pipe allows it, it is also run side by side with Audacity (`tools/compare_prefs.py`, **30/30**).
+- [x] Tracks: default track name, view mode and waveform scale (per-track dB toggle). Sample display: stem plot or connect dots once zoomed in to at least ½ pixel per sample, with dots from 3 px per sample (WaveformView thresholds).
+- [x] Half-wave display when collapsed: per-track Collapse/Expand; bounds (-0.01, 1) follow DoSetMinimized. Auto-fit track height: ZoomFitVertically after every undo push (TracksPrefs Handler).
+- [x] Waveform drawing ported from TrackArt GetWaveYPos/FromDB/ValueOfPixel (`au-app/src/wave_paint.rs`). This replaces the old 0.44 scale.
+- [x] Interface > Meter dB range (/GUI/EnvdBRange, DecibelScaleCutoff): sets the floor of dB waveforms and the meter bars.
+- [x] Interface > Show 'Extra' menus: the Extra menu, item for item, from Audacity's GetInfo Menus. Compared: the menu shows and hides like Audacity's. Full Screen works.
+- [x] Tracks Behaviors: cut lines, Editing a clip can move other clips, Paste as new clips, Retain labels, Type to create a label, New Label dialog. Compared: 3/3 editing cases.
+- [x] Quality: Default Sample Format. Audio written into 16/24-bit tracks (effects, generators, recordings) is quantized with the HQ dither. Imports stay exact. Fixed the key to `/Quality/HQDitherAlgorithmChoice` and the 3.7.3 defaults: Dither None, HQ Shaped. Compared: Format16/24 at None is bit-exact (≤1 LSB at 24-bit); Shaped noise matches at 2.06 LSB rms for both.
+- [x] Playback > Micro-fades: master volume and pause/stop ramp linearly over one buffer (FillOutputBuffers). Stop waits latency + 50 ms when latency is under 150 ms. Unit-tested in au-io.
+- [x] Recording: Hear other tracks (Duplex), Audible input monitoring (software playthrough through a second output stream at the capture rate), Pre-roll (default fixed to 5 s), Crossfade, Sound-activated recording, Latency correction.
+- [x] Directories > Temporary files directory: untitled projects journal to `New Project <date> N-<n>.aup3unsaved` there (TempDirectory::UnsavedProjectFileName). The file is offered for recovery on the next launch after a crash and deleted on save or clean exit. Autosave now runs on a worker thread.
+- [x] Effects menu grouping and sorting, with a separate publisher for port-only effects. Compared: 15/15 menus.
+- [ ] Always scrub unpinned: there is no scrubbing gesture yet (see Stage 3).
+- [ ] RTL workaround = off: egui cannot mirror layouts, so we always behave as with the default (on).
+- [ ] Automated input level adjustment: `EXPERIMENTAL_AUTOMATED_INPUT_LEVEL_ADJUSTMENT` is commented out in 3.7.3's Experimental.cmake, so Audacity ignores the key too. Matches.
+- [ ] Extra menu commands: 85 of the 115 items (Transport play-around-selection, tools, mixer volume, Seek, Device, Selection/Cursor/Focus/Track navigation, ExportMp3…) are not pipe commands yet. Clicking one reports "not recognized", and their default shortcuts do nothing either.
+- [ ] Envelope is still drawn on our linear 0–2 scale, not GetWaveYPos (dB) like Audacity.

@@ -309,6 +309,7 @@ pub struct ProjectState {
 pub struct UndoManager {
     entries: Vec<(String, ProjectState)>,
     cursor: usize,
+    pushes: u64,
 }
 
 impl UndoManager {
@@ -317,11 +318,18 @@ impl UndoManager {
         Self {
             entries: vec![(String::new(), initial)],
             cursor: 0,
+            pushes: 0,
         }
+    }
+
+    /// Number of states pushed so far (Audacity's UndoRedoMessage::Pushed count).
+    pub fn push_count(&self) -> u64 {
+        self.pushes
     }
 
     /// Adds a state and discards any redo branch.
     pub fn push(&mut self, description: &str, state: ProjectState) {
+        self.pushes += 1;
         self.entries.truncate(self.cursor + 1);
         self.entries.push((description.to_owned(), state));
         self.cursor = self.entries.len() - 1;

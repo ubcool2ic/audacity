@@ -24,6 +24,10 @@ mod prefs_dialog;
 #[cfg(feature = "gui")]
 mod gui;
 #[cfg(feature = "gui")]
+mod wave_paint;
+#[cfg(feature = "gui")]
+mod extra_menu;
+#[cfg(feature = "gui")]
 mod script_bridge;
 #[cfg(feature = "gui")]
 mod plugin_manager;

@@ -596,6 +596,8 @@ pub mod device {
     /// thread to drain them.
     pub struct Recorder {
         _stream: cpal::Stream,
+        /// Software playthrough output (Recording > Audible input monitoring).
+        _monitor: Option<cpal::Stream>,
         rx: rtrb::Consumer<f32>,
         peak: Arc<std::sync::atomic::AtomicU32>,
         dropped_samples: Arc<AtomicU64>,
@@ -619,6 +621,18 @@ pub mod device {
             kind: InputKind,
             choice: &DeviceChoice,
             channels: Option<u16>,
+        ) -> Result<Recorder, IoError> {
+            Self::start_monitored(kind, choice, channels, None)
+        }
+
+        /// Like [`Recorder::start_on`], and with `playthrough` also plays the input on that
+        /// output device (Audacity's software playthrough, /AudioIO/SWPlaythrough). The monitor
+        /// is skipped when the output cannot run at the capture rate.
+        pub fn start_monitored(
+            kind: InputKind,
+            choice: &DeviceChoice,
+            channels: Option<u16>,
+            playthrough: Option<&DeviceChoice>,
         ) -> Result<Recorder, IoError> {
             let (device, supported) = match kind {
                 InputKind::Default => {
@@ -649,11 +663,21 @@ pub mod device {
             let peak_cb = peak.clone();
             let dropped_samples = Arc::new(AtomicU64::new(0));
             let dropped_samples_cb = dropped_samples.clone();
+            let in_channels = channels as usize;
+            let (monitor, mut monitor_tx) = match playthrough.map(|c| start_playthrough(c, sample_rate, in_channels)) {
+                Some(Ok((stream, tx))) => (Some(stream), Some(tx)),
+                _ => (None, None),
+            };
             let stream = device
                 .build_input_stream(
                     &config,
                     move |input: &[f32], _| {
                         let mut p = f32::from_bits(peak_cb.load(Ordering::Relaxed));
+                        if let Some(tx) = monitor_tx.as_mut() {
+                            for &s in input {
+                                let _ = tx.push(s);
+                            }
+                        }
                         for &s in input {
                             p = p.max(s.abs());
                             if tx.push(s).is_err() {
@@ -667,7 +691,7 @@ pub mod device {
                 )
                 .map_err(|error| IoError::Device(error.to_string()))?;
             stream.play().map_err(|error| IoError::Device(error.to_string()))?;
-            Ok(Recorder { _stream: stream, rx, peak, dropped_samples, channels, sample_rate })
+            Ok(Recorder { _stream: stream, _monitor: monitor, rx, peak, dropped_samples, channels, sample_rate })
         }
 
         /// Drains captured interleaved samples into `out`.
@@ -686,6 +710,58 @@ pub mod device {
         pub fn dropped_samples(&self) -> u64 {
             self.dropped_samples.load(Ordering::Relaxed)
         }
+    }
+
+    /// Output stream for software playthrough: plays interleaved input samples (`in_channels`
+    /// per frame) from a ring, mono input to every output channel, extra input channels dropped.
+    fn start_playthrough(
+        choice: &DeviceChoice,
+        rate: u32,
+        in_channels: usize,
+    ) -> Result<(cpal::Stream, rtrb::Producer<f32>), IoError> {
+        let device = resolve_output_device(choice)?;
+        let supported = device
+            .supported_output_configs()
+            .map_err(|error| IoError::Device(error.to_string()))?
+            .filter(|c| c.sample_format() == cpal::SampleFormat::F32)
+            .find(|c| c.min_sample_rate().0 <= rate && rate <= c.max_sample_rate().0)
+            .ok_or_else(|| IoError::Unsupported("no output config at the capture rate".to_owned()))?
+            .with_sample_rate(cpal::SampleRate(rate));
+        let out_channels = supported.channels() as usize;
+        let config: cpal::StreamConfig = supported.into();
+        // ~0.5 s ring; anything older is dropped rather than building latency.
+        let (tx, mut rx) = rtrb::RingBuffer::<f32>::new((rate as usize / 2).max(1024) * in_channels.max(1));
+        let in_ch = in_channels.max(1);
+        let stream = device
+            .build_output_stream(
+                &config,
+                move |out: &mut [f32], _| {
+                    out.fill(0.0);
+                    for frame in out.chunks_mut(out_channels.max(1)) {
+                        if rx.slots() < in_ch {
+                            break;
+                        }
+                        let mut v = [0.0f32; 2];
+                        for c in 0..in_ch {
+                            let s = rx.pop().unwrap_or(0.0);
+                            if c < 2 {
+                                v[c] = s;
+                            }
+                        }
+                        if in_ch == 1 {
+                            v[1] = v[0];
+                        }
+                        for (c, o) in frame.iter_mut().enumerate() {
+                            *o = v[c.min(1)];
+                        }
+                    }
+                },
+                |error| eprintln!("audio playthrough error: {error}"),
+                None,
+            )
+            .map_err(|error| IoError::Device(error.to_string()))?;
+        stream.play().map_err(|error| IoError::Device(error.to_string()))?;
+        Ok((stream, tx))
     }
 
     #[cfg(test)]

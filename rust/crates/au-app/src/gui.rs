@@ -40,6 +40,12 @@ pub fn run_with_files(files: Vec<PathBuf>) -> eframe::Result<()> {
                     p.exists() && au_project::aup3::inspect(p).is_ok_and(|i| i.needs_recovery)
                 })
             });
+            // Untitled projects journal into the temporary directory; offer leftovers.
+            let open = open.or_else(|| {
+                leftover_sessions(&app.settings.temp_dir).into_iter().find(|p| {
+                    au_project::aup3::inspect(p).is_ok_and(|i| i.needs_recovery)
+                })
+            });
             // open_path imports anything that is not a project (8c9ec90).
             if let Some(path) = open {
                 app.open_path(path);
@@ -167,6 +173,12 @@ struct AudacityApp {
     /// Signature of the history at the last autosave, and when it happened.
     autosave_sig: (usize, Option<String>),
     autosave_at: std::time::Instant,
+    /// Untitled project journal in the temporary directory (Audacity's
+    /// TempDirectory::UnsavedProjectFileName), removed once saved or on a clean exit.
+    session_file: Option<PathBuf>,
+    /// Autosave being written on a worker thread (the first journal of a long project
+    /// takes seconds; the UI must keep running).
+    autosave_job: Option<std::thread::JoinHandle<Result<(), String>>>,
     tool: Tool,
     zoom: ZoomInfo,
     /// Shared progress dialog / cancel UI for long jobs.
@@ -210,6 +222,10 @@ struct AudacityApp {
     toolbars: toolbars::ToolbarLayout,
     /// The selected drawing mode for each track.
     track_views: Vec<crate::spectrogram_view::TrackView>,
+    /// Per-track waveform view state: height, collapsed, dB scale, vertical zoom bounds.
+    wave_ui: Vec<WaveUi>,
+    /// Undo pushes already handled by Tracks > Auto-fit track height.
+    fit_seen_pushes: u64,
     /// Spectrogram textures and background computation jobs.
     spectrogram_cache: crate::spectrogram_view::SpectrogramCache,
     /// Display settings used by spectrogram tracks.
@@ -308,8 +324,12 @@ impl Default for AudacityApp {
             crash_reports: Vec::new(),
             autosave_sig: (1, None),
             autosave_at: std::time::Instant::now(),
+            session_file: None,
+            autosave_job: None,
             tool: Tool::Selection,
             track_views: Vec::new(),
+            wave_ui: Vec::new(),
+            fit_seen_pushes: 0,
             spectrogram_cache: crate::spectrogram_view::SpectrogramCache::new(),
             spectrogram_settings: crate::spectrogram_view::ViewSettings::default(),
             spectrogram_settings_open: false,
@@ -722,6 +742,7 @@ fn export_midi(&mut self) {
     }
 
     fn save_to(&mut self, path: PathBuf) {
+        self.wait_autosave();
         let result = if Self::is_aup3(&path) {
             au_project::aup3::save(&path, &self.current_aup3())
         } else {
@@ -735,6 +756,7 @@ fn export_midi(&mut self) {
                 self.status = au_core::i18n::tr_format("Saved %s", &[&path.display().to_string()]);
                 self.project_path = Some(path);
                 self.autosave_sig = self.history_sig();
+                self.discard_session_file();
             }
             Err(error) => self.status = au_core::i18n::tr_format("Save failed: %s", &[&error]),
         }
@@ -742,8 +764,41 @@ fn export_midi(&mut self) {
 
     /// Journals unsaved edits into the `.aup3` autosave table (at most every
     /// 2 s), so a crash can be recovered on the next open.
+    /// Waits for a background autosave before touching the project file.
+    fn wait_autosave(&mut self) {
+        if let Some(job) = self.autosave_job.take() {
+            let _ = job.join();
+        }
+    }
+
     fn maybe_autosave(&mut self) {
-        let Some(path) = self.project_path.clone().filter(|p| Self::is_aup3(p)) else { return };
+        if let Some(job) = self.autosave_job.take() {
+            if !job.is_finished() {
+                self.autosave_job = Some(job);
+                return;
+            }
+            if let Ok(Err(e)) = job.join() {
+                self.status = au_core::i18n::tr_format("Autosave failed: %s", &[&e]);
+            }
+        }
+        let path = match self.project_path.clone() {
+            Some(p) if Self::is_aup3(&p) => p,
+            Some(_) => return,
+            // Untitled: journal into Directories > Temporary files directory.
+            None if self.editor.history.can_undo() => match self.session_file.clone() {
+                Some(p) => p,
+                None => {
+                    let dir = session_dir(&self.settings.temp_dir);
+                    if std::fs::create_dir_all(&dir).is_err() {
+                        return;
+                    }
+                    let p = dir.join(unsaved_project_name(local_now()));
+                    self.session_file = Some(p.clone());
+                    p
+                }
+            },
+            None => return,
+        };
         let sig = self.history_sig();
         if sig == self.autosave_sig || self.autosave_at.elapsed().as_secs_f64() < 2.0 {
             return;
@@ -751,9 +806,10 @@ fn export_midi(&mut self) {
         self.autosave_at = std::time::Instant::now();
         if let Some(d) = &sig.1 { au_runtime::crash::log_action(format!("edit: {d}")); }
         self.autosave_sig = sig;
-        if let Err(e) = au_project::aup3::autosave(&path, &self.current_aup3()) {
-            self.status = au_core::i18n::tr_format("Autosave failed: %s", &[&e]);
-        }
+        let project = self.current_aup3();
+        self.autosave_job = Some(std::thread::spawn(move || {
+            au_project::aup3::autosave(&path, &project).map_err(|e| e.to_string())
+        }));
     }
 
     fn open_project(&mut self) {
@@ -1159,6 +1215,11 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                         return Some((format!("Unable to discard autosave: {}", error), false));
                     }
                     self.recovery_prompt.take();
+                    if is_unsaved_session(&path) {
+                        self.session_file = Some(path.clone());
+                        self.discard_session_file();
+                        return Some((format!("Discarded recovery for {}", path.display()), true));
+                    }
                     self.open_aup3(path.clone(), au_project::aup3::DocSource::Saved);
                     if status_failed(&self.status) {
                         Some((self.status.clone(), false))
@@ -1402,6 +1463,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     }
 
     fn open_path(&mut self, path: PathBuf) {
+        self.wait_autosave();
         if Self::is_aup3(&path) || au_project::is_aup3(&path) {
             match au_project::aup3::inspect(&path) {
                 Ok(info) if info.needs_recovery => {
@@ -1437,6 +1499,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     }
 
     fn open_aup3(&mut self, path: PathBuf, source: au_project::aup3::DocSource) {
+        let path_for_session = path.clone();
         match au_project::aup3::load_from(&path, source) {
             Ok(p) => {
                 if let Ok(b) = au_project::noise_profiles::load(&path) { self.room_noise.load_project_blobs(&b); }
@@ -1449,6 +1512,11 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 }
                 let (f0, f1) = self.aup3_extras.frequencies;
                 self.spectral_selection = (f0 >= 0.0 || f1 >= 0.0).then_some({ let mut r = au_core::selected_region::SelectedRegion::new(s0, s1); r.set_frequencies(f0, f1); crate::spectrogram_view::SpectralSelection::new(0, r) });
+                if is_unsaved_session(&path_for_session) {
+                    // A recovered untitled project stays untitled; it keeps journaling there.
+                    self.project_path = None;
+                    self.session_file = Some(path_for_session.clone());
+                }
                 if source == au_project::aup3::DocSource::Autosave {
                     // Unsaved until the user saves, like Audacity after recovery.
                     self.autosave_sig = (0, None);
@@ -1459,7 +1527,20 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         }
     }
 
+    /// Deletes the untitled-project journal (after a save, or on a clean exit).
+    fn discard_session_file(&mut self) {
+        self.wait_autosave();
+        if let Some(p) = self.session_file.take() {
+            for suffix in ["", "-wal", "-shm"] {
+                let mut f = p.clone().into_os_string();
+                f.push(suffix);
+                let _ = std::fs::remove_file(f);
+            }
+        }
+    }
+
     fn install_state(&mut self, state: au_core::ProjectState, path: PathBuf) {
+        self.wait_autosave();
         self.editor = Editor::new(state);
         self.selected_track = if self.editor.state().tracks.is_empty() { None } else { Some(0) };
         self.selection = None;
@@ -1475,7 +1556,15 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
 
     /// Forces an autosave of unsaved edits now (crash path; ignores the 2 s throttle).
     fn flush_autosave(&mut self) {
-        let Some(path) = self.project_path.clone().filter(|p| Self::is_aup3(p)) else { return };
+        self.wait_autosave();
+        let path = match &self.project_path {
+            Some(p) if Self::is_aup3(p) => p.clone(),
+            Some(_) => return,
+            None => match &self.session_file {
+                Some(p) => p.clone(),
+                None => return,
+            },
+        };
         if self.history_sig() != self.autosave_sig {
             let _ = au_project::aup3::autosave(&path, &self.current_aup3());
         }
@@ -1538,6 +1627,8 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             Some(1) => {
                 self.recovery_prompt = None;
                 match au_project::aup3::discard_autosave(&path) {
+                    // Discarding an untitled project's recovery deletes its temp file.
+                    Ok(()) if is_unsaved_session(&path) => { self.session_file = Some(path); self.discard_session_file(); }
                     Ok(()) => self.open_aup3(path, au_project::aup3::DocSource::Saved),
                     Err(e) => self.status = au_core::i18n::tr_format("Discard failed: %s", &[&e]),
                 }
@@ -1697,7 +1788,9 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             self.play_speed,
             loop_range,
         ) {
-            Ok(player) => {
+            Ok(mut player) => {
+                // Playback > Micro-fades.
+                player.handle.send(EngineCommand::SetMicrofades(self.settings.micro_fades));
                 self.player = Some(player);
                 self.status = "Playing".to_owned();
             }
@@ -1726,6 +1819,12 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     fn stop_playback(&mut self) {
         if let Some(mut player) = self.player.take() {
             player.stop();
+            // AudioIO::StopStream: with micro-fades and latency < 150 ms, wait latency + 50 ms
+            // so the faded-out buffer reaches the sound card.
+            let latency = self.settings.latency_duration_ms;
+            if self.settings.micro_fades && latency < 150.0 && player.handle.is_playing() {
+                std::thread::sleep(std::time::Duration::from_millis((latency.max(0.0) + 50.0) as u64));
+            }
         }
         self.status = "Stopped".to_owned();
     }
@@ -1807,7 +1906,13 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     }
 
     fn begin_recording(&mut self) {
-        let recorder = match Recorder::start_on(self.input_kind, &self.device_choice(true), Some(self.settings.record_channels.max(1) as u16)) {
+        let recorder = match Recorder::start_monitored(
+            self.input_kind,
+            &self.device_choice(true),
+            Some(self.settings.record_channels.max(1) as u16),
+            // Recording > Audible input monitoring (software playthrough).
+            self.settings.sw_playthrough.then(|| self.device_choice(false)).as_ref(),
+        ) {
             Ok(recorder) => recorder,
             Err(error) => {
                 self.status = au_core::i18n::tr_format("Recording failed: %s", &[&format!("{error:?}")]);
@@ -1924,7 +2029,10 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 self.play_speed,
                 None,
             ) {
-                Ok(player) => self.player = Some(player),
+                Ok(mut player) => {
+                    player.handle.send(EngineCommand::SetMicrofades(self.settings.micro_fades));
+                    self.player = Some(player);
+                }
                 Err(error) => self.status = au_core::i18n::tr_format("Playback failed: %s", &[&format!("{error:?}")]),
             }
         }
@@ -2691,7 +2799,55 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         }
     }
 
+    /// The waveform view state of a track, created from the Tracks preferences on first use.
+    fn wave_ui(&mut self, index: usize) -> WaveUi {
+        let db = matches!(self.settings.default_wave_scale, crate::settings::WaveScale::LinearDb);
+        while self.wave_ui.len() <= index {
+            self.wave_ui.push(WaveUi { height: WaveUi::DEFAULT_HEIGHT, minimized: false, db, zoom_min: -1.0, zoom_max: 1.0 });
+        }
+        self.wave_ui[index]
+    }
+
+    /// Collapse / expand a track (Audacity's track minimize button); with "Half-wave display
+    /// when collapsed" the vertical bounds follow WaveformView::DoSetMinimized.
+    fn set_track_minimized(&mut self, index: usize, minimized: bool) {
+        let mut w = self.wave_ui(index);
+        w.minimized = minimized;
+        if let Some((lo, hi)) = crate::wave_paint::collapsed_bounds(self.settings.collapse_to_half_wave, minimized) {
+            w.zoom_min = lo;
+            w.zoom_max = hi;
+        }
+        self.wave_ui[index] = w;
+    }
+
+    /// View > Track Size > Fit to Height (Viewport::ZoomFitVertically): share the available
+    /// height between the non-collapsed tracks, never below the minimum track height.
+    fn zoom_fit_vertically(&mut self, available: f32) {
+        let count = self.editor.state().tracks.len();
+        if count == 0 {
+            return;
+        }
+        let _ = self.wave_ui(count - 1);
+        let expanded: Vec<usize> = (0..count).filter(|&i| !self.wave_ui[i].minimized).collect();
+        let channels: usize = expanded
+            .iter()
+            .map(|&i| self.editor.state().tracks[i].clips.n_channels.max(1))
+            .sum();
+        if channels == 0 {
+            return;
+        }
+        let fixed: f32 = (0..count).filter(|i| !expanded.contains(i)).map(|_| WaveUi::MINIMIZED_HEIGHT).sum();
+        let per = ((available - 28.0 - fixed) / channels as f32).max(WaveUi::MIN_HEIGHT);
+        for i in expanded {
+            let ch = self.editor.state().tracks[i].clips.n_channels.max(1) as f32;
+            self.wave_ui[i].height = per * ch;
+        }
+    }
+
     fn draw_track(&mut self, ui: &mut egui::Ui, index: usize) {
+        let wave = self.wave_ui(index);
+        let db_range = self.settings.env_db_range.max(1) as f32;
+        let sample_view = self.settings.sample_view;
         let width = ui.available_width().max(1.0);
         let zoom = self.zoom.clone();
         let selection = self.selection.filter(|selection| selection.track == index);
@@ -2714,7 +2870,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         let clr_selection = egui::Color32::from_rgba_unmultiplied(sr, sg, sb, 110);
 
         let (rect, response) =
-            ui.allocate_exact_size(egui::vec2(width, 116.0), egui::Sense::click_and_drag());
+            ui.allocate_exact_size(egui::vec2(width, if wave.minimized { WaveUi::MINIMIZED_HEIGHT } else { wave.height }), egui::Sense::click_and_drag());
         let info = {
             let state = self.editor.state();
             state.tracks.get(index).map(|track| {
@@ -2852,6 +3008,40 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                                 continue;
                             }
                             let raw = summaries.raw(&clip.buffer, channel);
+                            let h_px = channel_height.round().max(1.0) as i32;
+                            let y_of = |py: i32| channel_top + py as f32;
+                            let clip_rate = rendered_len as f64 / clip_len_secs.max(f64::EPSILON);
+                            // Zoomed in to >= 1/2 pixel per sample: draw individual samples
+                            // (Tracks > Sample display: stem plot / connect dots), as WaveformView.
+                            if crate::wave_paint::show_individual_samples(zoom.pixels_per_sec, clip_rate) {
+                                if let Some(raw) = raw {
+                                    let t_left = zoom.x_to_time((first_x as f32 - rect.left()) as f64) - clip_start;
+                                    let t_right = zoom.x_to_time((last_x as f32 - rect.left()) as f64) - clip_start;
+                                    let s0 = ((t_left * clip_rate).floor().max(0.0) as usize).min(raw.len());
+                                    let s1 = (((t_right * clip_rate).ceil() as usize) + 1).min(raw.len());
+                                    let g = crate::wave_paint::individual_samples(
+                                        &raw[s0..s1], clip_start + s0 as f64 / clip_rate, clip_rate,
+                                        zoom.h_offset, zoom.pixels_per_sec, rect.width() as i32, h_px,
+                                        wave.zoom_min, wave.zoom_max, wave.db, db_range);
+                                    let pts: Vec<egui::Pos2> = g.xs.iter().zip(&g.ys)
+                                        .map(|(&x, &y)| egui::pos2(rect.left() + x as f32, y_of(y))).collect();
+                                    let stroke = egui::Stroke::new(1.0, clr_sample);
+                                    let stem = matches!(sample_view, crate::settings::SampleView::StemPlot);
+                                    if stem {
+                                        for p in &pts {
+                                            painter.line_segment([egui::pos2(p.x, y_of(g.y_zero)), *p], stroke);
+                                        }
+                                    } else {
+                                        painter.add(egui::Shape::line(pts.clone(), stroke));
+                                    }
+                                    if crate::wave_paint::show_points(zoom.pixels_per_sec, clip_rate) {
+                                        for p in &pts {
+                                            painter.circle_filled(*p, 2.5, clr_sample);
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
                             for x in first_x..last_x {
                                 let local_time_start =
                                     zoom.x_to_time((x as f32 - rect.left()) as f64) - clip_start;
@@ -2877,23 +3067,26 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                                 else {
                                     continue;
                                 };
-                                let scale = channel_height * 0.44;
+                                let rms = if show_rms {
+                                    raw.and_then(|r| r.get(start..end)).map(|samples| {
+                                        (samples.iter().map(|v| v * v).sum::<f32>() / samples.len().max(1) as f32).sqrt()
+                                    })
+                                } else {
+                                    None
+                                };
+                                // TrackArt GetWaveYPos: linear or dB (Interface > Meter dB range).
+                                let (h1, h2, r1, r2) = crate::wave_paint::min_max_rms_pixels(
+                                    low, high, rms.unwrap_or(0.0), h_px, wave.zoom_min, wave.zoom_max, wave.db, db_range);
                                 painter.line_segment(
-                                    [
-                                        egui::pos2(x as f32, center - high * scale),
-                                        egui::pos2(x as f32, center - low * scale),
-                                    ],
+                                    [egui::pos2(x as f32, y_of(h1)), egui::pos2(x as f32, y_of(h2))],
                                     egui::Stroke::new(1.0, clr_sample),
                                 );
-                                if show_rms {
-                                    if let Some(samples) = raw.and_then(|r| r.get(start..end)) {
-                                        let rms = (samples.iter().map(|v| v * v).sum::<f32>() / samples.len().max(1) as f32).sqrt();
-                                        painter.line_segment(
-                                            [egui::pos2(x as f32, center - rms.min(high.max(0.0)) * scale),
-                                             egui::pos2(x as f32, center + rms.min((-low).max(0.0)) * scale)],
-                                            egui::Stroke::new(1.0, clr_sample.gamma_multiply(0.55)),
-                                        );
-                                    }
+                                if let Some(rms) = rms {
+                                    let _ = rms;
+                                    painter.line_segment(
+                                        [egui::pos2(x as f32, y_of(r1.max(h1))), egui::pos2(x as f32, y_of(r2.min(h2)))],
+                                        egui::Stroke::new(1.0, clr_sample.gamma_multiply(0.55)),
+                                    );
                                 }
                                 if show_clipping && (high >= 1.0 || low <= -1.0) {
                                     painter.line_segment(
@@ -4114,7 +4307,9 @@ if self.ffmpeg_window {
             });
     }
 
-    fn draw_meter_bar(ui: &mut egui::Ui, label: &str, peak: f32, rms: f32) {
+    /// Meter bar on a dB scale whose floor is Interface > Meter dB range (/GUI/EnvdBRange,
+    /// Audacity's DecibelScaleCutoff used by MeterPanel).
+    fn draw_meter_bar(ui: &mut egui::Ui, label: &str, peak: f32, rms: f32, db_range: f32) {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(190.0, 18.0), egui::Sense::hover());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 2.0, egui::Color32::from_gray(38));
@@ -4122,7 +4317,7 @@ if self.ffmpeg_window {
             if value <= 0.0 {
                 0.0
             } else {
-                ((20.0 * value.log10() + 60.0) / 60.0).clamp(0.0, 1.0)
+                ((20.0 * value.log10() + db_range) / db_range).clamp(0.0, 1.0)
             }
         };
         let rms_width = rect.width() * db_position(rms);
@@ -4152,7 +4347,7 @@ if self.ffmpeg_window {
         painter.text(
             rect.left_top() + egui::vec2(4.0, 1.0),
             egui::Align2::LEFT_TOP,
-            au_core::i18n::tr_format("%s  P %.1f dB  R %.1f dB", &[&label, &(if peak > 0.0 { 20.0 * peak.log10() } else { -60.0 }), &(if rms > 0.0 { 20.0 * rms.log10() } else { -60.0 })]),
+            au_core::i18n::tr_format("%s  P %.1f dB  R %.1f dB", &[&label, &(if peak > 0.0 { (20.0 * peak.log10()).max(-db_range) } else { -db_range }), &(if rms > 0.0 { (20.0 * rms.log10()).max(-db_range) } else { -db_range })]),
             egui::FontId::proportional(10.0),
             egui::Color32::WHITE,
         );
@@ -4259,6 +4454,10 @@ if self.ffmpeg_window {
 }
 
 impl eframe::App for AudacityApp {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.discard_session_file();
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // The panic hook has already written the crash report; flush unsaved
         // edits to the autosave before the panic continues to unwind.
@@ -4341,6 +4540,7 @@ if let Some(pipe) = self.script_pipe.as_mut() {
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             self.menu_titles.clear();
+            let mut extra_command: Option<&'static str> = None;
             egui::menu::bar(ui, |ui| {
                 ui.menu_button({ let t = au_core::i18n::tr_ui("File"); self.menu_titles.push(t.clone()); t }, |ui| {
                     if ui.button(au_core::i18n::tr_ui("Import audio…")).clicked() {
@@ -4557,6 +4757,16 @@ if response.changed() && self.script_pipe_enabled {
                     }
                 });
 
+                // Interface > Show 'Extra' menus: Audacity's Extra menu, item for item.
+                if self.settings.show_extra_menus {
+                    ui.menu_button({ let t = au_core::i18n::tr_ui("Extra"); self.menu_titles.push(t.clone()); t }, |ui| {
+                        if let Some(id) = show_extra_menu(ui, crate::extra_menu::EXTRA_MENU) {
+                            ui.close_menu();
+                            extra_command = Some(id);
+                        }
+                    });
+                }
+
                 for (menu, kind) in [
                     ("Generate", EffectKind::Generate),
                     ("Effect", EffectKind::Process),
@@ -4633,6 +4843,18 @@ if response.changed() && self.script_pipe_enabled {
                     });
                 }
             });
+            if let Some(id) = extra_command {
+                if id == "FullScreenOnOff" {
+                    // ExtraMenus.cpp OnFullScreen.
+                    let full = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!full));
+                } else {
+                    let (message, ok) = self.execute_script(&format!("{id}:"));
+                    if !ok {
+                        self.status = message;
+                    }
+                }
+            }
 
             self.toolbar_dock(ui, ctx, true);
 
@@ -4669,6 +4891,15 @@ if response.changed() && self.script_pipe_enabled {
             }
 
             self.draw_ruler(ui);
+            // Tracks > Auto-fit track height: fit vertically after every new undo state
+            // (TracksPrefs.cpp Handler on UndoRedoMessage::Pushed).
+            let pushes = self.editor.history.push_count();
+            if pushes != self.fit_seen_pushes {
+                self.fit_seen_pushes = pushes;
+                if self.settings.tracks_fit_vertically_zoomed {
+                    self.zoom_fit_vertically(ui.available_height());
+                }
+            }
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let count = self.editor.state().tracks.len();
                 self.track_views.resize(count, Default::default());
@@ -4698,6 +4929,19 @@ if response.changed() && self.script_pipe_enabled {
                             );
                         });
                     self.track_views[index] = selected_view;
+                    let mut w = self.wave_ui(index);
+                    ui.horizontal(|ui| {
+                        let label = if w.minimized { au_core::i18n::tr_ui("Expand") } else { au_core::i18n::tr_ui("Collapse") };
+                        if ui.small_button(label).clicked() {
+                            w.minimized = !w.minimized;
+                        }
+                        ui.checkbox(&mut w.db, au_core::i18n::tr_ui("dB"));
+                    });
+                    let minimized = w.minimized;
+                    self.wave_ui[index].db = w.db;
+                    if minimized != self.wave_ui[index].minimized {
+                        self.set_track_minimized(index, minimized);
+                    }
 
                     match selected_view {
                         crate::spectrogram_view::TrackView::Waveform => {
@@ -5556,6 +5800,79 @@ pub(crate) fn show_effect_nodes(ui: &mut egui::Ui, nodes: &[crate::settings::Men
 }
 
 /// Local (y, m, d, h, mi, s) for recording track names.
+/// Draws the Extra menu's submenus and items; returns the command id clicked.
+fn show_extra_menu(ui: &mut egui::Ui, items: &'static [crate::extra_menu::ExtraItem]) -> Option<&'static str> {
+    let mut clicked = None;
+    let mut i = 0;
+    while i < items.len() {
+        let it = items[i];
+        if it.label == "----" {
+            ui.separator();
+            i += 1;
+        } else if it.id.is_empty() {
+            let end = items[i + 1..].iter().position(|x| x.depth <= it.depth).map_or(items.len(), |p| i + 1 + p);
+            let children = &items[i + 1..end];
+            ui.menu_button(au_core::i18n::tr_ui(it.label), |ui| {
+                for c in children {
+                    if ui.button(au_core::i18n::tr_ui(c.label)).clicked() {
+                        clicked = Some(c.id);
+                    }
+                }
+            });
+            i = end;
+        } else {
+            if ui.button(au_core::i18n::tr_ui(it.label)).clicked() {
+                clicked = Some(it.id);
+            }
+            i += 1;
+        }
+    }
+    clicked
+}
+
+/// Directories > Temporary files directory, or our default (Audacity: <data dir>/SessionData).
+fn session_dir(pref: &str) -> PathBuf {
+    if !pref.trim().is_empty() {
+        return PathBuf::from(pref);
+    }
+    // A private preferences file (tests, portable runs) keeps its session data beside it.
+    if let Some(p) = std::env::var_os("AU_PREFS_PATH") {
+        if let Some(dir) = std::path::Path::new(&p).parent() {
+            return dir.join("SessionData");
+        }
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".local/share"))
+        .join("audacity-rs/SessionData")
+}
+
+/// FileNames::CreateUniqueName("New Project", "aup3unsaved").
+fn unsaved_project_name(now: (i32, u32, u32, u32, u32, u32)) -> String {
+    static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    format!(
+        "New Project {:04}-{:02}-{:02} {:02}-{:02}-{:02} N-{n}.aup3unsaved",
+        now.0, now.1, now.2, now.3, now.4, now.5
+    )
+}
+
+fn is_unsaved_session(p: &std::path::Path) -> bool {
+    p.extension().is_some_and(|e| e == "aup3unsaved")
+}
+
+/// Unsaved-project journals left by a crash, for the recovery dialog on launch.
+fn leftover_sessions(pref: &str) -> Vec<PathBuf> {
+    let Ok(rd) = std::fs::read_dir(session_dir(pref)) else { return Vec::new() };
+    let mut v: Vec<PathBuf> = rd
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "aup3unsaved"))
+        .collect();
+    v.sort();
+    v
+}
+
 fn local_now() -> (i32, u32, u32, u32, u32, u32) {
     let out = std::process::Command::new("date").arg("+%Y %m %d %H %M %S").output().ok();
     let v: Vec<u32> = out
@@ -5567,9 +5884,6 @@ fn local_now() -> (i32, u32, u32, u32, u32, u32) {
         (1970, 1, 1, 0, 0, 0)
     }
 }
-
-/// Quality > Default Sample Format: new 16/24-bit tracks hold quantized samples, converted with
-/// the real-time Dither setting like Audacity's SampleFormat conversion on import.
 
 /// Generate / Effect / Analyze menu layout. Analyze starts with Audacity's non-effect commands
 /// (Contrast…, Plot Spectrum…) and a separator, then the grouped analyzers (MenuHelper).
@@ -5597,4 +5911,20 @@ fn effects_menu_nodes(kind: EffectKind, group_by: &str) -> Vec<crate::settings::
     }
     nodes.extend(crate::settings::effect_menu(&entries, group_by));
     nodes
+}
+
+/// Per-track waveform view state (Audacity's ChannelView height/minimized + WaveformScale).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WaveUi {
+    height: f32,
+    minimized: bool,
+    db: bool,
+    zoom_min: f32,
+    zoom_max: f32,
+}
+
+impl WaveUi {
+    const DEFAULT_HEIGHT: f32 = 116.0;
+    const MINIMIZED_HEIGHT: f32 = 44.0;
+    const MIN_HEIGHT: f32 = 44.0;
 }

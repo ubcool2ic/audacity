@@ -617,13 +617,13 @@ impl AudacityApp {
                 let reading = self.player.as_ref().map(|player| player.handle.meters.load());
                 ui.horizontal(|ui| {
                     if let Some(reading) = reading {
-                        Self::draw_meter_bar(ui, "L", reading.peak[0], reading.rms[0]);
-                        Self::draw_meter_bar(ui, "R", reading.peak[1], reading.rms[1]);
+                        Self::draw_meter_bar(ui, "L", reading.peak[0], reading.rms[0], self.settings.env_db_range.max(1) as f32);
+                        Self::draw_meter_bar(ui, "R", reading.peak[1], reading.rms[1], self.settings.env_db_range.max(1) as f32);
                     } else {
-                        Self::draw_meter_bar(ui, "L", 0.0, 0.0);
-                        Self::draw_meter_bar(ui, "R", 0.0, 0.0);
+                        Self::draw_meter_bar(ui, "L", 0.0, 0.0, self.settings.env_db_range.max(1) as f32);
+                        Self::draw_meter_bar(ui, "R", 0.0, 0.0, self.settings.env_db_range.max(1) as f32);
                     }
-                    Self::draw_meter_bar(ui, "REC", self.record_peak, self.record_peak);
+                    Self::draw_meter_bar(ui, "REC", self.record_peak, self.record_peak, self.settings.env_db_range.max(1) as f32);
                 });
             }
             ToolbarId::Mixer => {

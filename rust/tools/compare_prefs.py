@@ -170,6 +170,17 @@ def main():
                  f"ours off-grid {on_grid:g}, max diff {d:g} LSB, shapes {a.shape} {b.shape}")
         A("SetPreference: Name=/SamplingRate/DefaultProjectSampleFormatChoice Value=Format32BitFloat")
 
+    # 6. Interface > Show 'Extra' menus: the Extra top-level menu appears exactly when set.
+    for on in (0, 1):
+        c = open(cfgp).read(); c = re.sub(r"ShowExtraMenus=.*\n", "", c)
+        c = c.replace("[GUI]\n", f"[GUI]\nShowExtraMenus={on}\n", 1) if "[GUI]\n" in c else c + f"\n[GUI]\nShowExtraMenus={on}\n"; open(cfgp, "w").write(c)
+        with C.Aud() as A:
+            aud = [m["label"].replace("&", "") for m in jload(A("GetInfo: Type=Menus Format=JSON")) if m["depth"] == 0]
+        with Ours() as O:
+            O(f"SetPreference: Name=/GUI/ShowExtraMenus Value={on}"); time.sleep(0.5); O("GetPreference: Name=/GUI/ShowExtraMenus")
+            ours = body(O("GetMenuTitles:")).split("\t")
+        report(f"Extra menu shown={on}", ("Extra" in aud) == ("Extra" in ours) == bool(on), f"aud {'Extra' in aud} ours {'Extra' in ours}")
+
     print(f"{sum(1 for r in res if r[1])}/{len(res)} pass")
 
 if __name__ == "__main__":

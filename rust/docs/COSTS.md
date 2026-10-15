@@ -303,3 +303,24 @@ Hand edits: trivial fixes only: a Select swap (2 lines), FadeOut `len-1-index` p
 
 **Running total (ubcool2ic): $2.0256**
 
+
+## ubcool2ic: preferences wiring, extra effects publisher, MP3 progress, tr_format, edit behaviours, waveform drawing (2026-10-14/15)
+
+| File | Model | USD |
+|---|---|---|
+| csrc/export_mp3.cpp progress callback (mp3prog) | openai/gpt-6-luna | 0.0026 |
+| tr_format extraction and rewrites (trfmt) | openai/gpt-6-luna | 0.0098 |
+| au-core/src/edit_behaviors.rs (editbeh) | openai/gpt-6-luna | 0.0110 |
+| au-app/src/wave_paint.rs (wavepaint) | openai/gpt-6-luna | 0.0041 |
+
+Luna 4 calls, $0.0275. Sol: none. **Batch total: $0.0275**.
+
+Hand glue (not Luna):
+- gui.rs: waveform view state, collapse, fit-vertically, drawing calls, Extra menu, temp-dir session, background autosave, micro-fade/playthrough hookup, dither/pre-roll/duplex wiring.
+- au-io: engine.rs micro-fades plus 3 tests; lib.rs playthrough stream.
+- fx_bridge.rs: quantize/dither.
+- extra_menu.rs: data generated from Audacity's GetInfo output.
+- compare_prefs.py: sections 5 and 6.
+- Default and key fixes, and the edit_behaviors.rs test fixture.
+
+**Running total (ubcool2ic): $2.0531**
