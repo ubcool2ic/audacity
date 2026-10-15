@@ -1175,15 +1175,49 @@ mod tests {
 mod golden {
     use super::*;
 
-    fn reference(sig: &[f32], s: &AudSpectrogramSettings, pos: &[i64]) -> Option<Vec<f32>> {
+    /// The binary is keyed by the source hash so a changed spec_ref.cpp can never run against a stale build.
+    fn spec_ref_exe() -> Option<String> {
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tools/specref");
-        let exe = format!("{root}/spec_ref");
-        if !std::path::Path::new(&exe).exists() {
-            let ok = std::process::Command::new("sh").arg(format!("{root}/build.sh")).status().ok()?;
-            if !ok.success() {
+        let source = std::fs::read(format!("{root}/spec_ref.cpp")).ok()?;
+
+        let hash = source.iter().fold(0xcbf29ce484222325u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        });
+
+        let dir = std::env::var_os("CARGO_TARGET_TMPDIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::temp_dir().join("au-specref"));
+        let exe = dir.join(format!("spec_ref-{hash:016x}"));
+
+        if !exe.exists() {
+            std::fs::create_dir_all(&dir).ok()?;
+
+            let mut tmp = exe.as_os_str().to_owned();
+            tmp.push(format!(".{}-{:?}.tmp", std::process::id(), std::thread::current().id()));
+            let tmp = std::path::PathBuf::from(tmp);
+
+            let status = std::process::Command::new("g++")
+                .arg("-O2")
+                .arg("-o")
+                .arg(&tmp)
+                .arg(format!("{root}/spec_ref.cpp"))
+                .arg("/usr/lib/audacity/lib-fft.so")
+                .arg("-Wl,-rpath,/usr/lib/audacity")
+                .status()
+                .ok()?;
+
+            if !status.success() {
                 return None;
             }
+
+            std::fs::rename(&tmp, &exe).ok()?;
         }
+
+        Some(exe.to_string_lossy().into_owned())
+    }
+
+    fn reference(sig: &[f32], s: &AudSpectrogramSettings, pos: &[i64]) -> Option<Vec<f32>> {
+        let exe = spec_ref_exe()?;
         let dir = std::env::temp_dir().join(format!("specref-{}", std::process::id()));
         std::fs::create_dir_all(&dir).ok()?;
         let input = dir.join("in.f32");
@@ -1251,17 +1285,7 @@ mod golden {
         pos: &[i64],
         pps: f64,
     ) -> Option<Vec<f32>> {
-        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tools/specref");
-        let exe = format!("{root}/spec_ref");
-        if !std::path::Path::new(&exe).exists() {
-            let ok = std::process::Command::new("sh")
-                .arg(format!("{root}/build.sh"))
-                .status()
-                .ok()?;
-            if !ok.success() {
-                return None;
-            }
-        }
+        let exe = spec_ref_exe()?;
         let dir = std::env::temp_dir().join(format!("specref-reassign-{}", std::process::id()));
         std::fs::create_dir_all(&dir).ok()?;
         let input = dir.join("in.f32");
