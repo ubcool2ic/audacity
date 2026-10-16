@@ -372,3 +372,16 @@ Hand glue (not Luna): au-io Recorder applies the gain in the capture callback (u
 
 - scrub.rs (Luna), gui/scrub_glue.rs + gui.rs ruler wiring (hand), settings: pinned_head, UnpinnedScrubbing default true.
 | 2026-10-15 | Worker w2: Multi tool hit test, Audacity snapping registry, keyboard scrub stutter/variable speed (62fb005a7e, cbec39cbaa, 9b7940e3cb) | hand-written, no OpenRouter calls | $0.00 |
+
+## ubcool2ic: clips before time 0, kept through edits, saved in .aup3 (2026-10-15)
+
+| Edit (diff-style prompt, tools /workspace/or6/gendiff.py) | Model | USD |
+|---|---|---|
+| au-core timeline.rs + edit_behaviors.rs: keep the audio before 0 through edits (head) | openai/gpt-6-luna | 0.0059 |
+| au-project aup3.rs: negative waveclip offset save/load (aup3neg) | openai/gpt-6-luna | 0.0035 |
+
+Luna 2 calls, $0.0094. Sol: none. **Batch total: $0.0094**. The previous batch (negative clip start in move_clip, Delete collapse, scroll-aware Time Shift) was hand-written, $0.
+
+Hand edits (trivial): removed the unused clip_shift_desired helper, VERSION_3_7 default for new projects, compare_extra.py .aup3 checks.
+
+**Running total (ubcool2ic): $2.0706** (includes the $2.0612 recording-volume batch above)

@@ -62,6 +62,24 @@ def main():
                 for X in (A, O):
                     X(f"{cmd}:"); out.append(body(X("GetPreference: Name=/Snap/Mode")).strip())
                 report(cmd, out[0] == out[1], f"aud {out[0]} ours {out[1]}")
+        # .aup3 with a clip before time 0, both directions.
+        import glob
+        for f in glob.glob("/tmp/au-xneg-*.aup3*"): os.remove(f)
+        a_file, o_file = "/tmp/au-xneg-aud.aup3", "/tmp/au-xneg-ours.aup3"
+        setup(A); A("SelectTime: Start=0 End=2"); A("SelectTracks: Track=0 TrackCount=1 Mode=Set")
+        A("ClipLeft:"); A("ClipLeft:"); A(f"SaveProject2: Filename={a_file}")
+        aud_clips = [round(c["start"], 4) for c in jload(A("GetInfo: Type=Clips Format=JSON"))]
+        with Ours() as O:
+            setup(O); O("SelectTime: Start=0 End=2"); O("ClipLeft:"); O("ClipLeft:"); O(f"SaveProject2: Filename={o_file}")
+        with Ours() as O:
+            O(f"OpenProject2: Filename={a_file}")
+            ours_read = [round(c["start"], 4) for c in jload(O("GetInfo: Type=Clips Format=JSON"))]
+        report("ours opens Audacity .aup3", ours_read == aud_clips, f"aud {aud_clips} ours {ours_read}")
+    for f in glob.glob(o_file + "-*"): os.remove(f)
+    with C.Aud() as A:  # fresh, empty Audacity so the opened file is the only project
+        r = body(A(f"OpenProject2: Filename={o_file} AddToHistory=0"))
+        aud_read = [round(c["start"], 4) for c in jload(A("GetInfo: Type=Clips Format=JSON"))]
+        report("Audacity opens our .aup3", aud_read == aud_clips and "Failed" not in r, f"aud {aud_read} expected {aud_clips} {r!r}")
     print(f"{sum(res)}/{len(res)} passed")
     return 0 if all(res) else 1
 
