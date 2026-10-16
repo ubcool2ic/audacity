@@ -395,3 +395,13 @@ Hand edits (trivial): removed the unused clip_shift_desired helper, VERSION_3_7 
 | openai/gpt-6-sol | 0 | – | $0.00 |
 
 **BizyBot6 total: $0.011886.** posix-fd poll(), envelope contours and the gui.rs embed slot were hand-written.
+
+## BizyBot3: Windows script pipe, system-mixer input gain, record slider (2026-10-15)
+
+| Subtask | Model | Tokens in / out | USD |
+|---|---|---|---|
+| WASAPI IAudioEndpointVolume + CoreAudio mixer (first call ran out of output tokens: Windows part usable, macOS part cut off) | google/gemini-3.8-flash | 823 / 11996 | 0.0456 |
+| CoreAudio input volume scalar mixer (macOS part again, reasoning low) | google/gemini-3.8-flash | 449 / 2438 | 0.0095 |
+
+Gemini 3.8 Flash: 2 calls, $0.0551. meta/muse-spark-1.3, openai/gpt-6-luna and Sol were not used. **Batch total: $0.0551**.
+Written by hand ($0): the au-scriptpipe windows-sys 0.59 fixes, the per-device PulseAudio source mapping, the RecordVolume set_mixer/poll_external methods, the gui.rs slider and polling, and fixes to the generated Windows code (PropVariantToStringAlloc path, Cargo features).
