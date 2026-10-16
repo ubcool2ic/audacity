@@ -372,6 +372,8 @@ fn clear_wave_range(
     if move_clips {
         clips.remove_range(start, end)?;
     } else {
+        let clear_hidden_head = start == 0
+            && clips.clips.first().is_some_and(|clip| clip.start == 0 && end >= clip.end());
         let mut updated = Vec::with_capacity(clips.clips.len());
         for clip in clips.clips.drain(..) {
             let clip_end = clip.end();
@@ -404,6 +406,9 @@ fn clear_wave_range(
             }
         }
         clips.clips = updated;
+        if clear_hidden_head {
+            clips.hidden_head = None;
+        }
         clips.clips.sort_by_key(|clip| clip.start);
 
         let duration = amount as f64 / f64::from(clips.sample_rate.max(1));

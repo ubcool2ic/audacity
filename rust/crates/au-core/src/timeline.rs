@@ -231,9 +231,6 @@ pub struct WaveClips {
 pub struct HiddenHead {
     /// Source audio before time 0, in order.
     pub audio: AudioBuffer,
-    /// Visible length of the owning clip when the head was stored; a different length or start
-    /// means the clip was edited or replaced and the head no longer applies.
-    pub owner_len: usize,
 }
 
 fn concat_buffers(a: &AudioBuffer, b: &AudioBuffer) -> AudioBuffer {
@@ -252,7 +249,7 @@ impl WaveClips {
     pub fn hidden_head(&self) -> Option<&HiddenHead> {
         let head = self.hidden_head.as_ref()?;
         let first = self.clips.first()?;
-        (first.start == 0 && first.len() == head.owner_len && first.stretch_ratio == 1.0).then_some(head)
+        (first.start == 0 && first.stretch_ratio == 1.0).then_some(head)
     }
 
     /// A clip's start in timeline frames; negative when it begins before time 0.
@@ -384,13 +381,13 @@ impl WaveClips {
             if !self.can_place(idx, start, visible.len()) {
                 return Err(CoreError::InvalidRange(start, start.saturating_add(visible.len())));
             }
-            let owner_len = visible.len();
+            let visible_len = visible.len();
             self.clips[idx].buffer = visible;
             self.clips[idx].start = start;
-            self.hidden_head = hidden.map(|audio| HiddenHead { audio, owner_len });
+            self.hidden_head = hidden.map(|audio| HiddenHead { audio });
             self.sort_clips();
             return self.clips.iter().position(|clip| clip.start == start)
-                .ok_or(CoreError::InvalidRange(start, start.saturating_add(owner_len)));
+                .ok_or(CoreError::InvalidRange(start, start.saturating_add(visible_len)));
         }
         let start = new_start.max(0) as usize;
         let len = self.clips[idx].len();
@@ -398,6 +395,9 @@ impl WaveClips {
             return Err(CoreError::InvalidRange(start, start.saturating_add(len)));
         }
 
+        if (idx == 0 && start > 0) || (idx != 0 && start == 0) {
+            self.hidden_head = None;
+        }
         self.clips[idx].start = start;
         self.sort_clips();
         self.clips
@@ -429,6 +429,8 @@ impl WaveClips {
             return Ok(removed_audio);
         }
         let amount = end - start;
+        let clear_hidden_head = start == 0
+            && self.clips.first().is_some_and(|clip| clip.start == 0 && end >= clip.end());
         let mut updated = Vec::with_capacity(self.clips.len());
 
         for clip in self.clips.drain(..) {
@@ -475,6 +477,9 @@ impl WaveClips {
         }
 
         self.clips = updated;
+        if clear_hidden_head {
+            self.hidden_head = None;
+        }
         self.sort_clips();
         self.remove_envelope_range(start, end);
         Ok(removed_audio)
@@ -539,8 +544,15 @@ impl WaveClips {
         if edited.n_channels() != self.n_channels {
             return Err(CoreError::ChannelMismatch);
         }
+        let saved_head = self.hidden_head().cloned();
         self.remove_range(start, end)?;
-        self.insert(start, &edited)
+        self.insert(start, &edited)?;
+        if self.clips.first().is_some_and(|clip| clip.start == 0 && clip.stretch_ratio == 1.0) {
+            if saved_head.is_some() {
+                self.hidden_head = saved_head;
+            }
+        }
+        Ok(())
     }
 
     /// Sets a clip's time-stretch ratio, rejecting nonpositive or overlapping results.
@@ -556,6 +568,9 @@ impl WaveClips {
         let len = rendered_len(self.clips[idx].buffer.len(), ratio);
         if !self.can_place(idx, start, len) {
             return Err(CoreError::InvalidRange(start, start.saturating_add(len)));
+        }
+        if idx == 0 && ratio != 1.0 {
+            self.hidden_head = None;
         }
         self.clips[idx].stretch_ratio = ratio;
         self.sort_clips();
@@ -1310,6 +1325,12 @@ mod tests {
         AudioBuffer::from_channels(rate, vec![samples.to_vec()])
     }
 
+    fn clip_before_zero() -> WaveClips {
+        let mut track = WaveClips::from_buffer("clip", mono(10, &[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]));
+        track.move_clip(0, -3).unwrap();
+        track
+    }
+
     #[test]
     fn timeline_split_join_and_sample_accurate_split() {
         let mut track = WaveClips::from_buffer("clip", mono(44_100, &[1.0, 2.0, 3.0]));
@@ -1549,5 +1570,47 @@ mod tests {
         assert!(t.hidden_head().is_none());
         t.move_clip(0, -50).unwrap();
         assert_eq!(t.clip_start_frames(0), -9);
+    }
+
+    #[test]
+    fn hidden_head_survives_split_and_move_back() {
+        let mut track = clip_before_zero();
+        track.split(4).unwrap();
+        track.move_clip(0, -3).unwrap();
+        assert_eq!(track.clip_start_frames(0), -3);
+        assert_eq!(track.hidden_head().unwrap().audio.channels[0], vec![0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn hidden_head_survives_partial_remove_range() {
+        let mut track = clip_before_zero();
+        track.remove_range(2, 4).unwrap();
+        assert_eq!(track.clip_start_frames(0), -3);
+    }
+
+    #[test]
+    fn removing_whole_visible_clip_clears_hidden_head() {
+        let mut track = clip_before_zero();
+        let end = track.end();
+        track.remove_range(0, end).unwrap();
+        assert!(track.hidden_head().is_none());
+        assert!(track.hidden_head.is_none());
+    }
+
+    #[test]
+    fn apply_range_over_whole_visible_clip_keeps_hidden_head() {
+        let mut track = clip_before_zero();
+        let end = track.end();
+        track.apply_range(0, end, |_| {}).unwrap();
+        assert_eq!(track.clip_start_frames(0), -3);
+        assert_eq!(track.hidden_head().unwrap().audio.channels[0], vec![0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn insert_into_visible_clip_keeps_hidden_head() {
+        let mut track = clip_before_zero();
+        track.insert(2, &mono(10, &[10.0])).unwrap();
+        assert_eq!(track.clip_start_frames(0), -3);
+        assert_eq!(track.hidden_head().unwrap().audio.channels[0], vec![0.0, 1.0, 2.0]);
     }
 }
