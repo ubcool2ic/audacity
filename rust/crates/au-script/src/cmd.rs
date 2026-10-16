@@ -57,6 +57,12 @@ pub trait ScriptHost {
     fn menu_command(&mut self, id: &str) -> Option<Result<(), String>>;
     /// Displays a message to the user.
     fn message(&mut self, text: &str);
+    /// Returns the focused track index (wave-track then label-track order), if any.
+    fn focused_track(&self) -> Option<usize> {
+        None
+    }
+    /// Moves track focus (SetTrackStatus Focused=1).
+    fn set_focused_track(&mut self, _track: Option<usize>) {}
 }
 
 /// Parses an Audacity batch command line.
@@ -155,6 +161,7 @@ pub fn execute(host: &mut dyn ScriptHost, line: &str) -> (String, bool) {
             execute_select(host, &command, &params)
         }
         "SetLabel" => execute_set_label(host, &params),
+        "AddLabel" => execute_add_label(host),
         "SetClip" => execute_set_clip(host, &params),
         "SetTrack" | "SetTrackStatus" | "SetTrackAudio" => {
             execute_set_track(host, &command, &params)
@@ -651,8 +658,9 @@ fn execute_set_track(
         selection.tracks.resize(total, false);
         selection.tracks[index] = selected;
     }
-    // Focus is not represented by ProjectState or the script-visible selection.
-    let _focused = param(params, "Focused").and_then(parse_bool);
+    if param(params, "Focused").and_then(parse_bool) == Some(true) {
+        host.set_focused_track(Some(index));
+    }
 
     if changed {
         host.push_undo("Track Mix");
@@ -688,7 +696,32 @@ fn execute_get_info(host: &mut dyn ScriptHost, params: &[(String, String)]) -> (
     (format_output(&json, format), true)
 }
 
+/// Edit > Labels > Add Label at Selection (LabelMenus.cpp DoAddLabel): the first selected
+/// label track gets the label, else a new label track is created; that track ends selected.
+fn execute_add_label(host: &mut dyn ScriptHost) -> (String, bool) {
+    let n_wave = host.state().tracks.len();
+    let n_label = host.state().labels.len();
+    let (t0, t1) = (host.selection().t0, host.selection().t1);
+    let selected = host.selection().tracks.clone();
+    let target = (0..n_label).find(|i| selected.get(n_wave + i).copied().unwrap_or(false));
+    let target = match target {
+        Some(i) => i,
+        None => {
+            host.state().labels.push(au_core::timeline::LabelTrack::new("Label"));
+            n_label
+        }
+    };
+    host.state().labels[target].add(t0.min(t1), t0.max(t1), "");
+    let total = n_wave + host.state().labels.len();
+    let selection = host.selection();
+    selection.tracks.resize(total, false);
+    selection.tracks[n_wave + target] = true;
+    host.push_undo("Added Label");
+    (String::new(), true)
+}
+
 fn get_info_tracks(host: &mut dyn ScriptHost) -> String {
+    let focus = host.focused_track();
     let selected = host.selection().tracks.clone();
     let state = host.state();
     let mut entries = Vec::new();
@@ -714,8 +747,9 @@ fn get_info_tracks(host: &mut dyn ScriptHost) -> String {
             .map(|clip| clip.buffer.n_channels())
             .unwrap_or(1);
         entries.push(format!(
-            "{{\"name\":{},\"focused\":false,\"selected\":{},\"kind\":\"wave\",\"start\":{},\"end\":{},\"pan\":{},\"volume\":{},\"channels\":{},\"solo\":{},\"mute\":{},\"VZoomMin\":0,\"VZoomMax\":1}}",
+            "{{\"name\":{},\"focused\":{},\"selected\":{},\"kind\":\"wave\",\"start\":{},\"end\":{},\"pan\":{},\"volume\":{},\"channels\":{},\"solo\":{},\"mute\":{},\"VZoomMin\":0,\"VZoomMax\":1}}",
             json_string(&track.name),
+            focus == Some(index),
             selected.get(index).copied().unwrap_or(false),
             number(start),
             number(end),

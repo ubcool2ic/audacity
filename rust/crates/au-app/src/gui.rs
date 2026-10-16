@@ -985,6 +985,16 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 return Some((format!("File not found: {filename}"), false));
             }
 
+            // Audacity imports a .txt file as a label track named after the file.
+            if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("txt")) {
+                let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                return Some(match std::fs::read_to_string(&path).map_err(|e| e.to_string())
+                    .and_then(|text| self.editor.import_labels(&name, &text).map_err(|e| e.to_string()))
+                {
+                    Ok(_) => (format!("Imported {filename}"), true),
+                    Err(error) => (format!("Could not import labels from {filename}: {error}"), false),
+                });
+            }
             let tracks_before = self.editor.state().tracks.len();
             let _status_before = self.status.clone();
             if Self::is_aup3(&path) || path.extension().is_some_and(|e| e.eq_ignore_ascii_case("aurs")) { self.open_path(path); } else { self.import_path(path); }
@@ -5529,6 +5539,12 @@ impl<'a> AppScriptHost<'a> {
                 sel.tracks[i] = true;
             }
         }
+        // Label-track selection kept between pipe commands (AddLabel targets it).
+        for (i, selected) in app.extra.label_sel.iter().enumerate() {
+            if *selected && state.tracks.len() + i < n {
+                sel.tracks[state.tracks.len() + i] = true;
+            }
+        }
         if let Some(sp) = app.spectral_selection {
             sel.f0 = sp.f0();
             sel.f1 = sp.f1();
@@ -5540,6 +5556,8 @@ impl<'a> AppScriptHost<'a> {
     fn finish(self) {
         let n_wave = self.app.editor.state().tracks.len();
         self.app.extra.track_sel = (0..n_wave).map(|i| self.sel.tracks.get(i).copied().unwrap_or(false)).collect();
+        let n_label = self.app.editor.state().labels.len();
+        self.app.extra.label_sel = (0..n_label).map(|i| self.sel.tracks.get(n_wave + i).copied().unwrap_or(false)).collect();
         if let Some(track) = self.sel.tracks.iter().take(n_wave).position(|s| *s) {
             let rate = self.app.editor.state().tracks[track].sample_rate();
             let len = self.app.editor.state().tracks[track].len();
@@ -5568,6 +5586,13 @@ impl<'a> AppScriptHost<'a> {
 }
 
 impl au_script::ScriptHost for AppScriptHost<'_> {
+    fn focused_track(&self) -> Option<usize> {
+        self.app.focused_track
+    }
+    fn set_focused_track(&mut self, track: Option<usize>) {
+        let n_wave = self.app.editor.state().tracks.len();
+        self.app.focused_track = track.filter(|&t| t < n_wave);
+    }
     fn state(&mut self) -> &mut au_core::ProjectState {
         if self.work.is_none() {
             self.work = Some(self.app.editor.state().clone());

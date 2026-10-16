@@ -6,6 +6,7 @@ pub(crate) struct ExtraState {
     pub last_label: i32,
     pub last_seek: Option<std::time::Instant>,
     pub track_sel: Vec<bool>,
+    pub label_sel: Vec<bool>,
     pub panel_width: f32,
     pub frame_focus_tracks: bool,
 }
@@ -17,6 +18,7 @@ impl Default for ExtraState {
             last_label: -1,
             last_seek: None,
             track_sel: Vec::new(),
+            label_sel: Vec::new(),
             panel_width: 0.0,
             frame_focus_tracks: false,
         }
