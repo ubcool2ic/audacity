@@ -4,6 +4,7 @@ use au_scriptpipe::{PipeClient, PipeNames};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
@@ -23,7 +24,7 @@ impl TestDir {
             .as_nanos();
         let id = NEXT_DIR_ID.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
-            "au-ui-automation-{}-{nonce}-{id}",
+            "au-crash-recovery-{}-{nonce}-{id}",
             std::process::id()
         ));
         fs::create_dir(&path).expect("create temporary test directory");
@@ -48,7 +49,20 @@ impl App {
         remove_stale_pipes(dir);
 
         let names = PipeNames::in_dir(dir, "audacity_script_pipe");
-        let mut child = Command::new(env!("CARGO_BIN_EXE_audacity-rs"))
+        let tmp = dir.join("tmp");
+        let _ = fs::create_dir_all(&tmp);
+        // Each launch gets its own Xvfb server (xvfb-run -a picks a free display) and its
+        // own TMPDIR/XDG dirs, so parallel tests never share an X display or temp files.
+        let mut child = Command::new("xvfb-run")
+            .args(["-a", "-s", "-screen 0 1280x1024x24 -nolisten tcp"])
+            .arg(env!("CARGO_BIN_EXE_audacity-rs"))
+            .process_group(0)
+            .env_remove("DISPLAY")
+            .env("TMPDIR", &tmp)
+            .env("XDG_RUNTIME_DIR", &tmp)
+            .env("XDG_CACHE_HOME", dir.join("cache"))
+            .env("XDG_CONFIG_HOME", dir.join("config"))
+            .env("XDG_DATA_HOME", dir.join("data"))
             .env("AU_SCRIPT_PIPE", "1")
             .env("AU_SCRIPT_PIPE_DIR", dir)
             .env("AU_PREFS_PATH", std::path::Path::new(&dir).join("audacity.cfg"))
@@ -106,6 +120,10 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
+        // Kill the whole process group: xvfb-run, its Xvfb and audacity-rs.
+        let _ = Command::new("kill")
+            .args(["-KILL", "--", &format!("-{}", self.child.id())])
+            .status();
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -132,6 +150,9 @@ fn connect_with_retry(names: &PipeNames, child: &mut Child) -> PipeClient {
         };
 
         if Instant::now() >= deadline {
+            let _ = Command::new("kill")
+                .args(["-KILL", "--", &format!("-{}", child.id())])
+                .status();
             let _ = child.kill();
             let _ = child.wait();
             panic!("could not connect to script pipes within 20 seconds: {last_error}");
@@ -142,8 +163,13 @@ fn connect_with_retry(names: &PipeNames, child: &mut Child) -> PipeClient {
 }
 
 fn test_dir_or_skip(test_name: &str) -> Option<TestDir> {
-    if std::env::var_os("DISPLAY").is_none() {
-        eprintln!("skipping {test_name}: DISPLAY is not set");
+    let have_xvfb = Command::new("sh")
+        .args(["-c", "command -v xvfb-run >/dev/null"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !have_xvfb {
+        eprintln!("skipping {test_name}: xvfb-run is not installed");
         None
     } else {
         Some(TestDir::new())
