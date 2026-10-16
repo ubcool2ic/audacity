@@ -914,7 +914,6 @@ fn process_default_group_items(entries: &[EffectEntry]) -> (Vec<MenuNode>, Vec<b
             if let Some((index, entry)) = entries.iter().enumerate().find(|(index, entry)| {
                 !selected[*index]
                     && entry.is_bundled
-                    && (entry.is_default || entry.is_bundled)
                     && entry.name == *effect_name
             }) {
                 selected[index] = true;
