@@ -371,3 +371,4 @@ Hand glue (not Luna): au-io Recorder applies the gain in the capture callback (u
 | openai/gpt-6-luna (via user-OpenRouterAPI) | 1 (scrub.rs logic + tests; 930 in / 2181 out) | ~$0.001 |
 
 - scrub.rs (Luna), gui/scrub_glue.rs + gui.rs ruler wiring (hand), settings: pinned_head, UnpinnedScrubbing default true.
+| 2026-10-15 | Worker w2: Multi tool hit test, Audacity snapping registry, keyboard scrub stutter/variable speed (62fb005a7e, cbec39cbaa, 9b7940e3cb) | hand-written, no OpenRouter calls | $0.00 |
