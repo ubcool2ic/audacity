@@ -445,7 +445,6 @@ pub fn editor_main(args: &[String]) -> i32 {
     }
 }
 
-#[cfg(target_os = "linux")]
 #[derive(Debug, PartialEq, Eq)]
 pub struct EditorArgs {
     pub format: String,
@@ -540,6 +539,7 @@ mod editor_args_tests {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn editor_main_linux(args: &[String]) -> Result<(), String> {
     use au_plugin_api::{EditorParent, PluginHost, PluginInstance};
     use std::collections::HashMap;

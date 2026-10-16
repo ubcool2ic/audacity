@@ -20,7 +20,7 @@ use clap_sys::{
         params::{clap_host_params, clap_param_info, clap_plugin_params, CLAP_EXT_PARAMS},
         posix_fd_support::{
             clap_host_posix_fd_support, clap_plugin_posix_fd_support, clap_posix_fd_flags,
-            CLAP_EXT_POSIX_FD_SUPPORT, CLAP_POSIX_FD_ERROR, CLAP_POSIX_FD_READ, CLAP_POSIX_FD_WRITE,
+            CLAP_EXT_POSIX_FD_SUPPORT,
         },
         state::{clap_host_state, clap_plugin_state, CLAP_EXT_STATE},
         thread_check::{clap_host_thread_check, CLAP_EXT_THREAD_CHECK},
@@ -821,7 +821,9 @@ pub fn run_loop_idle() {
 /// Non-blocking `poll()` over the registered posix fds. Returns only the fds
 /// that are actually ready, with the CLAP flags that fired (READ/WRITE/ERROR),
 /// masked to what the plugin registered for (ERROR is always reported).
+#[cfg(unix)]
 pub(crate) fn poll_ready_fds(fds: &[(i32, clap_posix_fd_flags)]) -> Vec<(i32, clap_posix_fd_flags)> {
+    use clap_sys::ext::posix_fd_support::{CLAP_POSIX_FD_ERROR, CLAP_POSIX_FD_READ, CLAP_POSIX_FD_WRITE};
     let mut pollfds: Vec<libc::pollfd> = fds
         .iter()
         .filter(|(fd, flags)| *fd >= 0 && *flags != 0)
@@ -864,9 +866,16 @@ pub(crate) fn poll_ready_fds(fds: &[(i32, clap_posix_fd_flags)]) -> Vec<(i32, cl
         .collect()
 }
 
-#[cfg(test)]
+/// posix-fd support is a Unix-only CLAP extension; no fd is ever ready elsewhere.
+#[cfg(not(unix))]
+pub(crate) fn poll_ready_fds(_fds: &[(i32, clap_posix_fd_flags)]) -> Vec<(i32, clap_posix_fd_flags)> {
+    Vec::new()
+}
+
+#[cfg(all(test, unix))]
 mod posix_fd_poll_tests {
     use super::*;
+    use clap_sys::ext::posix_fd_support::{CLAP_POSIX_FD_READ, CLAP_POSIX_FD_WRITE};
 
     #[test]
     fn idle_pipe_is_not_reported_until_written() {
