@@ -3327,6 +3327,15 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 }
             }
         }
+        if let Some(p) = response.hover_pos() {
+            let tool = if self.tool == Tool::Multi {
+                self.multi_tool_at(index, p, rect, rate)
+            } else {
+                self.tool
+            };
+            let dragging_clip = matches!(self.drag.as_ref(), Some(PointerDrag::Clip { .. }));
+            ui.ctx().set_cursor_icon(Self::tool_cursor(tool, dragging_clip));
+        }
 
         if response.drag_started() {
             if let Some(pointer) = response.interact_pointer_pos() {
@@ -3380,6 +3389,24 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                                 time: envelope_points[point].0,
                                 value: envelope_points[point].1,
                             });
+                        } else {
+                            let value = self.envelope_value(index, pointer.y, body_top, body_height).clamp(0.0, 2.0);
+                            match self.editor.add_envelope_point(index, time, value) {
+                                Ok(()) => {
+                                    let points = &self.editor.state().tracks[index].clips.envelope.points;
+                                    if let Some((point, inserted)) = points.iter().enumerate().min_by(|(_, a), (_, b)| {
+                                        (a.time - time).abs().total_cmp(&(b.time - time).abs())
+                                    }) {
+                                        self.drag = Some(PointerDrag::Envelope {
+                                            track: index,
+                                            point,
+                                            time: inserted.time,
+                                            value: inserted.value,
+                                        });
+                                    }
+                                }
+                                Err(error) => self.status = error.to_string(),
+                            }
                         }
                     }
                     Tool::Draw => {

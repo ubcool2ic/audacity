@@ -5,6 +5,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MultiHit {
     Envelope,
+    TimeShift,
     Draw,
     Select,
 }
@@ -43,10 +44,17 @@ pub fn hit_sample(sample_y: i32, mouse_y: i32) -> bool {
     (sample_y - mouse_y).abs() < SAMPLE_Y_TOLERANCE
 }
 
+/// TimeShiftHandle::HitTest's grip check.
+pub fn hit_grip(mouse_x: i32, rect_x: i32, rect_width: i32) -> bool {
+    mouse_x + 5 < rect_x + 14 || mouse_x + 5 >= rect_x + rect_width - 14
+}
+
 /// Priority order of WaveformView::DetailedHitTest with bMultiTool.
-pub fn multi_hit(envelope: bool, sample: bool) -> MultiHit {
+pub fn multi_hit(envelope: bool, grip: bool, sample: bool) -> MultiHit {
     if envelope {
         MultiHit::Envelope
+    } else if grip {
+        MultiHit::TimeShift
     } else if sample {
         MultiHit::Draw
     } else {
@@ -75,8 +83,17 @@ mod tests {
         assert!(!sample_editing_possible(44100.0 * 3.0, 44100.0));
         assert!(hit_sample(50, 59));
         assert!(!hit_sample(50, 60));
-        assert_eq!(multi_hit(true, true), MultiHit::Envelope);
-        assert_eq!(multi_hit(false, true), MultiHit::Draw);
-        assert_eq!(multi_hit(false, false), MultiHit::Select);
+        assert_eq!(multi_hit(true, true, true), MultiHit::Envelope);
+        assert_eq!(multi_hit(false, true, true), MultiHit::TimeShift);
+        assert_eq!(multi_hit(false, false, true), MultiHit::Draw);
+        assert_eq!(multi_hit(false, false, false), MultiHit::Select);
+    }
+
+    #[test]
+    fn grip_hit_test() {
+        assert!(hit_grip(108, 100, 200));
+        assert!(!hit_grip(109, 100, 200));
+        assert!(!hit_grip(280, 100, 200));
+        assert!(hit_grip(281, 100, 200));
     }
 }

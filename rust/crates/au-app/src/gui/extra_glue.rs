@@ -506,6 +506,17 @@ impl AudacityApp {
 }
 
 impl AudacityApp {
+    pub(super) fn tool_cursor(tool: Tool, dragging_clip: bool) -> egui::CursorIcon {
+        match tool {
+            Tool::Selection => egui::CursorIcon::Text,
+            Tool::Envelope => egui::CursorIcon::ResizeVertical,
+            Tool::Draw => egui::CursorIcon::Crosshair,
+            Tool::TimeShift if dragging_clip => egui::CursorIcon::Grabbing,
+            Tool::TimeShift => egui::CursorIcon::Grab,
+            Tool::Multi => egui::CursorIcon::Default,
+        }
+    }
+
     /// Multi tool: WaveformView::DetailedHitTest order (envelope, sample at sample zoom, select).
     pub(super) fn multi_tool_at(&self, index: usize, pointer: egui::Pos2, rect: egui::Rect, rate: u32) -> Tool {
         use crate::tools as t;
@@ -526,6 +537,7 @@ impl AudacityApp {
         } else {
             (env_y - mouse_y).abs() - t::ENV_Y_MISALIGN < t::ENV_Y_TOLERANCE
         };
+        let grip_hit = t::hit_grip(pointer.x.round() as i32, rect.left().round() as i32, rect.width().round() as i32);
         let sample_hit = t::sample_editing_possible(self.zoom.pixels_per_sec, rate as f64) && {
             let frame = au_core::secs_to_frames(time, rate);
             track.clips.clip_at(frame).is_some()
@@ -535,8 +547,9 @@ impl AudacityApp {
                     t::hit_sample(y, mouse_y)
                 })
         };
-        match t::multi_hit(env_hit, sample_hit) {
+        match t::multi_hit(env_hit, grip_hit, sample_hit) {
             t::MultiHit::Envelope => Tool::Envelope,
+            t::MultiHit::TimeShift => Tool::TimeShift,
             t::MultiHit::Draw => Tool::Draw,
             t::MultiHit::Select => Tool::Selection,
         }
