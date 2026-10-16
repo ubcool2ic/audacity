@@ -466,3 +466,12 @@ Release docs (README, CHANGELOG, THIRD_PARTY_NOTICES, RELEASE_NOTES, KNOWN_ISSUE
 
 Started from BizyBot's unpushed backup (extra_cmds.rs/extra_logic.rs/compare_extra.py), items 68-89 only; glue by hand.
 No gemini-3.8-flash / muse-spark-1.3 / gpt-6-sol calls. **Batch total: $0.0016**.
+## Verify bot — full recheck + Windows build (2026-10-15/16)
+
+| Work | Model | USD |
+|---|---|---|
+| Win32 plugin editor host (editor_win.rs) | google/gemini-3.8-flash | 0.0901 |
+| Lyria 3 Clip live check (30 s, streamed) | google/lyria-3-clip-preview | 0.0400 |
+| Windows path/FFmpeg/Nyquist/pipe/packaging fixes, clippy fixes | none (hand-edited glue) | 0.0000 |
+
+**Batch total: $0.1301**

@@ -195,7 +195,7 @@ This roadmap describes intended scope, not a claim that planned features are imp
 
 **BizyBot status (2026-10-14), per docs/SPLIT_stage9.md:**
 - mod-script-pipe (`au-scriptpipe`):
-  - Unix FIFOs `/tmp/audacity_script_pipe.to/from.<uid>`, overridable with `AU_SCRIPT_PIPE_DIR`. Windows `\\.\pipe\ToSrvPipe`/`FromSrvPipe` (not yet compiled or tested).
+  - Unix FIFOs `/tmp/audacity_script_pipe.to/from.<uid>`, overridable with `AU_SCRIPT_PIPE_DIR`. Windows `\\.\pipe\ToSrvPipe`/`FromSrvPipe` (tested under Wine 2026-10-15).
   - Threaded server; commands are queued to the UI thread.
   - Audacity's `pipe_test.py` passes against both the server and the GUI (`AU_SCRIPT_PIPE=1`, or View > mod-script-pipe).
   - The interim interpreter in `au-app/src/script_bridge.rs` handles Help, Message and GetInfo. The app handles Import2 and SetTrackVisuals/SetTrack (Display, SpecScale) itself. The partner's au-script will replace this interpreter.
@@ -258,6 +258,7 @@ This roadmap describes intended scope, not a claim that planned features are imp
 | CLAP/VST3/LV2/LADSPA hosting | Plugins | 7/8B | Done (BizyBot) |
 | Codecs (WAV/AIFF/FLAC/MP3/Ogg/Opus/WavPack/FFmpeg), metadata, Export Multiple, MIDI | Import/export | 8 | Done; 27/27 bit-identical exports |
 | Nyquist (Audacity's libnyquist, .ny parser, sandboxed worker) | Automation | 9 | Done; 19/19 bit-exact |
+| Windows x64 build (cross-built with mingw, run under Wine 10) | Platform | 10 | Links all 5 exes; zip + MSI build via `packaging/windows/build-cross.sh`; Wine smoke: import/effects/export (WAV/FLAC/MP3/M4A), named pipe, FFmpeg 7 detection, VST3/CLAP scan + Win32 editor, Nyquist output identical to Linux. Not yet run on real Windows or audio hardware (2026-10-15, see docs/VERIFY_2026-10-15.md) |
 | Spectrogram (Frequencies bit-exact, EAC ≤4e-7), spectral selection | Analysis | 9 | Done; Reassignment checked against lib-fft (tools/specref, 11 window/zero-padding configs × 2 zoom levels; ≤2 bins of ~150k flip on rounding). Not reproduced: Audacity's stale scratch at the extra window sample when zero padding > 1 |
 | mod-script-pipe + scripting commands, macros (.txt byte-identical) | Automation | 9 | Done; macro *application* not yet compared against Audacity (BizyBot) |
 | Toolbars, themes, AccessKit, UI automation | Application | 10 | Done (BizyBot) |
