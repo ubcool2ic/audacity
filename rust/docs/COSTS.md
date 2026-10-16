@@ -371,7 +371,6 @@ Hand glue (not Luna): au-io Recorder applies the gain in the capture callback (u
 | openai/gpt-6-luna (via user-OpenRouterAPI) | 1 (scrub.rs logic + tests; 930 in / 2181 out) | ~$0.001 |
 
 - scrub.rs (Luna), gui/scrub_glue.rs + gui.rs ruler wiring (hand), settings: pinned_head, UnpinnedScrubbing default true.
-| 2026-10-15 | Worker w2: Multi tool hit test, Audacity snapping registry, keyboard scrub stutter/variable speed (62fb005a7e, cbec39cbaa, 9b7940e3cb) | hand-written, no OpenRouter calls | $0.00 |
 
 ## ubcool2ic: clips before time 0, kept through edits, saved in .aup3 (2026-10-15)
 
@@ -407,3 +406,14 @@ Follow-up (windows-gnu cfg(unix) fix, Effect-menu editor test under Xvfb): hand-
 
 Gemini 3.8 Flash: 2 calls, $0.0551. meta/muse-spark-1.3, openai/gpt-6-luna and Sol were not used. **Batch total: $0.0551**.
 Written by hand ($0): the au-scriptpipe windows-sys 0.59 fixes, the per-device PulseAudio source mapping, the RecordVolume set_mixer/poll_external methods, the gui.rs slider and polling, and fixes to the generated Windows code (PropVariantToStringAlloc path, Cargo features).
+
+## Worker w2: Multi tool, snapping, keyboard scrub (2026-10-15)
+
+| Model | Calls | Tokens (in/out) | Cost (OpenRouter usage) |
+|---|---|---|---|
+| openai/gpt-6-luna | 2 (snap toolbar fea9b346ef; Multi grips/envelope drag/cursors 5b21961bc7) | 6672 / 6258 | $0.003963 |
+| google/gemini-3.8-flash | 2 (scrub_queue.rs 12502187a2; tools/compare_snap.py) | 5614 / 57643 | $0.220372 |
+| meta/muse-spark-1.3 | 0 | – | $0.00 |
+| openai/gpt-6-sol | 0 | – | $0.00 |
+
+**Worker w2 total: $0.224335.** First batch (62fb005a7e snapping registry, cbec39cbaa Multi hit test, 9b7940e3cb scrub stutter port) was hand-written, $0. Hand glue: hunk re-anchoring, borrow/derive fixes, per-id Audacity restart in compare_snap.py.
