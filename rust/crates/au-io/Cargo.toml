@@ -19,6 +19,9 @@ rtrb = "0.3"
 flacenc = "0.4"
 cpal = { version = "0.15", optional = true }
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Win32_Media_Audio", "Win32_Media_Audio_Endpoints", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_Devices_FunctionDiscovery", "Win32_UI_Shell_PropertiesSystem", "Win32_Foundation"] }
+
 [build-dependencies]
 cc = "1"
 
