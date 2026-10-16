@@ -6170,6 +6170,11 @@ fn session_dir(pref: &str) -> PathBuf {
             return dir.join("SessionData");
         }
     }
+    // Windows: %LOCALAPPDATA%\audacity-rs\SessionData (Audacity keeps its SessionData there too).
+    #[cfg(windows)]
+    if let Some(local) = std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()) {
+        return PathBuf::from(local).join("audacity-rs").join("SessionData");
+    }
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
@@ -6202,6 +6207,19 @@ fn leftover_sessions(pref: &str) -> Vec<PathBuf> {
     v
 }
 
+#[cfg(windows)]
+fn local_now() -> (i32, u32, u32, u32, u32, u32) {
+    // There is no `date` binary on Windows; ask the OS for local time directly.
+    // SAFETY: GetLocalTime only writes the SYSTEMTIME we pass.
+    let t = unsafe {
+        let mut t = std::mem::zeroed::<windows_sys::Win32::Foundation::SYSTEMTIME>();
+        windows_sys::Win32::System::SystemInformation::GetLocalTime(&mut t);
+        t
+    };
+    (t.wYear as i32, t.wMonth as u32, t.wDay as u32, t.wHour as u32, t.wMinute as u32, t.wSecond as u32)
+}
+
+#[cfg(not(windows))]
 fn local_now() -> (i32, u32, u32, u32, u32, u32) {
     let out = std::process::Command::new("date").arg("+%Y %m %d %H %M %S").output().ok();
     let v: Vec<u32> = out
