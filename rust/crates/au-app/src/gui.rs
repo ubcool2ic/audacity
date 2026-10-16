@@ -79,6 +79,7 @@ mod accessibility;
 mod layout_tests;
 mod progress;
 mod toolbars;
+mod extra_glue;
 pub(crate) mod waveform_cache;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -87,6 +88,8 @@ enum Tool {
     Envelope,
     TimeShift,
     Draw,
+    /// Multi-tool (Extra > Tools > Multi Tool); acts as the selection tool here.
+    Multi,
 }
 
 #[derive(Clone, Copy)]
@@ -224,6 +227,24 @@ struct AudacityApp {
     track_views: Vec<crate::spectrogram_view::TrackView>,
     /// Per-track waveform view state: height, collapsed, dB scale, vertical zoom bounds.
     wave_ui: Vec<WaveUi>,
+    /// Width of the track canvas last frame (screen end time for seeking).
+    canvas_width: f32,
+    /// Time under the mouse in the track panel (TrackPanel::GetMostRecentXPos).
+    last_pointer_time: Option<f64>,
+    /// End of a bounded Extra-menu play.
+    play_stop: Option<extra_glue::PlayStop>,
+    /// Keyboard scrub (U/I held).
+    key_scrub: Option<extra_glue::KeyScrub>,
+    /// Last keyboard seek, for the 4× repeat speed-up.
+    last_seek: Option<std::time::Instant>,
+    /// Snap-To Prior (floor) vs Nearest, and the mode Snap-To Off replaced.
+    snap_prior: bool,
+    snap_restore: au_core::timeline::SnapMode,
+    extra_dialog: Option<extra_glue::ExtraDialog>,
+    /// Recording volume slider (no hardware mixer through cpal: display only, like Audacity without one).
+    input_volume: f32,
+    /// The command being run came from a key press (key-up matters for scrubbing).
+    keyboard_event: bool,
     /// Undo pushes already handled by Tracks > Auto-fit track height.
     fit_seen_pushes: u64,
     /// Spectrogram textures and background computation jobs.
@@ -329,6 +350,16 @@ impl Default for AudacityApp {
             tool: Tool::Selection,
             track_views: Vec::new(),
             wave_ui: Vec::new(),
+            canvas_width: 800.0,
+            last_pointer_time: None,
+            play_stop: None,
+            key_scrub: None,
+            last_seek: None,
+            snap_prior: false,
+            snap_restore: au_core::timeline::SnapMode::Grid { secs: 1.0 },
+            extra_dialog: None,
+            input_volume: 1.0,
+            keyboard_event: false,
             fit_seen_pushes: 0,
             spectrogram_cache: crate::spectrogram_view::SpectrogramCache::new(),
             spectrogram_settings: crate::spectrogram_view::ViewSettings::default(),
@@ -458,6 +489,12 @@ impl AudacityApp {
     }
 
     fn snap_time(&self, time: f64, rate: u32, clips: Option<&WaveClips>) -> f64 {
+        // Extra > Selection > Snap-To Prior rounds grid snaps down.
+        if let (true, au_core::timeline::SnapMode::Grid { secs }) = (self.snap_prior, &self.snapper.mode) {
+            if *secs > 0.0 {
+                return ((time.max(0.0) / secs).floor() * secs).max(0.0);
+            }
+        }
         self.snapper.snap(
             time.max(0.0),
             &self.zoom,
@@ -988,6 +1025,9 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             status.contains("fail") || status.contains("error")
         };
 
+        if let Some(result) = self.extra_command(&name) {
+            return Some(result);
+        }
         match name.as_str() {
             "Select" | "SelectTime" => {
                 let track = if name == "SelectTime" {
@@ -2708,7 +2748,9 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         }
         // Everything else goes through the scripting layer under its Audacity command id.
         for id in commands {
+            self.keyboard_event = true;
             let (message, ok) = self.execute_script(&format!("{id}:"));
+            self.keyboard_event = false;
             if !ok {
                 self.status = message;
             }
@@ -2800,6 +2842,32 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     }
 
     /// The waveform view state of a track, created from the Tracks preferences on first use.
+    /// Envelope value -> y. In dB view this is Audacity's GetWaveYPos(value, zoomMin, zoomMax,
+    /// height, dB=true, outer=true, dBRange, clip=false) (Envelope::DrawPoints); linear view keeps 0..2.
+    fn envelope_y(&self, index: usize, value: f64, top: f32, height: f32) -> f32 {
+        match self.wave_ui.get(index) {
+            Some(w) if w.db => {
+                let range = self.settings.env_db_range.max(1) as f32;
+                top + crate::wave_paint::get_wave_y_pos(value as f32, w.zoom_min, w.zoom_max,
+                    height.round().max(1.0) as i32, true, true, range, false) as f32
+            }
+            _ => top + ((2.0 - value.clamp(0.0, 2.0)) / 2.0) as f32 * height,
+        }
+    }
+
+    /// y -> envelope value, inverse of [`Self::envelope_y`] (ValueOfPixel in dB view).
+    fn envelope_value(&self, index: usize, y: f32, top: f32, height: f32) -> f64 {
+        match self.wave_ui.get(index) {
+            Some(w) if w.db => {
+                let range = self.settings.env_db_range.max(1) as f64;
+                let v = crate::wave_paint::value_of_pixel((y - top).round() as i32,
+                    height.round().max(1.0) as i32, false, true, range, w.zoom_min, w.zoom_max);
+                (v.abs() as f64).clamp(0.0, 2.0)
+            }
+            _ => ((1.0 - (y - top) as f64 / height as f64) * 2.0).clamp(0.0, 2.0),
+        }
+    }
+
     fn wave_ui(&mut self, index: usize) -> WaveUi {
         let db = matches!(self.settings.default_wave_scale, crate::settings::WaveScale::LinearDb);
         while self.wave_ui.len() <= index {
@@ -2887,6 +2955,10 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             self.track_accessibility(ui, &response, index, count, &name, channels, seconds, selected);
         }
         let painter = ui.painter_at(rect);
+        self.canvas_width = rect.width();
+        if let Some(p) = response.hover_pos() {
+            self.last_pointer_time = Some(self.time_at_x(p.x, rect));
+        }
 
         let mut clip_bounds = Vec::new();
         let mut envelope_points = Vec::new();
@@ -3109,9 +3181,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     .map(|point| (point.time, point.value)),
             );
             if !envelope_points.is_empty() {
-                let value_y = |value: f64| {
-                    body.top() + ((2.0 - value.clamp(0.0, 2.0)) / 2.0) as f32 * body.height()
-                };
+                let value_y = |value: f64| self.envelope_y(index, value, body.top(), body.height());
                 let points = envelope_points
                     .iter()
                     .enumerate()
@@ -3208,7 +3278,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 self.selected_track = Some(index);
                 let time = self.time_at_x(pointer.x, rect);
                 match self.tool {
-                    Tool::Selection => {
+                    Tool::Selection | Tool::Multi => {
                         let snapped = self.snap_time(time, rate, None);
                         let frame = au_core::secs_to_frames(snapped, rate).min(frames);
                         self.drag = Some(PointerDrag::Selection {
@@ -3242,9 +3312,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                             .enumerate()
                             .map(|(point, &(point_time, point_value))| {
                                 let x = rect.left() + zoom.time_to_x(point_time) as f32;
-                                let y = body_top
-                                    + ((2.0 - point_value.clamp(0.0, 2.0)) / 2.0) as f32
-                                        * body_height;
+                                let y = self.envelope_y(index, point_value, body_top, body_height);
                                 (point, (egui::pos2(x, y) - pointer).length())
                             })
                             .filter(|(_, distance)| *distance <= 6.0)
@@ -3315,8 +3383,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     Some(PointerDrag::Envelope { track, point, .. }) if track == index => {
                         let body_top = rect.top() + 23.0;
                         let body_height = (rect.bottom() - body_top).max(1.0);
-                        let value =
-                            (1.0 - (pointer.y - body_top) as f64 / body_height as f64) * 2.0;
+                        let value = self.envelope_value(index, pointer.y, body_top, body_height);
                         self.drag = Some(PointerDrag::Envelope {
                             track,
                             point,
@@ -3371,7 +3438,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         if response.clicked() {
             self.selected_track = Some(index);
             match self.tool {
-                Tool::Selection => {
+                Tool::Selection | Tool::Multi => {
                     if let Some(pointer) = response.interact_pointer_pos() {
                         let time = self.snap_time(self.time_at_x(pointer.x, rect), rate, None);
                         let frame = au_core::secs_to_frames(time, rate).min(frames);
@@ -3387,8 +3454,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     if let Some(pointer) = response.interact_pointer_pos() {
                         let body_top = rect.top() + 23.0;
                         let body_height = (rect.bottom() - body_top).max(1.0);
-                        let value =
-                            (1.0 - (pointer.y - body_top) as f64 / body_height as f64) * 2.0;
+                        let value = self.envelope_value(index, pointer.y, body_top, body_height);
                         let time = self.time_at_x(pointer.x, rect);
                         if let Err(error) = self.editor.add_envelope_point(
                             index,
@@ -3413,10 +3479,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     .enumerate()
                     .map(|(point, &(time, value))| {
                         let x = rect.left() + zoom.time_to_x(time) as f32;
-                        let y = rect.top()
-                            + 23.0
-                            + ((2.0 - value.clamp(0.0, 2.0)) / 2.0) as f32
-                                * (rect.height() - 23.0);
+                        let y = self.envelope_y(index, value, rect.top() + 23.0, rect.height() - 23.0);
                         (point, (egui::pos2(x, y) - pointer).length())
                     })
                     .filter(|(_, distance)| *distance <= 8.0)
@@ -4525,9 +4588,11 @@ if let Some(pipe) = self.script_pipe.as_mut() {
             self.process_noise_capture();
             ctx.request_repaint();
         }
+        self.poll_extra_playback(ctx);
         if self.player.as_ref().is_some_and(Player::is_finished) {
             self.player = None;
         }
+        self.extra_dialogs(ctx);
         self.ensure_track_mix();
         self.maybe_autosave();
         self.recovery_dialog(ctx);

@@ -9,6 +9,10 @@ use std::fmt;
 /// report.
 pub fn default_shortcuts() -> &'static [(&'static str, &'static str)] {
     &[
+        ("SelectTool", "F1"),
+        ("EnvelopeTool", "F2"),
+        ("DrawTool", "F3"),
+        ("MultiTool", "F6"),
         ("New", "Ctrl+N"),
         ("Open", "Ctrl+O"),
         ("Save", "Ctrl+S"),
@@ -142,6 +146,10 @@ pub fn full_set_extras() -> &'static [(&'static str, &'static str)] {
         ("TrackSolo", "Shift+S"),
         ("TrackClose", "Shift+C"),
         ("PlayOneSec", "1"),
+        ("PrevTool", "A"),
+        ("NextTool", "D"),
+        ("KeyboardScrubBackwards", "U"),
+        ("KeyboardScrubForwards", "I"),
         ("PlayToSelection", "B"),
         ("PlayBeforeSelectionStart", "Shift+F5"),
         ("PlayAfterSelectionStart", "Shift+F6"),

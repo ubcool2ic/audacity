@@ -553,6 +553,7 @@ impl AudacityApp {
                     ui.selectable_value(&mut self.tool, Tool::Envelope, au_core::i18n::tr_ui("Envelope"));
                     ui.selectable_value(&mut self.tool, Tool::TimeShift, au_core::i18n::tr_ui("Time Shift"));
                     ui.selectable_value(&mut self.tool, Tool::Draw, au_core::i18n::tr_ui("Draw"));
+                    ui.selectable_value(&mut self.tool, Tool::Multi, au_core::i18n::tr_ui("Multi"));
                     if ui.button(au_core::i18n::tr_ui("Zoom In")).clicked() {
                         self.zoom.zoom_in();
                     }
