@@ -128,6 +128,12 @@ enum PointerDrag {
         track: usize,
         last_frame: usize,
     },
+    ClipEdge {
+        track: usize,
+        clip: usize,
+        left: bool,
+        current: f64,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3193,6 +3199,21 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
 
                 if clip_rect.intersects(rect) {
                     painter.rect_filled(clip_rect, 4.0, clr_clip);
+                    if let Some(PointerDrag::ClipEdge {
+                        track: drag_track,
+                        clip: drag_clip,
+                        current,
+                        ..
+                    }) = drag_preview
+                    {
+                        if drag_track == index && drag_clip == clip_index {
+                            let edge_x = rect.left() + zoom.time_to_x(current) as f32;
+                            painter.line_segment(
+                                [egui::pos2(edge_x, body.top()), egui::pos2(edge_x, body.bottom())],
+                                egui::Stroke::new(2.0, egui::Color32::YELLOW),
+                            );
+                        }
+                    }
                     painter.rect_filled(
                         egui::Rect::from_min_max(
                             clip_rect.left_top(),
@@ -3458,8 +3479,17 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             } else {
                 self.tool
             };
-            let dragging_clip = matches!(self.drag.as_ref(), Some(PointerDrag::Clip { .. }));
-            ui.ctx().set_cursor_icon(Self::tool_cursor(tool, dragging_clip));
+            let hovering_edge = matches!(tool, Tool::Selection | Tool::Multi) && clip_bounds.iter().any(|&(start, end)| {
+                let x_start = rect.left() + zoom.time_to_x(au_core::frames_to_secs(start, rate)) as f32;
+                let x_end = rect.left() + zoom.time_to_x(au_core::frames_to_secs(end, rate)) as f32;
+                p.x >= x_start - 5.0 && p.x <= x_end + 5.0 && ((p.x - x_start).abs() <= 5.0 || (p.x - x_end).abs() <= 5.0)
+            });
+            if hovering_edge {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            } else {
+                let dragging_clip = matches!(self.drag.as_ref(), Some(PointerDrag::Clip { .. }));
+                ui.ctx().set_cursor_icon(Self::tool_cursor(tool, dragging_clip));
+            }
         }
 
         if response.drag_started() {
@@ -3467,6 +3497,31 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 self.selected_track = Some(index);
                 let time = self.time_at_x(pointer.x, rect);
                 let tool = if self.tool == Tool::Multi { self.multi_tool_at(index, pointer, rect, rate) } else { self.tool };
+                if matches!(tool, Tool::Selection | Tool::Multi) {
+                    let mut hit_edge = None;
+                    for (clip_idx, &(start, end)) in clip_bounds.iter().enumerate() {
+                        let x_start = rect.left() + zoom.time_to_x(au_core::frames_to_secs(start, rate)) as f32;
+                        let x_end = rect.left() + zoom.time_to_x(au_core::frames_to_secs(end, rate)) as f32;
+                        if pointer.x >= x_start - 5.0 && pointer.x <= x_end + 5.0 {
+                            if (pointer.x - x_start).abs() <= 5.0 {
+                                hit_edge = Some((clip_idx, true, au_core::frames_to_secs(start, rate)));
+                                break;
+                            } else if (pointer.x - x_end).abs() <= 5.0 {
+                                hit_edge = Some((clip_idx, false, au_core::frames_to_secs(end, rate)));
+                                break;
+                            }
+                        }
+                    }
+                    if let Some((clip_idx, left, current)) = hit_edge {
+                        self.drag = Some(PointerDrag::ClipEdge {
+                            track: index,
+                            clip: clip_idx,
+                            left,
+                            current,
+                        });
+                        return;
+                    }
+                }
                 match tool {
                     Tool::Selection | Tool::Multi => {
                         let snapped = self.snap_time(time, rate, None);
@@ -3586,6 +3641,15 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                             original_start,
                             pointer_start,
                             current_start: snapped.max(0.0),
+                        });
+                    }
+                    Some(PointerDrag::ClipEdge { track, clip, left, .. }) if track == index => {
+                        let snapped = self.snap_time(time, rate, None).max(0.0);
+                        self.drag = Some(PointerDrag::ClipEdge {
+                            track,
+                            clip,
+                            left,
+                            current: snapped,
                         });
                     }
                     Some(PointerDrag::Envelope { track, point, .. }) if track == index => {
@@ -4107,6 +4171,22 @@ fn draw_note_tracks(&mut self, ui: &mut egui::Ui) {
                     .map_or(1, Track::sample_rate);
                 let new_start = au_core::secs_to_frames(current_start.max(0.0), rate) as i64;
                 let result = self.editor.move_clip(track, clip, new_start);
+                self.report(result);
+            }
+            PointerDrag::ClipEdge {
+                track,
+                clip,
+                left,
+                current,
+            } => {
+                let rate = self
+                    .editor
+                    .state()
+                    .tracks
+                    .get(track)
+                    .map_or(1, Track::sample_rate);
+                let frame = au_core::secs_to_frames(current, rate);
+                let result = self.editor.trim_clip_edge(track, clip, left, frame);
                 self.report(result);
             }
             PointerDrag::Envelope {
