@@ -9,6 +9,10 @@ P="python3 $R/tools/aud_pipe.py"
 (cd "$R" && cargo build -q -p au-project --example aup3_tool)
 T="$R/target/debug/examples/aup3_tool"
 CFG=~/.config/audacity/audacity.cfg
+# Share the box: serialize with other pipe users (same lock as compare_*.py) and only
+# ever kill the Audacity this script started (its own process group), never `pkill -x audacity`.
+exec 9>/tmp/audacity_script_pipe.lock; flock 9
+AUD_PGID=
 start() { # forget sessions killed earlier so the startup recovery dialog stays away
   python3 - "$CFG" <<'PY'
 import re,sys
@@ -17,9 +21,14 @@ s=re.sub(r'\[ActiveProjects\]\n(?:[^\[\n][^\n]*\n)*', '', s)
 open(p,'w').write(s)
 PY
   rm -rf /var/tmp/audacity-$(id -un)/*
-  (cd /tmp && xvfb-run -a -f /tmp/xa -s "-screen 0 1280x1024x24" audacity >/tmp/aud.log 2>&1 &);
+  setsid bash -c 'cd /tmp && exec xvfb-run -a -s "-screen 0 1280x1024x24" audacity' >"$W/aud.log" 2>&1 9>&- &
+  AUD_PGID=$!
   for i in $(seq 60); do [ -p /tmp/audacity_script_pipe.to.$(id -u) ] && sleep 3 && return; sleep 1; done; exit 1; }
-stop() { python3 $R/tools/aud_pipe.py "Close:" >/dev/null 2>&1 & sleep 3; pkill -x audacity || true; sleep 2; rm -f /tmp/audacity_script_pipe.*; }
+stop() {
+  [ -n "$AUD_PGID" ] || return 0
+  python3 $R/tools/aud_pipe.py "Close:" >/dev/null 2>&1 & sleep 3
+  kill -- -"$AUD_PGID" 2>/dev/null || true; sleep 2; kill -9 -- -"$AUD_PGID" 2>/dev/null || true
+  AUD_PGID=; rm -f /tmp/audacity_script_pipe.to.$(id -u) /tmp/audacity_script_pipe.from.$(id -u); }
 probe() { # file tag
   start
   $P "OpenProject2: Filename=$1 AddToHistory=0" "SelectAll:" \
@@ -28,7 +37,7 @@ probe() { # file tag
      "GetInfo: Type=Envelopes Format=JSON" 2> "$W/$2.info"
   stop
   # keep only info payloads, drop volatile fields
-  grep -v "BatchCommand\|^>>" "$W/$2.info" | grep -v '"focused"' > "$W/$2.json" || true
+  grep -v "BatchCommand\|^>>" "$W/$2.info" | grep -v '"focused"' | grep -v '^Exported to ' > "$W/$2.json" || true
 }
 stop
 fail=0
