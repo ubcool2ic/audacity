@@ -144,7 +144,7 @@ fn remove_stale_pipes(dir: &Path) {
 fn connect_with_retry(names: &PipeNames, child: &mut Child) -> PipeClient {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        let last_error = match PipeClient::connect(names, Duration::from_millis(250)) {
+        let last_error = match PipeClient::connect(names, Duration::from_secs(10)) {
             Ok(client) => return client,
             Err(error) => error.to_string(),
         };
