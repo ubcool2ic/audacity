@@ -167,12 +167,16 @@ pub fn effect_id(
 
 /// Parses a new Audacity PluginID or a legacy VST3/CLAP effect id.
 pub fn parse_effect_id(id: &str) -> Option<(PluginFormat, PathBuf, String)> {
-    if let Some((prefix, remainder)) = id.split_once(':') {
-        let format = match prefix {
-            "VST3" => PluginFormat::Vst3,
-            "CLAP" => PluginFormat::Clap,
-            _ => return None,
-        };
+    // Legacy "VST3:<path>;<uid>" / "CLAP:<path>;<uid>". Only these prefixes: a new-style id
+    // can contain a Windows drive colon ("..._C:\\Program Files\\...") and must fall through.
+    let legacy = id
+        .split_once(':')
+        .and_then(|(prefix, remainder)| match prefix {
+            "VST3" => Some((PluginFormat::Vst3, remainder)),
+            "CLAP" => Some((PluginFormat::Clap, remainder)),
+            _ => None,
+        });
+    if let Some((format, remainder)) = legacy {
         let (path, uid) = remainder.rsplit_once(';')?;
         if path.is_empty() || uid.is_empty() {
             return None;
@@ -206,6 +210,17 @@ pub fn parse_effect_id(id: &str) -> Option<(PluginFormat, PathBuf, String)> {
 }
 
 /// Returns the symbol field from a new Audacity PluginID.
+#[cfg(test)]
+#[test]
+fn parse_effect_id_accepts_windows_drive_paths() {
+    let id = "Effect_VST3_Surge Synth Team_Surge XT Effects_C:\\Program Files\\Common Files\\VST3\\Surge XT Effects.vst3;01EF";
+    let (format, path, uid) = parse_effect_id(id).expect("parsed");
+    assert_eq!(format, PluginFormat::Vst3);
+    assert_eq!(path, PathBuf::from("C:\\Program Files\\Common Files\\VST3\\Surge XT Effects.vst3"));
+    assert_eq!(uid, "01EF");
+    assert!(parse_effect_id("VST3:/a/b.vst3;X").is_some());
+}
+
 pub fn effect_name(id: &str) -> Option<String> {
     let mut fields = id.splitn(5, '_');
     if fields.next()? != "Effect" {
