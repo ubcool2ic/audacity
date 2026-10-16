@@ -80,6 +80,8 @@ mod layout_tests;
 mod progress;
 mod toolbars;
 mod extra_glue;
+pub(crate) mod extra_nav_logic;
+pub(crate) mod extra_nav;
 pub(crate) mod waveform_cache;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -215,6 +217,8 @@ struct AudacityApp {
     waveform_cache: waveform_cache::WaveformCache,
     /// Track with keyboard focus in the track panel.
     focused_track: Option<usize>,
+    /// Extra-menu navigation state (items 46-67: focus/selection/label navigation).
+    extra: extra_nav::ExtraState,
     /// Active colour theme.
     theme: crate::theme::Theme,
     /// Custom theme loaded from components or a cache.
@@ -379,6 +383,7 @@ impl Default for AudacityApp {
             custom_theme: None,
             theme_applied: false,
             focused_track: None,
+            extra: Default::default(),
             waveform_cache: waveform_cache::WaveformCache::new(),
             progress: progress::ProgressCenter::new(),
             test_jobs: Vec::new(),
@@ -871,6 +876,9 @@ fn export_midi(&mut self) {
 /// Handles pipe commands that change application state. Returns `None` when the command is not app-level (the caller then uses the read-only interpreter), otherwise `Some((message, ok))`.
 fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     let (command, params) = crate::script_bridge::parse_command(line);
+    if let Some(result) = self.execute_extra_command(&command, &params) {
+        return Some(result);
+    }
 
     match command.as_str() {
         // Audacity's GetPreference / SetPreference (PreferenceCommands.cpp).
@@ -4964,6 +4972,7 @@ if response.changed() && self.script_pipe_enabled {
                 }
             }
 
+            self.extra.panel_width = ui.available_width();
             self.toolbar_dock(ui, ctx, true);
 
             ui.horizontal(|ui| {
@@ -5212,6 +5221,12 @@ impl<'a> AppScriptHost<'a> {
                 sel.tracks[track] = true;
             }
         }
+        // Multi-track selection kept by the Extra navigation commands (ShiftUp/Down, Toggle).
+        for (i, selected) in app.extra.track_sel.iter().enumerate() {
+            if *selected && i < state.tracks.len() {
+                sel.tracks[i] = true;
+            }
+        }
         if let Some(sp) = app.spectral_selection {
             sel.f0 = sp.f0();
             sel.f1 = sp.f1();
@@ -5222,6 +5237,7 @@ impl<'a> AppScriptHost<'a> {
     /// Writes the script selection back into the app's selection model.
     fn finish(self) {
         let n_wave = self.app.editor.state().tracks.len();
+        self.app.extra.track_sel = (0..n_wave).map(|i| self.sel.tracks.get(i).copied().unwrap_or(false)).collect();
         if let Some(track) = self.sel.tracks.iter().take(n_wave).position(|s| *s) {
             let rate = self.app.editor.state().tracks[track].sample_rate();
             let len = self.app.editor.state().tracks[track].len();

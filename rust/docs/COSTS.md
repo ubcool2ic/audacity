@@ -354,3 +354,12 @@ Luna 1 call, $0.0021. Sol: none. **Batch total: $0.0021**.
 Hand glue (not Luna): au-io Recorder applies the gain in the capture callback (unity path untouched); gui.rs sync_record_volume pushes the slider / Extra volume commands to the pactl source volume or the software gain.
 
 **Running total (ubcool2ic): $2.0612**
+## BizyBot — Extra-menu items 46-67 (SPLIT_extra.md) (2026-10-15)
+
+| Model | Calls | Cost |
+|---|---|---|
+| openai/gpt-6-luna (via user-OpenRouterAPI) | 4 (extra_cmds/extra_logic gen + fix pass, compare script) | ~$0.015 |
+
+- gui/extra_nav.rs + gui/extra_nav_logic.rs: SelSetExtRight, SelCntrLeft/Right, MoveToPrev/NextLabel, ExportMp3/Wav/Ogg/FLAC/Sel, Prev/NextFrame, Prev/Next/First/LastTrack, ShiftUp/Down, Toggle/ToggleAlt, CursorLeft/Right. Items 68-89 left to the other helper.
+- Hand fix: boundary moves clamp to max(tracks end, screen end time) as in 3.7.3 DoBoundaryMove.
+- tools/compare_extra_b.py vs Audacity 3.7.3: 11/11 BizyBot cases pass.
