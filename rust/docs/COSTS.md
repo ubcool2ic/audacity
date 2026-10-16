@@ -445,3 +445,13 @@ Hand edits (trivial): sort_clips made pub(crate), Trim pipe command dispatch, re
 | compare_extra_b.py label/focus/toggle cases; ShiftUp/ShiftDown edge fix in extra_nav.rs | none (hand edit) | 0.0000 |
 
 Per model: gpt-6-luna none, gemini-3.8-flash none, muse-spark-1.3 none, gpt-6-sol none. **BizyBot4 total: $0.0000**
+
+## ubcool2ic: mouse scrub, clip edge drag, GridMove, 1.0.0 release docs (2026-10-16)
+
+| Model | Calls | Cost |
+|---|---|---|
+| google/gemini-3.8-flash | 3 (mscrub $0.2065, edge $0.0096, gridmove failed to apply $0.0024) | $0.2185 |
+| meta/muse-spark-1.3 | 1 (gridmove fallback) | $0.0184 |
+| openai/gpt-6-sol | 0 | $0.00 |
+
+Release docs (README, CHANGELOG, THIRD_PARTY_NOTICES, RELEASE_NOTES, KNOWN_ISSUES, ROADMAP) were hand-written, $0. **Batch: $0.2369. Running total (ubcool2ic): $3.1675**

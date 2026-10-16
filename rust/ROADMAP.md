@@ -317,8 +317,9 @@ Verified against **real Audacity 3.7.3** (Debian package, run headlessly under X
 - [x] GUI: File ▸ Open (.aup3/.aurs), Save Project, Save Project As (.aup3 default); autosave every edit (≤ once / 2 s) for .aup3 projects; Automatic Crash Recovery dialog (Recover / Discard / Cancel) — exercised under Xvfb with a real click
 - [x] CLI: `audacity-rs <file>` opens a project; `audacity-rs aup3-info <file>`
 - [x] `.aurs` v2 path kept (chosen by extension)
-- [ ] Not modelled (dropped on save): tags/metadata, realtime effect stacks, time/note tracks, track colors/heights, spectrogram settings, clip pitch (`centShift`), `rawAudioTempo`, project tempo/time signature
-- [ ] Trims are applied destructively on read (Audacity's hidden trimmed audio is not kept)
+- [x] Kept on save (later stages): tags/metadata, realtime effect stacks, time/note tracks, track colors/heights, clip pitch (`centShift`)
+- [ ] Still dropped on save: spectrogram settings, `rawAudioTempo`; project tempo/time signature round-trip not verified
+- [x] Trims are kept non-destructively (`trimLeft`/`trimRight` plus full sequence), and clips may start before 0 (hidden head); verified both ways with Audacity 3.7.3
 - [ ] Audacity's own autosave rows were not captured in a fixture (scripted edits did not journal before SIGKILL); autosave fixtures are Rust-written and verified by opening them in Audacity
 - [ ] Older formats: pre-3.0 `.aup` + `_data` folders not imported; files > 3.7 rejected
 - [ ] Not tested against Audacity on Windows/macOS (char size 2 is supported by the decoder but no real Windows file was tested)
@@ -452,7 +453,14 @@ Every setting is checked against Audacity 3.7.3 sources. Where the pipe allows i
 - [x] Always scrub unpinned (/AudioIO/UnpinnedScrubbing, default on as in 3.7.3; /AudioIO/PinnedHead read): with the head unpinned a ruler drag scrubs without Scrub checked.
 - [ ] RTL workaround = off: egui cannot mirror layouts, so we always behave as with the default (on).
 - [ ] Automated input level adjustment: `EXPERIMENTAL_AUTOMATED_INPUT_LEVEL_ADJUSTMENT` is commented out in 3.7.3's Experimental.cmake, so Audacity ignores the key too. Matches.
-- [x] Extra menu commands 1-45 of docs/SPLIT_extra.md (ubcool2ic): play-around-selection, cut preview, keyboard scrub, tools (F1/F2/F3/F6/A/D), mixer volume, play-at-speed, device dialogs, Delete key, clip left/right, Snap-To, SelStart/SelEnd/SelExtLeft/SelExtRight/SelSetExtLeft. tools/compare_extra.py: 17/18 match Audacity 3.7.3. The one failure is ClipLeft past time 0, because our clips cannot start before 0.
+- [x] Extra menu commands 1-45 of docs/SPLIT_extra.md (ubcool2ic): play-around-selection, cut preview, keyboard scrub, tools (F1/F2/F3/F6/A/D), mixer volume, play-at-speed, device dialogs, Delete key, clip left/right, Snap-To, SelStart/SelEnd/SelExtLeft/SelExtRight/SelSetExtLeft. tools/compare_extra.py: 24/24 match Audacity 3.7.3 (clips may now start before 0).
 - [x] Extra menu commands 46-67 (BizyBot): SelSetExtRight, SelCntrLeft/Right, Move to Prev/Next Label, Export as MP3/WAV/OGG/FLAC/Selected, Prev/NextFrame, track focus nav, ShiftUp/Down, Toggle/ToggleAlt, CursorLeft/Right (gui/extra_nav.rs). tools/compare_extra_b.py: 11/11 vs Audacity 3.7.3 (selection/cursor commands; label/export/focus commands are not pipe-observable).
-- [ ] Extra menu commands 68-89 (other helper).
+- [ ] Extra menu commands 68-89: 22 ids still answer "not recognized" (CursorShortJumpLeft/Right, CursorLongJumpLeft/Right, TrackPan/PanLeft/PanRight, TrackGain/GainInc/GainDec, TrackMenu/Mute/Solo/Close/MoveUp/MoveDown/MoveTop/MoveBottom, SetEnvelope, SetProject, Drag, CompareAudio). **Blocks 1.0.**
 - [x] Envelope drawn and edited with GetWaveYPos/ValueOfPixel when the track is in dB view (linear view keeps the 0-2 scale).
+
+## Final status for 1.0.0 (2026-10-15)
+
+- [x] Clip edge drag (trim) in the GUI, mouse scrub/seek on the stutter queue, Snap-To/GridMove: tools/compare_snap.py 132/132 vs Audacity 3.7.3 (isolated runs via tools/iso_run.sh), compare_extra 24/24, compare_extra_b 35/35.
+- [x] Workspace version 1.0.0; README, CHANGELOG, THIRD_PARTY_NOTICES, docs/RELEASE_NOTES_1.0.0.md, docs/KNOWN_ISSUES.md.
+- [ ] Blocks 1.0: the 22 Extra menu commands listed above; no real-hardware audio test; GUI clicks mostly unautomated; Windows package recheck (verify worker).
+- Everything still open is collected in docs/KNOWN_ISSUES.md.
