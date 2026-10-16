@@ -113,6 +113,55 @@ pub fn seek_step(direction: f64, fast: bool) -> f64 {
     direction * if fast { 4.0 } else { 1.0 }
 }
 
+#[cfg(test)]
+mod grid_move_tests {
+    use super::{seek_inactive, SelOp};
+    const PPS: f64 = 86.1328125;
+    fn prior_snap(t: f64) -> f64 {
+        (t * 75.0).floor() / 75.0
+    }
+    fn nearest_snap(t: f64) -> f64 {
+        (t * 75.0).round() / 75.0
+    }
+    fn grid_step(t: f64, forward: bool) -> f64 {
+        if forward {
+            ((t * 75.0).floor() as i64 + 1) as f64 / 75.0
+        } else {
+            ((t * 75.0).ceil() as i64 - 1) as f64 / 75.0
+        }
+    }
+    #[test]
+    fn grid_move_matches_audacity() {
+        let (a0, a1) = seek_inactive(
+            0.0,
+            2.37,
+            2.37,
+            -1.0,
+            SelOp::CursorMove,
+            PPS,
+            100.0,
+            &prior_snap,
+            true,
+            &grid_step,
+        );
+        assert!((a0 - 177.0 / 75.0).abs() < 1e-12, "got {a0}");
+        assert!((a1 - 177.0 / 75.0).abs() < 1e-12, "got {a1}");
+        let (b0, b1) = seek_inactive(
+            0.0,
+            1.234,
+            1.234,
+            -1.0,
+            SelOp::CursorMove,
+            PPS,
+            100.0,
+            &nearest_snap,
+            true,
+            &grid_step,
+        );
+        assert!((b0 - 91.0 / 75.0).abs() < 1e-12, "got {b0}");
+        assert!((b1 - 91.0 / 75.0).abs() < 1e-12, "got {b1}");
+    }
+}
 /// Moves a selection or cursor while audio is inactive.
 ///
 /// Pixel offsets are converted to integer pixels as in Audacity's
@@ -145,13 +194,17 @@ pub fn seek_inactive(
         if !snap_on {
             offset_time_by_pixels(t, pixels as i64, pixels_per_sec, h)
         } else {
-            let grid_time = single_step(t, forward);
-            if ((grid_time * pixels_per_sec) - (t * pixels_per_sec)).abs()
-                >= pixels.abs() as f64
+            let result = single_step(t, forward);
+            let time_to_position =
+                |x: f64| (0.5 + pixels_per_sec * (x - h)).floor() as i64;
+            if (time_to_position(result) - time_to_position(t)).abs()
+                >= pixels.abs() as i64
             {
-                grid_time
+                result
             } else {
-                snap(t + pixels as f64 / pixels_per_sec)
+                let shifted =
+                    offset_time_by_pixels(t, pixels as i64, pixels_per_sec, h);
+                snap(shifted)
             }
         }
     };
