@@ -33,6 +33,8 @@ mod scrub;
 #[cfg(feature = "gui")]
 mod snapping;
 #[cfg(feature = "gui")]
+mod tools;
+#[cfg(feature = "gui")]
 mod script_bridge;
 #[cfg(feature = "gui")]
 mod plugin_manager;

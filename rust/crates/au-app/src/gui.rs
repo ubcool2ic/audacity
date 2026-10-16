@@ -3332,7 +3332,8 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             if let Some(pointer) = response.interact_pointer_pos() {
                 self.selected_track = Some(index);
                 let time = self.time_at_x(pointer.x, rect);
-                match self.tool {
+                let tool = if self.tool == Tool::Multi { self.multi_tool_at(index, pointer, rect, rate) } else { self.tool };
+                match tool {
                     Tool::Selection | Tool::Multi => {
                         let snapped = self.snap_time(time, rate, None);
                         let frame = au_core::secs_to_frames(snapped, rate).min(frames);
@@ -3492,7 +3493,11 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
 
         if response.clicked() {
             self.selected_track = Some(index);
-            match self.tool {
+            let tool = match (self.tool, response.interact_pointer_pos()) {
+                (Tool::Multi, Some(p)) => self.multi_tool_at(index, p, rect, rate),
+                (tool, _) => tool,
+            };
+            match tool {
                 Tool::Selection | Tool::Multi => {
                     if let Some(pointer) = response.interact_pointer_pos() {
                         let time = self.snap_time(self.time_at_x(pointer.x, rect), rate, None);

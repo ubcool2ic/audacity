@@ -454,3 +454,41 @@ impl AudacityApp {
         }
     }
 }
+
+impl AudacityApp {
+    /// Multi tool: WaveformView::DetailedHitTest order (envelope, sample at sample zoom, select).
+    pub(super) fn multi_tool_at(&self, index: usize, pointer: egui::Pos2, rect: egui::Rect, rate: u32) -> Tool {
+        use crate::tools as t;
+        let Some(track) = self.editor.state().tracks.get(index) else { return Tool::Selection };
+        let top = rect.top() + 23.0;
+        let height = (rect.bottom() - top).max(1.0);
+        let time = self.time_at_x(pointer.x, rect).max(0.0);
+        let env = track.clips.envelope.value_at(time);
+        let env_y = self.envelope_y(index, env, top, height).round() as i32;
+        let mouse_y = pointer.y.round() as i32;
+        let w = self.wave_ui.get(index);
+        let (zmin, zmax, db) = w.map_or((-1.0, 1.0, false), |w| (w.zoom_min, w.zoom_max, w.db));
+        let range = self.settings.env_db_range.max(1) as f32;
+        let h = height.round() as i32;
+        let env_hit = if db {
+            let ctr = top.round() as i32 + crate::wave_paint::get_wave_y_pos(0.0, zmin, zmax, h, true, true, range, false);
+            t::hit_envelope(env_y, ctr, mouse_y, h, zmin, zmax)
+        } else {
+            (env_y - mouse_y).abs() - t::ENV_Y_MISALIGN < t::ENV_Y_TOLERANCE
+        };
+        let sample_hit = t::sample_editing_possible(self.zoom.pixels_per_sec, rate as f64) && {
+            let frame = au_core::secs_to_frames(time, rate);
+            track.clips.clip_at(frame).is_some()
+                && track.clips.render_range(frame, frame + 1).ok().and_then(|b| b.channels.first().and_then(|c| c.first().copied())).is_some_and(|s| {
+                    let y = top.round() as i32
+                        + crate::wave_paint::get_wave_y_pos(s * env as f32, zmin, zmax, h, db, true, range, false);
+                    t::hit_sample(y, mouse_y)
+                })
+        };
+        match t::multi_hit(env_hit, sample_hit) {
+            t::MultiHit::Envelope => Tool::Envelope,
+            t::MultiHit::Draw => Tool::Draw,
+            t::MultiHit::Select => Tool::Selection,
+        }
+    }
+}
