@@ -173,11 +173,52 @@ impl AudacityApp {
         move |t| self.snap_time(t, rate, None)
     }
 
-    fn grid_secs(&self) -> Option<f64> {
-        match self.snapper.mode {
-            au_core::timeline::SnapMode::Grid { secs } if secs > 0.0 => Some(secs),
-            _ => None,
+    /// Snap function id: `/Snap/To` if set, else the toolbar grid, else DeduceSnapTo.
+    pub(super) fn snap_to_id(&self) -> String {
+        let id = self.prefs.read_string_or("/Snap/To", "");
+        if crate::snapping::is_known(&id) {
+            return id;
         }
+        if let au_core::timeline::SnapMode::Grid { secs } = self.snapper.mode {
+            if (secs - 1.0).abs() < 1e-12 {
+                return "seconds".into();
+            }
+            if (secs - 0.1).abs() < 1e-12 {
+                return "deciseconds".into();
+            }
+        }
+        let fmt = self.prefs.read_string_or("/SelectionFormat", "");
+        crate::snapping::deduce_snap_to((!fmt.is_empty()).then_some(fmt.as_str())).into()
+    }
+
+    pub(super) fn snap_ctx(&self, rate: u32) -> crate::snapping::SnapContext {
+        let num = |k: &str, d: f64| self.prefs.read_string_or(k, "").parse::<f64>().ok().filter(|v| *v > 0.0).unwrap_or(d);
+        crate::snapping::SnapContext {
+            rate: rate.max(1) as f64,
+            tempo: num("/TimeSignature/Tempo", 120.0),
+            upper: num("/TimeSignature/Upper", 4.0),
+            lower: num("/TimeSignature/Lower", 4.0),
+        }
+    }
+
+    /// Registry snap mode: active only for grid snapping (other modes keep their own snapper).
+    fn registry_mode(&self) -> crate::snapping::Mode {
+        use crate::snapping::Mode;
+        match self.snapper.mode {
+            au_core::timeline::SnapMode::Grid { .. } => {
+                let pref = self.prefs.read_string_or("/Snap/Mode", "");
+                let saved = crate::snapping::parse_mode((!pref.is_empty()).then_some(pref.as_str()), None);
+                if self.snap_prior || saved == Mode::Prior { Mode::Prior } else { Mode::Nearest }
+            }
+            _ => Mode::Off,
+        }
+    }
+
+    /// ProjectSnap::SnapTime; `None` when registry snapping is off.
+    pub(super) fn registry_snap(&self, time: f64, rate: u32) -> Option<f64> {
+        let mode = self.registry_mode();
+        let (t, ok) = crate::snapping::snap_time(mode, &self.snap_to_id(), &self.snap_ctx(rate), time);
+        ok.then_some(t)
     }
 
     /// SelectMenus SeekLeftOrRight with audio inactive (holding the key moves 4× faster).
@@ -188,19 +229,11 @@ impl AudacityApp {
         let (t0, t1) = self.sel_secs();
         let step = xc::seek_step(direction, fast);
         let snap_on = !matches!(self.snapper.mode, au_core::timeline::SnapMode::Off);
-        let grid = self.grid_secs();
-        let prior = self.snap_prior;
-        let single = move |t: f64, forward: bool| match grid {
-            Some(g) => {
-                let k = (t / g).floor();
-                if forward { (k + 1.0) * g } else if (t / g - k).abs() < 1e-9 { (k - 1.0) * g } else { k * g }
-            }
-            None => t,
-        };
+        let (mode, id, ctx) = (self.registry_mode(), self.snap_to_id(), self.snap_ctx(self.selected_rate()));
+        let single = move |t: f64, forward: bool| crate::snapping::project_single_step(mode, &id, &ctx, t, forward).0;
         let (pps, end, h) = (self.zoom.pixels_per_sec, self.seek_end(), self.zoom.h_offset);
         let (a, b) = {
-            let base = self.snap_fn();
-            let snap = |t: f64| if prior { grid.map_or(base(t), |g| (t / g).floor() * g) } else { base(t) };
+            let snap = self.snap_fn();
             xc::seek_inactive(h, t0, t1, step, op, pps, end, &snap, snap_on, &single)
         };
         self.set_sel_secs(a, b);

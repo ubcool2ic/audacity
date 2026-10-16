@@ -30,6 +30,8 @@ mod extra_menu;
 #[cfg(feature = "gui")]
 mod extra_cmds;
 #[cfg(feature = "gui")]
+mod snapping;
+#[cfg(feature = "gui")]
 mod script_bridge;
 #[cfg(feature = "gui")]
 mod plugin_manager;

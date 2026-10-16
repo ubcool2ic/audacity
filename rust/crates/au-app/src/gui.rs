@@ -502,11 +502,9 @@ impl AudacityApp {
     }
 
     fn snap_time(&self, time: f64, rate: u32, clips: Option<&WaveClips>) -> f64 {
-        // Extra > Selection > Snap-To Prior rounds grid snaps down.
-        if let (true, au_core::timeline::SnapMode::Grid { secs }) = (self.snap_prior, &self.snapper.mode) {
-            if *secs > 0.0 {
-                return ((time.max(0.0) / secs).floor() * secs).max(0.0);
-            }
+        // Grid snapping follows Audacity's SnapFunctionsRegistry (Nearest/Prior, all formats).
+        if let Some(t) = self.registry_snap(time.max(0.0), rate) {
+            return t.max(0.0);
         }
         self.snapper.snap(
             time.max(0.0),
