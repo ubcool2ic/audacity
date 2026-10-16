@@ -417,3 +417,22 @@ Written by hand ($0): the au-scriptpipe windows-sys 0.59 fixes, the per-device P
 | openai/gpt-6-sol | 0 | – | $0.00 |
 
 **Worker w2 total: $0.224335.** First batch (62fb005a7e snapping registry, cbec39cbaa Multi hit test, 9b7940e3cb scrub stutter port) was hand-written, $0. Hand glue: hunk re-anchoring, borrow/derive fixes, per-id Audacity restart in compare_snap.py.
+
+
+## ubcool2ic: trimmed clip audio, stretched clips before 0, signed selection (2026-10-15/16)
+
+Code-model chain from Tyler, effective 23:25: google/gemini-3.8-flash, then meta/muse-spark-1.3, then openai/gpt-6-sol. The chain lives in /workspace/or6/gendiff.py and gen2.py; every response is logged to /workspace/or5/spend.log, including failed attempts.
+
+| Edit (gendiff) | Model | Result | USD |
+|---|---|---|---|
+| au-core clip trims, Editor::trim, stretched clips before 0 (trim) | google/gemini-3.8-flash | applied | 0.2515 |
+| au-project aup3 trimLeft/trimRight (aup3trim) | google/gemini-3.8-flash | applied | 0.1889 |
+| au-core signed Selection (selcore) | google/gemini-3.8-flash | applied | 0.1461 |
+| au-app signed Selection fixes (selgui) | google/gemini-3.8-flash | edits did not apply (failed) | 0.1756 |
+| au-app signed Selection fixes (selgui) | meta/muse-spark-1.3 | applied | 0.0979 |
+
+Per model: gemini-3.8-flash $0.7621 (4 calls), muse-spark-1.3 $0.0979 (1 call), gpt-6-sol none, Luna none. **Batch total: $0.8600**.
+
+Hand edits (trivial): sort_clips made pub(crate), Trim pipe command dispatch, removed the leftover 0-clamp of the selection in ClipLeft, compare_extra.py cases.
+
+**Running total (ubcool2ic): $2.9306**
