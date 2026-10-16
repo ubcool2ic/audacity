@@ -17,6 +17,9 @@ vst3 = "0.3"
 libloading = "0.8"
 base64 = "0.22"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

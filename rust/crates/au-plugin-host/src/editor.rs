@@ -47,7 +47,7 @@ fn plugin_error(message: impl Into<String>) -> PluginError {
     PluginError::Unknown(message.into())
 }
 
-fn escape_field(value: &str) -> String {
+pub(crate) fn escape_field(value: &str) -> String {
     value
         .chars()
         .map(|ch| match ch {
@@ -57,7 +57,7 @@ fn escape_field(value: &str) -> String {
         .collect()
 }
 
-fn make_state_line(key: &str, value: &str) -> String {
+pub(crate) fn make_state_line(key: &str, value: &str) -> String {
     format!("STATE\t{}\t{}", escape_field(key), escape_field(value))
 }
 
@@ -435,7 +435,20 @@ pub fn editor_main(args: &[String]) -> i32 {
         }
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        match crate::editor_win::editor_main_windows(args) {
+            Ok(()) => 0,
+            Err(message) => {
+                let mut stdout = io::stdout().lock();
+                let _ = writeln!(stdout, "ERROR\t{}", escape_field(&message));
+                let _ = stdout.flush();
+                2
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = args;
         let mut stdout = io::stdout().lock();

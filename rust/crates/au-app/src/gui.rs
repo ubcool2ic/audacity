@@ -4763,6 +4763,7 @@ impl eframe::App for AudacityApp {
             self.host_xid = frame.window_handle().ok().and_then(|h| match h.as_raw() {
                 RawWindowHandle::Xlib(x) => Some(x.window as u64),
                 RawWindowHandle::Xcb(x) => Some(x.window.get() as u64),
+                RawWindowHandle::Win32(w) => Some(w.hwnd.get() as u64),
                 _ => None,
             });
         }

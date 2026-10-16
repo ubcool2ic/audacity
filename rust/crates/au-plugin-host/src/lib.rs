@@ -7,6 +7,8 @@ pub mod sandbox;
 pub mod ladspa;
 pub mod lv2;
 pub mod editor;
+#[cfg(windows)]
+mod editor_win;
 pub mod nyquist;
 
 pub use clap::ClapHost;
