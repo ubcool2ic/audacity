@@ -385,3 +385,13 @@ Luna 2 calls, $0.0094. Sol: none. **Batch total: $0.0094**. The previous batch (
 Hand edits (trivial): removed the unused clip_shift_desired helper, VERSION_3_7 default for new projects, compare_extra.py .aup3 checks.
 
 **Running total (ubcool2ic): $2.0706** (includes the $2.0612 recording-volume batch above)
+## BizyBot6 — plugin editor embedding, CLAP posix-fd poll(), mirrored envelope (2026-10-15)
+
+| Model | Calls | Tokens (in/out) | Cost (OpenRouter usage) |
+|---|---|---|---|
+| openai/gpt-6-luna | 0 | – | $0.00 |
+| google/gemini-3.8-flash | 1 (editor.rs X11 embed: args parser, error handler, EMBED/MOVE; gen-1792121251-dKI8rYtfPFxhO7A9BLPX) | 2718 / 2626 | $0.011886 |
+| meta/muse-spark-1.3 | 0 | – | $0.00 |
+| openai/gpt-6-sol | 0 | – | $0.00 |
+
+**BizyBot6 total: $0.011886.** posix-fd poll(), envelope contours and the gui.rs embed slot were hand-written.
