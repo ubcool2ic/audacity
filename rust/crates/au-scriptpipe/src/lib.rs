@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
+#[cfg(unix)]
 use std::time::Duration;
 
 /// The success line appended to successful command responses.
@@ -768,10 +769,11 @@ mod windows_transport {
         CloseHandle, GetLastError, ERROR_MORE_DATA, ERROR_PIPE_CONNECTED, GENERIC_READ,
         GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
     };
-    use windows_sys::Win32::Storage::FileSystem::{CreateFileW, OPEN_EXISTING};
-    use windows_sys::Win32::System::IO::{ReadFile, WriteFile};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, ReadFile, WriteFile, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
+    };
     use windows_sys::Win32::System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_ACCESS_DUPLEX,
+        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe,
         PIPE_READMODE_MESSAGE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_MESSAGE,
         PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
     };
@@ -963,7 +965,7 @@ mod windows_transport {
                     std::ptr::null(),
                     OPEN_EXISTING,
                     0,
-                    0,
+                    std::ptr::null_mut(),
                 )
             };
 
@@ -974,6 +976,9 @@ mod windows_transport {
                         GENERIC_READ | GENERIC_WRITE,
                         0,
                         std::ptr::null(),
+                        OPEN_EXISTING,
+                        0,
+                        std::ptr::null_mut(),
                     )
                 };
 
