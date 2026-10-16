@@ -304,13 +304,8 @@ pub fn keyboard_scrub_speed(default_zoom: f64, zoom: f64) -> f64 {
     }
     speed
 }
-
-/// ScrubPollInterval (ms): Audacity re-reads the keyboard scrub speed and queues one
-/// stutter of this length per poll (minStutterTime = delay = ScrubPollInterval).
-pub const SCRUB_POLL_MS: u64 = 50;
-/// ScrubbingOptions::MinAllowedScrubSpeed / MaxAllowedScrubSpeed.
-pub const MIN_ALLOWED_SCRUB_SPEED: f64 = 0.01;
-pub const MAX_ALLOWED_SCRUB_SPEED: f64 = 32.0;
+pub use crate::scrub::SCRUB_POLL_INTERVAL_MS as SCRUB_POLL_MS;
+use crate::scrub::{MAX_SCRUB_SPEED, MIN_SCRUB_SPEED, SCRUB_POLL_INTERVAL_MS};
 
 /// One queued scrub stutter (ScrubQueue Entry).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -353,7 +348,7 @@ pub fn scrub_entry_init(
         speed = min_speed;
         adjusted = true;
     }
-    if speed < MIN_ALLOWED_SCRUB_SPEED {
+    if speed < MIN_SCRUB_SPEED {
         adjusted = true;
         speed = 0.0;
     }
@@ -389,9 +384,9 @@ pub fn scrub_entry_init(
 /// One keyboard-scrub poll (ScrubState::UpdateScrub with bySpeed, keyboard options):
 /// a stutter of one poll interval from `pos` at signed `speed`, kept inside 0..`end`.
 pub fn keyboard_stutter(prev_goal: i64, pos: i64, speed: f64, rate: f64, end: i64) -> Stutter {
-    let duration = (rate * SCRUB_POLL_MS as f64 / 1000.0).round() as i64;
+    let duration = (rate * SCRUB_POLL_INTERVAL_MS as f64 / 1000.0).round() as i64;
     let s1 = pos + (duration as f64 * speed).round() as i64;
-    scrub_entry_init(prev_goal, pos, s1, duration, MIN_ALLOWED_SCRUB_SPEED, MAX_ALLOWED_SCRUB_SPEED,
+    scrub_entry_init(prev_goal, pos, s1, duration, MIN_SCRUB_SPEED, MAX_SCRUB_SPEED,
         false, duration, 0, end)
         .unwrap_or(Stutter { s0: pos, s1: pos, duration: 0, silence: duration, goal: -1 })
 }
