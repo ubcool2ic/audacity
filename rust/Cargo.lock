@@ -464,7 +464,7 @@ dependencies = [
 
 [[package]]
 name = "au-ai"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "base64",
  "hound",
@@ -476,7 +476,7 @@ dependencies = [
 
 [[package]]
 name = "au-app"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "au-core",
  "au-effects",
@@ -499,14 +499,14 @@ dependencies = [
 
 [[package]]
 name = "au-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "thiserror 1.0.69",
 ]
 
 [[package]]
 name = "au-effects"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "au-core",
  "au-runtime",
@@ -517,7 +517,7 @@ dependencies = [
 
 [[package]]
 name = "au-io"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "au-core",
  "au-effects",
@@ -537,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "au-nyquist"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "au-core",
  "au-plugin-host",
@@ -548,7 +548,7 @@ dependencies = [
 
 [[package]]
 name = "au-plugin-api"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "au-core",
  "thiserror 1.0.69",
@@ -556,7 +556,7 @@ dependencies = [
 
 [[package]]
 name = "au-plugin-host"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "au-core",
  "au-plugin-api",
@@ -573,7 +573,7 @@ dependencies = [
 
 [[package]]
 name = "au-project"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "au-core",
  "au-io",
@@ -584,7 +584,7 @@ dependencies = [
 
 [[package]]
 name = "au-runtime"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "au-core",
  "au-project",
@@ -595,7 +595,7 @@ dependencies = [
 
 [[package]]
 name = "au-script"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "au-core",
  "tempfile",
@@ -603,7 +603,7 @@ dependencies = [
 
 [[package]]
 name = "au-scriptpipe"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "au-runtime",
  "libc",

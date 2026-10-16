@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/au-ai","crates/au-core","crates/au-io","crates/au-effects","crates/au-plugin-api","crates/au-project","crates/au-app","crates/au-runtime","crates/au-plugin-host","crates/au-scriptpipe","crates/au-nyquist","crates/au-script"]
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 rust-version = "1.85"
