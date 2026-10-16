@@ -413,7 +413,7 @@ impl HostData {
                 name: b"Audacity-RS\0".as_ptr().cast(),
                 vendor: b"Audacity\0".as_ptr().cast(),
                 url: b"https://www.audacityteam.org/\0".as_ptr().cast(),
-                version: b"0.1.0\0".as_ptr().cast(),
+                version: concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast(),
                 get_extension: Some(host_get_extension),
                 request_restart: Some(host_request_restart),
                 request_process: Some(host_request_process),
