@@ -602,6 +602,37 @@ impl Editor {
         })
     }
 
+    /// Trims audio on the selection's track, hiding audio outside the selection.
+    pub fn trim(&mut self, selection: Selection) -> Result<()> {
+        let selection = selection.normalized();
+        if selection.is_empty() {
+            return Err(CoreError::InvalidRange(selection.start, selection.end));
+        }
+        self.edit_track(selection.track, "Trim Audio", |t| {
+            let sel_start = selection.start;
+            let sel_end = selection.end;
+            let mut kept = Vec::new();
+            for mut clip in t.clips.clips.drain(..) {
+                if clip.end() <= sel_start || clip.start >= sel_end {
+                    continue;
+                }
+                if clip.start < sel_start {
+                    clip.trim_left_to(sel_start)?;
+                }
+                if clip.end() > sel_end {
+                    clip.trim_right_to(sel_end)?;
+                }
+                kept.push(clip);
+            }
+            t.clips.clips = kept;
+            if t.clips.clips.first().map_or(true, |c| c.start > 0) {
+                t.clips.hidden_head = None;
+            }
+            t.clips.sort_clips();
+            Ok(())
+        })
+    }
+
     /// Applies a transformation to a selection and replaces that range with its result.
     pub fn apply(
         &mut self,
@@ -651,6 +682,17 @@ impl Editor {
     /// Sets a clip's time-stretch ratio (pitch preserved).
     pub fn stretch_clip(&mut self, track: usize, clip: usize, ratio: f64) -> Result<()> {
         self.edit_track(track, "Stretch Clip", |t| t.clips.stretch_clip(clip, ratio))
+    }
+
+    /// Trims a clip edge to timeline `frame`; overlaps are rejected.
+    pub fn trim_clip_edge(&mut self, track: usize, clip: usize, left: bool, frame: usize) -> Result<()> {
+        self.edit_track(track, "Clip Trim", |t| {
+            if left {
+                t.clips.trim_clip_left(clip, frame)
+            } else {
+                t.clips.trim_clip_right(clip, frame)
+            }
+        })
     }
 
     /// Adds or replaces a volume envelope point.

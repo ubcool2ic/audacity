@@ -390,6 +390,8 @@ pub fn load_project(path: &Path) -> Result<ProjectState> {
                 start: 0,
                 buffer: AudioBuffer::from_channels(track_rate, channels),
                 stretch_ratio: 1.0,
+                trim_left: None,
+                trim_right: None,
             });
         } else {
             let mut clip_statement = connection.prepare(
@@ -426,6 +428,8 @@ pub fn load_project(path: &Path) -> Result<ProjectState> {
                     start,
                     buffer: AudioBuffer::from_channels(clip_rate, channels),
                     stretch_ratio,
+                    trim_left: None,
+                    trim_right: None,
                 });
             }
 
@@ -629,12 +633,16 @@ mod tests {
                 start: 0,
                 buffer: AudioBuffer::from_channels(48_000, vec![vec![0.1, 0.2]]),
                 stretch_ratio: 1.0,
+                trim_left: None,
+                trim_right: None,
             },
             Clip {
                 name: "Second".to_string(),
                 start: 100,
                 buffer: AudioBuffer::from_channels(48_000, vec![vec![0.3, 0.4]]),
                 stretch_ratio: 1.5,
+                trim_left: None,
+                trim_right: None,
             },
         ];
         track.clips.envelope.points = vec![

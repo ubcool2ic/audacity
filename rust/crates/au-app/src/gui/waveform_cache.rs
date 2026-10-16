@@ -96,6 +96,8 @@ impl WaveSummaries {
                     start: 0,
                     buffer: clip_buffer.clone(),
                     stretch_ratio,
+                    trim_left: None,
+                    trim_right: None,
                 }
                 .rendered(),
             )
@@ -453,6 +455,8 @@ mod tests {
                 channels: vec![vec![0.0; 1024]],
             },
             stretch_ratio: 1.0,
+            trim_left: None,
+            trim_right: None,
         };
 
         let before = WaveKey::of(&clip);
@@ -475,6 +479,8 @@ mod tests {
                 ],
             },
             stretch_ratio: 2.0,
+            trim_left: None,
+            trim_right: None,
         };
         let context = egui::Context::default();
         let mut cache = WaveformCache::new();
