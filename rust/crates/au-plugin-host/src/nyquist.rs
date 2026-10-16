@@ -175,6 +175,17 @@ impl PluginHost for NyquistHost {
             paths.push(home.join(".audacity-files/plug-ins"));
             paths.push(home.join(".local/share/audacity/plug-ins"));
         }
+        #[cfg(windows)]
+        {
+            // Audacity on Windows: <install dir>\Plug-Ins and %APPDATA%\audacity\Plug-Ins.
+            if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from)) {
+                paths.push(dir.join("Plug-Ins"));
+                paths.push(dir.join("plug-ins"));
+            }
+            if let Some(a) = std::env::var_os("APPDATA") {
+                paths.push(PathBuf::from(a).join("audacity").join("Plug-Ins"));
+            }
+        }
         paths.push(PathBuf::from("/usr/share/audacity/plug-ins"));
         paths.push(PathBuf::from("/usr/local/share/audacity/plug-ins"));
         if let Some(extra) = std::env::var_os("AUDACITY_PATH") {
