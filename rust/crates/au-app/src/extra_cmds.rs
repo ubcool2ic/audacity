@@ -305,6 +305,97 @@ pub fn keyboard_scrub_speed(default_zoom: f64, zoom: f64) -> f64 {
     speed
 }
 
+/// ScrubPollInterval (ms): Audacity re-reads the keyboard scrub speed and queues one
+/// stutter of this length per poll (minStutterTime = delay = ScrubPollInterval).
+pub const SCRUB_POLL_MS: u64 = 50;
+/// ScrubbingOptions::MinAllowedScrubSpeed / MaxAllowedScrubSpeed.
+pub const MIN_ALLOWED_SCRUB_SPEED: f64 = 0.01;
+pub const MAX_ALLOWED_SCRUB_SPEED: f64 = 32.0;
+
+/// One queued scrub stutter (ScrubQueue Entry).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stutter {
+    pub s0: i64,
+    pub s1: i64,
+    pub duration: i64,
+    pub silence: i64,
+    /// mGoal (-1 when none).
+    pub goal: i64,
+}
+
+/// ScrubState Entry::Init. `prev_goal` is the previous entry's goal; bounds are samples.
+/// Returns `None` when a seeking stutter would be too short.
+#[allow(clippy::too_many_arguments)]
+pub fn scrub_entry_init(
+    prev_goal: i64, mut s0: i64, mut s1: i64, mut duration: i64, min_speed: f64, max_speed: f64,
+    adjust_start: bool, min_stutter_samples: i64, min_sample: i64, max_sample: i64,
+) -> Option<Stutter> {
+    let orig = duration;
+    let mut speed = (s1 - s0).abs() as f64 / duration.max(1) as f64;
+    let mut adjusted = false;
+    let mut min_speed = min_speed.min(max_speed);
+    let goal;
+    if !adjust_start && speed > max_speed {
+        speed = max_speed;
+        goal = s1;
+        adjusted = true;
+    } else if !adjust_start && prev_goal >= 0 && prev_goal == s1 {
+        min_speed = max_speed;
+        goal = s1;
+        adjusted = true;
+    } else {
+        goal = -1;
+    }
+    if speed < min_speed {
+        if !(s0 != s1 && adjust_start) {
+            duration = ((speed * duration as f64 / min_speed).round() as i64).max(0);
+        }
+        speed = min_speed;
+        adjusted = true;
+    }
+    if speed < MIN_ALLOWED_SCRUB_SPEED {
+        adjusted = true;
+        speed = 0.0;
+    }
+    if adjusted && !adjust_start {
+        let diff = (speed * duration as f64).round() as i64;
+        s1 = if s0 < s1 { s0 + diff } else { s0 - diff };
+    }
+    let mut silent = false;
+    if s1 != s0 {
+        if adjust_start && duration < min_stutter_samples {
+            return None;
+        }
+        let new_s1 = s1.clamp(min_sample, max_sample);
+        let mut new_dur = duration;
+        if s1 != new_s1 {
+            new_dur = ((duration as f64 * (new_s1 - s0) as f64 / (s1 - s0) as f64) as i64).max(0);
+        }
+        if new_dur == 0 {
+            silent = true;
+            s1 = s0;
+        } else if s1 != new_s1 {
+            duration = new_dur;
+            s1 = new_s1;
+        }
+    }
+    if adjust_start && !silent {
+        let diff = (max_speed.min(speed) * duration as f64).round() as i64;
+        s0 = if s0 < s1 { s1 - diff } else { s1 + diff };
+    }
+    Some(Stutter { s0, s1, duration, silence: (orig - duration).max(0), goal })
+}
+
+/// One keyboard-scrub poll (ScrubState::UpdateScrub with bySpeed, keyboard options):
+/// a stutter of one poll interval from `pos` at signed `speed`, kept inside 0..`end`.
+pub fn keyboard_stutter(prev_goal: i64, pos: i64, speed: f64, rate: f64, end: i64) -> Stutter {
+    let duration = (rate * SCRUB_POLL_MS as f64 / 1000.0).round() as i64;
+    let s1 = pos + (duration as f64 * speed).round() as i64;
+    scrub_entry_init(prev_goal, pos, s1, duration, MIN_ALLOWED_SCRUB_SPEED, MAX_ALLOWED_SCRUB_SPEED,
+        false, duration, 0, end)
+        .unwrap_or(Stutter { s0: pos, s1: pos, duration: 0, silence: duration, goal: -1 })
+}
+
 /// Returns whether keyboard scrubbing can start at the selection start.
 pub fn keyboard_scrub_can_start(t0: f64, end_time: f64, backwards: bool) -> bool {
     if backwards {
@@ -585,6 +676,26 @@ mod tests {
         close_f32(volume_adjust(0.5, -1), 0.4);
         close_f32(volume_adjust(0.95, 1), 1.0);
         close_f32(volume_adjust(0.05, -1), 0.0);
+    }
+
+    #[test]
+    fn keyboard_stutters_follow_scrub_queue() {
+        // 0.5x forward at 44.1 kHz: 2205-sample stutter covering 1103 samples.
+        let st = keyboard_stutter(-1, 1000, 0.5, 44100.0, 100_000);
+        assert_eq!((st.s0, st.s1, st.duration, st.silence), (1000, 2103, 2205, 0));
+        // Backwards stutter clipped at time zero shortens the stutter, rest is silence.
+        let st = keyboard_stutter(-1, 500, -1.0, 44100.0, 100_000);
+        assert_eq!((st.s1, st.duration), (0, 500));
+        assert_eq!(st.silence, 2205 - 500);
+        // At the end: silent.
+        let st = keyboard_stutter(-1, 100_000, 1.0, 44100.0, 100_000);
+        assert_eq!(st.s1, 100_000);
+        // Above max allowed speed it is capped and records a goal.
+        let st = keyboard_stutter(-1, 0, 40.0, 44100.0, 10_000_000);
+        assert_eq!(st.s1, (32.0 * 2205.0) as i64);
+        assert_eq!(st.goal, 40 * 2205);
+        // Seeking stutters shorter than minStutterTime are abandoned.
+        assert!(scrub_entry_init(-1, 0, 100, 10, 0.0, 32.0, true, 2205, 0, 1000).is_none());
     }
 
     #[test]

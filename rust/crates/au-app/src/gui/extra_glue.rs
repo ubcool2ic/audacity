@@ -26,6 +26,11 @@ pub(super) struct PlayStop {
 pub(super) struct KeyScrub {
     pub backwards: bool,
     pub sel: (f64, f64),
+    /// Signed speed of the running stutter stream.
+    pub speed: f64,
+    /// Goal of the last queued stutter (ScrubQueue mGoal).
+    pub goal: i64,
+    pub last_poll: Option<std::time::Instant>,
 }
 
 const TOOL_ORDER: [Tool; xc::NUM_TOOLS] = [Tool::Selection, Tool::Envelope, Tool::Draw, Tool::Multi];
@@ -123,7 +128,8 @@ impl AudacityApp {
             if !ctx.input(|i| i.key_down(key)) {
                 self.end_keyboard_scrub(scrub);
             } else {
-                ctx.request_repaint();
+                self.poll_keyboard_scrub();
+                ctx.request_repaint_after(std::time::Duration::from_millis(xc::SCRUB_POLL_MS));
             }
         }
         if self.player.is_none() {
@@ -131,10 +137,59 @@ impl AudacityApp {
         }
     }
 
+    /// GetKeyboardScrubbingSpeed with direction applied.
+    fn keyboard_scrub_signed_speed(&self, backwards: bool) -> f64 {
+        let default_zoom = au_core::timeline::ZoomInfo::default().pixels_per_sec;
+        let speed = xc::keyboard_scrub_speed(default_zoom, self.zoom.pixels_per_sec);
+        if backwards { -speed } else { speed }
+    }
+
+    /// (Re)starts the stutter stream from `t0` at signed `speed`, bounded by the project.
+    fn run_scrub_stream(&mut self, t0: f64, speed: f64) {
+        let end = self.project_duration();
+        if speed < 0.0 {
+            self.play_region(0.0, t0, speed, false, None);
+        } else {
+            self.play_region(t0, end, speed, false, None);
+        }
+    }
+
+    /// Scrubber::ContinueScrubbingPoll (keyboard branch): every ScrubPollInterval the speed is
+    /// re-read from the zoom (variable speed) and one stutter is queued; when the speed or
+    /// direction changed the stream continues from the current position at the new speed.
+    pub(super) fn poll_keyboard_scrub(&mut self) {
+        let Some(mut scrub) = self.key_scrub else { return };
+        let now = std::time::Instant::now();
+        if scrub.last_poll.is_some_and(|t| now.duration_since(t).as_millis() < xc::SCRUB_POLL_MS as u128) {
+            return;
+        }
+        scrub.last_poll = Some(now);
+        let rate = self.project_rate() as f64;
+        let end = (self.project_duration() * rate).round() as i64;
+        let pos = self.player.as_ref().map_or((scrub.sel.0 * rate).round() as i64, |p| p.position() as i64);
+        let speed = self.keyboard_scrub_signed_speed(scrub.backwards);
+        let st = xc::keyboard_stutter(scrub.goal, pos, speed, rate, end);
+        scrub.goal = st.goal;
+        if (speed - scrub.speed).abs() > 1e-12 && st.s1 != st.s0 {
+            scrub.speed = speed;
+            self.key_scrub = Some(scrub);
+            self.run_scrub_stream(pos as f64 / rate, speed);
+            // play_region may reset scrub state; keep ours.
+            self.key_scrub = Some(scrub);
+        } else {
+            self.key_scrub = Some(scrub);
+        }
+    }
+
     /// Scrubber::DoKeyboardScrub key-down.
     fn start_keyboard_scrub(&mut self, backwards: bool) {
         if let Some(scrub) = self.key_scrub.as_mut() {
-            scrub.backwards = backwards;
+            if scrub.backwards != backwards {
+                // Change direction (SetBackwards): the next poll restarts at the new speed.
+                scrub.backwards = backwards;
+                scrub.last_poll = None;
+                self.poll_keyboard_scrub();
+            }
             return;
         }
         if self.player.is_some() || self.recorder.is_some() {
@@ -145,14 +200,9 @@ impl AudacityApp {
         if !xc::keyboard_scrub_can_start(sel.0, end, backwards) {
             return;
         }
-        let default_zoom = au_core::timeline::ZoomInfo::default().pixels_per_sec;
-        let speed = xc::keyboard_scrub_speed(default_zoom, self.zoom.pixels_per_sec);
-        if backwards {
-            self.play_region(0.0, sel.0, -speed, false, None);
-        } else {
-            self.play_region(sel.0, end, speed, false, None);
-        }
-        self.key_scrub = Some(KeyScrub { backwards, sel });
+        let speed = self.keyboard_scrub_signed_speed(backwards);
+        self.run_scrub_stream(sel.0, speed);
+        self.key_scrub = Some(KeyScrub { backwards, sel, speed, goal: -1, last_poll: Some(std::time::Instant::now()) });
     }
 
     /// Key-up: the cursor moves to where the scrub stopped if the selection did not change.
