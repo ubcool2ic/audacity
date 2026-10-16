@@ -1188,6 +1188,14 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     Some((format!("{} completed", name), true))
                 }
             }
+            // Edit > Remove Special > Trim Audio: hides audio outside the selection (kept as trimmed audio).
+            "Trim" => {
+                let Some(track) = self.selected_track else { return Some(("No track selected".to_string(), false)) };
+                let selection = self.selection_for_track(track);
+                let before = self.status.clone();
+                self.edit_selection(|editor| editor.trim(selection));
+                if self.status != before && status_failed(&self.status) { Some((self.status.clone(), false)) } else { Some(("Trim completed".into(), true)) }
+            }
             "Undo" | "Redo" => {
                 if self.selected_track.is_none() {
                     return Some(("No track selected".to_string(), false));
