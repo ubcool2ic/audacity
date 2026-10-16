@@ -249,7 +249,8 @@ impl crate::Editor {
             return Ok(false);
         };
         let audio = line.audio.clone();
-        let move_clips = state.sync_lock || true;
+        // Expanding a cut line always shifts later audio (as before: `sync_lock || true`).
+        let move_clips = true;
 
         let mut updated = clips.clone();
         updated.cut_lines.remove(line_index);
