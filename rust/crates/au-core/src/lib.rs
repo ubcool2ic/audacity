@@ -264,12 +264,36 @@ pub struct Selection {
     /// The selected track index.
     pub track: usize,
     /// The selection's start frame.
-    pub start: usize,
+    pub start: i64,
     /// The selection's end frame.
-    pub end: usize,
+    pub end: i64,
 }
 
 impl Selection {
+    /// Creates a selection from non-negative frame indices.
+    pub fn new(track: usize, start: usize, end: usize) -> Self {
+        Self {
+            track,
+            start: start as i64,
+            end: end as i64,
+        }
+    }
+
+    /// Returns the start frame clamped to >= 0.
+    pub fn start_frame(&self) -> usize {
+        self.start.max(0) as usize
+    }
+
+    /// Returns the end frame clamped to >= 0.
+    pub fn end_frame(&self) -> usize {
+        self.end.max(0) as usize
+    }
+
+    /// Returns whether any part of the selection extends below frame 0.
+    pub fn is_below_zero(&self) -> bool {
+        self.start < 0 || self.end < 0
+    }
+
     /// Returns whether the selection has zero length.
     pub fn is_empty(&self) -> bool {
         self.start == self.end
@@ -536,7 +560,7 @@ impl Editor {
             .tracks
             .get_mut(selection.track)
             .ok_or(CoreError::TrackNotFound(selection.track))?;
-        let removed = track.clips.remove_range(selection.start, selection.end)?;
+        let removed = track.clips.remove_range(selection.start_frame(), selection.end_frame())?;
         ripple_remove(&mut state, selection);
         self.history.push("Cut", state);
         self.clipboard = Some(removed);
@@ -551,7 +575,7 @@ impl Editor {
             .tracks
             .get(selection.track)
             .ok_or(CoreError::TrackNotFound(selection.track))?;
-        self.clipboard = Some(track.clips.render_range(selection.start, selection.end)?);
+        self.clipboard = Some(track.clips.render_range(selection.start_frame(), selection.end_frame())?);
         Ok(())
     }
 
@@ -587,7 +611,7 @@ impl Editor {
             .tracks
             .get_mut(selection.track)
             .ok_or(CoreError::TrackNotFound(selection.track))?;
-        track.clips.remove_range(selection.start, selection.end)?;
+        track.clips.remove_range(selection.start_frame(), selection.end_frame())?;
         ripple_remove(&mut state, selection);
         self.history.push("Delete", state);
         Ok(())
@@ -605,12 +629,12 @@ impl Editor {
     /// Trims audio on the selection's track, hiding audio outside the selection.
     pub fn trim(&mut self, selection: Selection) -> Result<()> {
         let selection = selection.normalized();
-        if selection.is_empty() {
-            return Err(CoreError::InvalidRange(selection.start, selection.end));
+        let sel_start = selection.start_frame();
+        let sel_end = selection.end_frame();
+        if sel_start >= sel_end {
+            return Err(CoreError::InvalidRange(sel_start, sel_end));
         }
         self.edit_track(selection.track, "Trim Audio", |t| {
-            let sel_start = selection.start;
-            let sel_end = selection.end;
             let mut kept = Vec::new();
             for mut clip in t.clips.clips.drain(..) {
                 if clip.end() <= sel_start || clip.start >= sel_end {
@@ -646,7 +670,7 @@ impl Editor {
             .tracks
             .get_mut(selection.track)
             .ok_or(CoreError::TrackNotFound(selection.track))?;
-        track.clips.apply_range(selection.start, selection.end, f)?;
+        track.clips.apply_range(selection.start_frame(), selection.end_frame(), f)?;
         self.history.push(description, state);
         Ok(())
     }
@@ -791,12 +815,14 @@ fn ripple_remove(state: &mut ProjectState, sel: Selection) {
         return;
     }
     let rate = state.tracks[sel.track].sample_rate();
-    let (a, b) = (frames_to_secs(sel.start, rate), frames_to_secs(sel.end, rate));
+    let start = sel.start_frame();
+    let end = sel.end_frame();
+    let (a, b) = (frames_to_secs(start, rate), frames_to_secs(end, rate));
     for (i, t) in state.tracks.iter_mut().enumerate() {
         if i != sel.track {
-            let end = sel.end.min(t.len().max(sel.start));
-            if sel.start < end {
-                let _ = t.clips.remove_range(sel.start, end);
+            let end = end.min(t.len().max(start));
+            if start < end {
+                let _ = t.clips.remove_range(start, end);
             }
         }
     }
@@ -869,19 +895,11 @@ mod tests {
     fn cut_copy_paste_roundtrip() {
         let mut editor = editor_with(&[1.0, 2.0, 3.0, 4.0]);
         editor
-            .copy(Selection {
-                track: 0,
-                start: 1,
-                end: 3,
-            })
+            .copy(Selection::new(0, 1, 3))
             .unwrap();
         assert_eq!(editor.clipboard.as_ref().unwrap().channels[0], vec![2.0, 3.0]);
         editor
-            .cut(Selection {
-                track: 0,
-                start: 1,
-                end: 3,
-            })
+            .cut(Selection::new(0, 1, 3))
             .unwrap();
         assert_eq!(editor.state().tracks[0].render().channels[0], vec![1.0, 4.0]);
         editor.paste(0, 1).unwrap();
@@ -944,11 +962,7 @@ mod tests {
         let mut editor = editor_with(&[1.0, 2.0, 3.0, 4.0]);
         editor
             .apply(
-                Selection {
-                    track: 0,
-                    start: 1,
-                    end: 3,
-                },
+                Selection::new(0, 1, 3),
                 "Expand",
                 |selected| selected.channels[0].push(9.0),
             )
@@ -1062,7 +1076,7 @@ mod tests {
         let lt = editor.add_label_track("L");
         editor.add_label(lt, 0.8, 0.8, "x").unwrap();
         editor.set_sync_lock(true);
-        editor.cut(Selection { track: 0, start: 2, end: 4 }).unwrap();
+        editor.cut(Selection::new(0, 2, 4)).unwrap();
         assert_eq!(editor.state().tracks[1].len(), 8);
         assert!((editor.state().labels[0].labels[0].start - 0.6).abs() < 1e-9);
         editor.paste(0, 2).unwrap();
@@ -1071,7 +1085,7 @@ mod tests {
         assert!((editor.state().labels[0].labels[0].start - 0.8).abs() < 1e-9);
         // Without sync-lock other tracks are untouched.
         editor.set_sync_lock(false);
-        editor.delete(Selection { track: 0, start: 0, end: 1 }).unwrap();
+        editor.delete(Selection::new(0, 0, 1)).unwrap();
         assert_eq!(editor.state().tracks[1].len(), 10);
     }
 

@@ -140,22 +140,24 @@ impl crate::Editor {
     /// expandable cut line. A single undo entry is recorded.
     pub fn cut_with(&mut self, sel: Selection, b: &EditBehavior) -> Result<()> {
         let sel = sel.normalized();
+        let start = sel.start_frame();
+        let end = sel.end_frame();
         let mut state = self.state().clone();
         let track = state
             .tracks
             .get(sel.track)
             .ok_or(CoreError::TrackNotFound(sel.track))?;
 
-        let removed = render_pre_envelope_range(&track.clips, sel.start, sel.end)?;
+        let removed = render_pre_envelope_range(&track.clips, start, end)?;
         let move_clips = state.sync_lock || b.edit_clips_can_move;
         let add_cut_line = b.enable_cut_lines
-            && sel.start < sel.end
-            && contains_range_in_one_clip(&track.clips, sel.start, sel.end);
+            && start < end
+            && contains_range_in_one_clip(&track.clips, start, end);
 
         clear_wave_range(
             &mut state.tracks[sel.track].clips,
-            sel.start,
-            sel.end,
+            start,
+            end,
             move_clips,
             add_cut_line.then(|| removed.clone()),
         )?;
@@ -171,6 +173,8 @@ impl crate::Editor {
     /// A single undo entry is recorded.
     pub fn delete_with(&mut self, sel: Selection, b: &EditBehavior) -> Result<()> {
         let sel = sel.normalized();
+        let start = sel.start_frame();
+        let end = sel.end_frame();
         let mut state = self.state().clone();
         let track = state
             .tracks
@@ -178,12 +182,12 @@ impl crate::Editor {
             .ok_or(CoreError::TrackNotFound(sel.track))?;
 
         // Validate the range before editing, just as for cut.
-        let _ = render_pre_envelope_range(&track.clips, sel.start, sel.end)?;
+        let _ = render_pre_envelope_range(&track.clips, start, end)?;
         let move_clips = state.sync_lock || b.edit_clips_can_move;
         clear_wave_range(
             &mut state.tracks[sel.track].clips,
-            sel.start,
-            sel.end,
+            start,
+            end,
             move_clips,
             None,
         )?;
@@ -439,16 +443,18 @@ fn ripple_remove_with_labels(
     }
 
     let rate = state.tracks[sel.track].sample_rate();
+    let start = sel.start_frame();
+    let end = sel.end_frame();
     let (a, b) = (
-        frames_to_secs(sel.start, rate),
-        frames_to_secs(sel.end, rate),
+        frames_to_secs(start, rate),
+        frames_to_secs(end, rate),
     );
 
     for (index, track) in state.tracks.iter_mut().enumerate() {
         if index != sel.track {
-            let end = sel.end.min(track.len().max(sel.start));
-            if sel.start < end {
-                let _ = track.clips.remove_range(sel.start, end);
+            let end = end.min(track.len().max(start));
+            if start < end {
+                let _ = track.clips.remove_range(start, end);
             }
         }
     }
@@ -713,11 +719,7 @@ mod tests {
 
         editor
             .cut_with(
-                Selection {
-                    track: 0,
-                    start: 1,
-                    end: 3,
-                },
+                Selection::new(0, 1, 3),
                 &behavior,
             )
             .unwrap();
@@ -730,11 +732,7 @@ mod tests {
 
         editor
             .cut_with(
-                Selection {
-                    track: 0,
-                    start: 1,
-                    end: 3,
-                },
+                Selection::new(0, 1, 3),
                 &behavior,
             )
             .unwrap();
@@ -755,11 +753,7 @@ mod tests {
 
         editor
             .delete_with(
-                Selection {
-                    track: 0,
-                    start: 1,
-                    end: 3,
-                },
+                Selection::new(0, 1, 3),
                 &behavior,
             )
             .unwrap();
@@ -845,11 +839,7 @@ mod tests {
         let mut editor = editor_with_clips(WaveClips::from_buffer("clip", mono(&[1.0, 2.0, 3.0])));
         editor
             .delete_with(
-                Selection {
-                    track: 0,
-                    start: 0,
-                    end: 1,
-                },
+                Selection::new(0, 0, 1),
                 &EditBehavior::default(),
             )
             .unwrap();
@@ -872,7 +862,7 @@ mod paste_regression {
         state.sample_rate = 100;
         state.tracks.push(Track::new("a", AudioBuffer::from_channels(100, vec![vec![0.1; 150]])));
         let mut editor = Editor::new(state);
-        editor.copy(Selection { track: 0, start: 0, end: 150 }).unwrap();
+        editor.copy(Selection::new(0, 0, 150)).unwrap();
         editor.paste_with(0, 0, &EditBehavior::default()).unwrap();
         assert_eq!(editor.state().tracks[0].len(), 300);
     }

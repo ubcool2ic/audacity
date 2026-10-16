@@ -55,8 +55,8 @@ impl AudacityApp {
         self.selected_track = Some(track);
         self.selection = Some(Selection {
             track,
-            start: (t0 * rate).round() as usize,
-            end: (t1 * rate).round() as usize,
+            start: (t0 * rate).round() as i64,
+            end: (t1 * rate).round() as i64,
         });
     }
 

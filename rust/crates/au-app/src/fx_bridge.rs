@@ -88,7 +88,7 @@ pub fn apply_builtin(editor: &mut Editor, sel: Selection, effect: &mut dyn Built
     let mut out = ApplyOutcome::default();
     if effect.kind() == EffectKind::Analyze {
         let track = &editor.state().tracks[sel.track];
-        let mut buf = track.clips.render_range(sel.start, sel.end.max(sel.start)).map_err(|e| e.to_string())?;
+        let mut buf = track.clips.render_range(sel.start_frame(), sel.end_frame().max(sel.start_frame())).map_err(|e| e.to_string())?;
         let mut ctx = EffectContext { aux, t0, ..Default::default() };
         au_effects::offline::process_isolated(effect, &mut buf, &mut ctx).map_err(|e| e.to_string())?;
         out.report = ctx.report;
@@ -115,7 +115,7 @@ pub fn apply_builtin(editor: &mut Editor, sel: Selection, effect: &mut dyn Built
         editor.history.modify_current(|st| {
             if let Some(t) = st.tracks.get_mut(sel.track) {
                 let len = t.len();
-                quantize_track_range(t, sel.start, len, dither);
+                quantize_track_range(t, sel.start_frame(), len, dither);
             }
         });
     }
@@ -128,8 +128,8 @@ pub fn preview(state: &ProjectState, sel: Selection, effect: &mut dyn BuiltinEff
     let sel = sel.normalized();
     let track = state.tracks.get(sel.track).ok_or("no such track")?;
     let rate = track.sample_rate().max(1);
-    let end = sel.end.min(sel.start + (max_secs * rate as f64) as usize).max(sel.start);
-    let mut buf = track.clips.render_range(sel.start, end).map_err(|e| e.to_string())?;
+    let end = sel.end.min(sel.start + (max_secs * rate as f64) as i64).max(sel.start);
+    let mut buf = track.clips.render_range(sel.start_frame(), (end.max(0) as usize).max(sel.start_frame())).map_err(|e| e.to_string())?;
     au_effects::offline::process_isolated(effect, &mut buf, &mut EffectContext::default()).map_err(|e| e.to_string())?;
     Ok(buf)
 }

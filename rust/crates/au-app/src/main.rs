@@ -239,7 +239,7 @@ fn process(input: &str, output: &str, effects: &[String]) -> Result<String, Stri
     let sel = Selection {
         track: 0,
         start: 0,
-        end: frames,
+        end: frames as i64,
     };
     for spec in effects {
         let mut fx = parse_effect(spec)?;
@@ -708,7 +708,7 @@ fn selftest() -> Result<String, String> {
     au_project::save_project(&proj, editor.state()).map_err(|x| x.to_string())?;
     let loaded = au_project::load_project(&proj).map_err(|x| x.to_string())?;
     let _ = std::fs::remove_dir_all(&dir);
-    if back.len() != rate || loaded.tracks.len() != 1 {
+    if back.len() as i64 != rate || loaded.tracks.len() != 1 {
         return Err("selftest mismatch".into());
     }
     Ok(format!(

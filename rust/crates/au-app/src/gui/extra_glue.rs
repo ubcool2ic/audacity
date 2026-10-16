@@ -55,18 +55,18 @@ impl AudacityApp {
     }
 
     fn cursor_secs(&self) -> f64 {
-        self.selection.map_or(0.0, |s| au_core::frames_to_secs(s.start, self.selected_rate()))
+        self.selection.map_or(0.0, |s| s.start as f64 / self.selected_rate() as f64)
     }
 
     pub(super) fn set_sel_secs(&mut self, t0: f64, t1: f64) {
         let track = self.selected_track.or(self.selection.map(|s| s.track)).unwrap_or(0);
         self.selected_track = Some(track);
         let rate = self.selected_rate();
-        let (a, b) = (t0.min(t1).max(0.0), t0.max(t1).max(0.0));
+        let (a, b) = (t0.min(t1), t0.max(t1));
         self.selection = Some(Selection {
             track,
-            start: au_core::secs_to_frames(a, rate),
-            end: au_core::secs_to_frames(b, rate),
+            start: (a * rate as f64).round() as i64,
+            end: (b * rate as f64).round() as i64,
         });
     }
 
@@ -482,7 +482,7 @@ impl AudacityApp {
             return ("clip not moved".into(), true);
         }
         let d = moved as f64 / f64::from(rate);
-        self.set_sel_secs((t0 + d).max(0.0), (t1 + d).max(0.0));
+        self.set_sel_secs(t0 + d, t1 + d); // may go below 0, like Audacity
         (if right { "Moved clips to the right" } else { "Moved clips to the left" }.into(), true)
     }
 

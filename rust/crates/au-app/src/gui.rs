@@ -499,7 +499,7 @@ impl AudacityApp {
                 Selection {
                     track,
                     start: 0,
-                    end: len,
+                    end: len as i64,
                 }
             })
             .normalized()
@@ -1089,8 +1089,8 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 };
                 // Like Audacity, a time selection may extend past the end of the audio.
                 let _ = len;
-                let start = au_core::secs_to_frames(start_secs, rate);
-                let end = au_core::secs_to_frames(end_secs, rate);
+                let start = au_core::secs_to_frames(start_secs, rate) as i64;
+                let end = au_core::secs_to_frames(end_secs, rate) as i64;
                 let selection = Selection {
                     track,
                     start: start.min(end),
@@ -1121,7 +1121,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 self.selection = Some(Selection {
                     track: 0,
                     start: 0,
-                    end: len,
+                    end: len as i64,
                 });
                 Some(("Selected all of track 0".to_string(), true))
             }
@@ -1138,19 +1138,19 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 let mut clips = Vec::new();
                 for clip in t.clips.clips.drain(..) {
                     let (c0, c1) = (clip.start, clip.end());
-                    if c1 <= sel.start || c0 >= sel.end {
+                    if c1 <= sel.start_frame() || c0 >= sel.end_frame() {
                         clips.push(clip);
                         continue;
                     }
                     let audio = clip.rendered();
-                    if c0 < sel.start {
-                        if let Ok(left) = audio.slice(0, sel.start - c0) {
+                    if c0 < sel.start_frame() {
+                        if let Ok(left) = audio.slice(0, sel.start_frame() - c0) {
                             clips.push(au_core::timeline::Clip::new(clip.name.clone(), c0, left));
                         }
                     }
-                    if c1 > sel.end {
-                        if let Ok(right) = audio.slice(sel.end - c0, audio.len()) {
-                            clips.push(au_core::timeline::Clip::new(clip.name.clone(), sel.end, right));
+                    if c1 > sel.end_frame() {
+                        if let Ok(right) = audio.slice(sel.end_frame() - c0, audio.len()) {
+                            clips.push(au_core::timeline::Clip::new(clip.name.clone(), sel.end_frame(), right));
                         }
                     }
                 }
@@ -1178,7 +1178,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                         }
                     }
                     "Paste" => {
-                        { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.paste_with(track, selection.start, &behavior)) }
+                        { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.paste_with(track, selection.start_frame(), &behavior)) }
                     }
                     _ => unreachable!(),
                 }
@@ -1610,7 +1610,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 self.install_state(p.state, path);
                 if s1 > s0 && !self.editor.state().tracks.is_empty() {
                     let rate = self.editor.state().tracks[0].sample_rate() as f64;
-                    self.selection = Some(Selection { track: 0, start: (s0 * rate) as usize, end: (s1 * rate) as usize });
+                    self.selection = Some(Selection { track: 0, start: (s0 * rate) as i64, end: (s1 * rate) as i64 });
                 }
                 let (f0, f1) = self.aup3_extras.frequencies;
                 self.spectral_selection = (f0 >= 0.0 || f1 >= 0.0).then_some({ let mut r = au_core::selected_region::SelectedRegion::new(s0, s1); r.set_frequencies(f0, f1); crate::spectrogram_view::SpectralSelection::new(0, r) });
@@ -1853,8 +1853,8 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         let track = self.editor.state().tracks.get(selection.track)?;
         let rate = track.sample_rate().max(1);
         let project_rate = self.project_rate();
-        let start_secs = au_core::frames_to_secs(selection.start, rate);
-        let end_secs = au_core::frames_to_secs(selection.end, rate);
+        let start_secs = selection.start as f64 / rate as f64;
+        let end_secs = selection.end as f64 / rate as f64;
         Some((
             au_core::secs_to_frames(start_secs, project_rate),
             au_core::secs_to_frames(end_secs, project_rate),
@@ -2035,7 +2035,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     .get(selection.track)
                     .map_or(selected_rate, Track::sample_rate)
                     .max(1);
-                let cursor_secs = au_core::frames_to_secs(selection.start, track_rate);
+                let cursor_secs = selection.start as f64 / track_rate as f64;
                 au_core::secs_to_frames(cursor_secs, rate)
             });
 
@@ -2052,11 +2052,11 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 .max(1);
             (
                 au_core::secs_to_frames(
-                    au_core::frames_to_secs(selection.start, track_rate),
+                    selection.start as f64 / track_rate as f64,
                     rate,
                 ),
                 au_core::secs_to_frames(
-                    au_core::frames_to_secs(selection.end, track_rate),
+                    selection.end as f64 / track_rate as f64,
                     rate,
                 ),
             )
@@ -2264,7 +2264,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     fn open_spectrum(&mut self) {
         let Some(track) = self.selected_track else { self.status = "Plot Spectrum: select a track first".into(); return; };
         let sel = self.selection_for_track(track).normalized();
-        match self.editor.state().tracks[sel.track].clips.render_range(sel.start, sel.end) {
+        match self.editor.state().tracks[sel.track].clips.render_range(sel.start_frame(), sel.end_frame()) {
             Ok(buf) => self.spectrum_win = Some(crate::analyze_ui::SpectrumWindow::new(buf)),
             Err(e) => self.status = au_core::i18n::tr_format("Plot Spectrum: %s", &[&e]),
         }
@@ -2334,7 +2334,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     let t = &self.editor.state().tracks[sel.track];
                     match t
                         .clips
-                        .render_range(sel.start, sel.end)
+                        .render_range(sel.start_frame(), sel.end_frame())
                         .map_err(|e| e.to_string())
                         .and_then(|b| dlg.effect.learn_profile(&b).map_err(|e| e.to_string()))
                     {
@@ -2656,8 +2656,8 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 .tracks
                 .get(selection.track)
                 .map_or(self.editor.state().sample_rate.max(1), Track::sample_rate);
-            let start = au_core::frames_to_secs(selection.start, rate);
-            let end = au_core::frames_to_secs(selection.end, rate);
+            let start = selection.start as f64 / rate as f64;
+            let end = selection.end as f64 / rate as f64;
             let duration = (end - start).max(0.1);
             self.zoom.pixels_per_sec = (width.max(1.0) / duration).clamp(1.0, 10_000.0);
             self.zoom.h_offset = start;
@@ -2669,9 +2669,9 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             return;
         };
         let selection = self.selection_for_track(track);
-        let mut result = self.editor.split_clip(track, selection.start);
-        if result.is_ok() && selection.end > selection.start {
-            result = self.editor.split_clip(track, selection.end);
+        let mut result = self.editor.split_clip(track, selection.start_frame());
+        if result.is_ok() && selection.end_frame() > selection.start_frame() {
+            result = self.editor.split_clip(track, selection.end_frame());
         }
         self.report(result);
     }
@@ -2681,7 +2681,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             return;
         };
         let selection = self.selection_for_track(track);
-        self.edit_selection(|editor| editor.join_clips(track, selection.start, selection.end));
+        self.edit_selection(|editor| editor.join_clips(track, selection.start_frame(), selection.end_frame()));
     }
 
     fn apply_clip_speed(&mut self) {
@@ -2689,7 +2689,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             self.status = "Select a track first".to_owned();
             return;
         };
-        let frame = self.selection_for_track(track_index).start;
+        let frame = self.selection_for_track(track_index).start_frame();
         let clip_index = self
             .editor
             .state()
@@ -2727,8 +2727,8 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         let rate = self.selected_rate();
         selection.map_or((0.0, 0.0), |selection| {
             (
-                au_core::frames_to_secs(selection.start, rate),
-                au_core::frames_to_secs(selection.end, rate),
+                selection.start as f64 / rate as f64,
+                selection.end as f64 / rate as f64,
             )
         })
     }
@@ -2738,8 +2738,8 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         let rate = self.selected_rate();
         let (start, end) = selection.map_or((0.0, 0.0), |selection| {
             (
-                au_core::frames_to_secs(selection.start, rate),
-                au_core::frames_to_secs(selection.end, rate),
+                selection.start as f64 / rate as f64,
+                selection.end as f64 / rate as f64,
             )
         });
 
@@ -2934,7 +2934,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 let result = self.editor.copy(selection);
                 self.report(result);
             } else if paste {
-                let at = selection.start;
+                let at = selection.start_frame();
                 { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.paste_with(index, at, &behavior)) };
             }
         }
@@ -3138,8 +3138,8 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 rect.right_bottom(),
             );
             if let Some(selection) = selection {
-                let start = au_core::frames_to_secs(selection.start, rate);
-                let end = au_core::frames_to_secs(selection.end, rate);
+                let start = selection.start as f64 / rate as f64;
+                let end = selection.end as f64 / rate as f64;
                 let left = rect.left() + zoom.time_to_x(start) as f32;
                 let right = rect.left() + zoom.time_to_x(end) as f32;
                 painter.rect_filled(
@@ -3545,7 +3545,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                         let snapped = self.snap_time(time, rate, None);
                         let end = au_core::secs_to_frames(snapped, rate).min(frames);
                         self.drag = Some(PointerDrag::Selection { track, start, end });
-                        self.selection = Some(Selection { track, start, end });
+                        self.selection = Some(Selection { track, start: start as i64, end: end as i64 });
                     }
                     Some(PointerDrag::Clip {
                         track,
@@ -3636,8 +3636,8 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                         let frame = au_core::secs_to_frames(time, rate).min(frames);
                         self.selection = Some(Selection {
                             track: index,
-                            start: frame,
-                            end: frame,
+                            start: frame as i64,
+                            end: frame as i64,
                         });
                         self.selected_label = None;
                     }
@@ -4005,8 +4005,8 @@ fn draw_note_tracks(&mut self, ui: &mut egui::Ui) {
                             .unwrap_or(Some(wave_track));
                         self.selection = Some(Selection {
                             track: wave_track,
-                            start: au_core::secs_to_frames(*start, rate),
-                            end: au_core::secs_to_frames(*end, rate),
+                            start: au_core::secs_to_frames(*start, rate) as i64,
+                            end: au_core::secs_to_frames(*end, rate) as i64,
                         });
                         if response.double_clicked() {
                             self.label_edit = Some(LabelEdit {
@@ -4071,7 +4071,7 @@ fn draw_note_tracks(&mut self, ui: &mut egui::Ui) {
         };
         match drag {
             PointerDrag::Selection { track, start, end } => {
-                self.selection = Some(Selection { track, start, end });
+                self.selection = Some(Selection { track, start: start as i64, end: end as i64 });
             }
             PointerDrag::Clip {
                 track,
@@ -4640,10 +4640,10 @@ if self.ffmpeg_window {
             .max(1);
         let current = self.selection;
         let start_secs = current.map_or(0.0, |selection| {
-            au_core::frames_to_secs(selection.start, track_rate)
+            selection.start as f64 / track_rate as f64
         });
         let end_secs = current.map_or(0.0, |selection| {
-            au_core::frames_to_secs(selection.end, track_rate)
+            selection.end as f64 / track_rate as f64
         });
         let start_id = egui::Id::new("selection-start-field");
         let end_id = egui::Id::new("selection-end-field");
@@ -4722,8 +4722,8 @@ if self.ffmpeg_window {
                 let end = end.max(start);
                 self.selection = Some(Selection {
                     track,
-                    start: au_core::secs_to_frames(start, track_rate),
-                    end: au_core::secs_to_frames(end, track_rate),
+                    start: au_core::secs_to_frames(start, track_rate) as i64,
+                    end: au_core::secs_to_frames(end, track_rate) as i64,
                 });
             } else {
                 self.status = "Select a track before editing the selection".to_owned();
@@ -4988,7 +4988,7 @@ if response.changed() && self.script_pipe_enabled {
                     if ui.button(au_core::i18n::tr_ui("Paste")).clicked() {
                         ui.close_menu();
                         if let Some(index) = self.selected_track {
-                            let at = self.selection_for_track(index).start;
+                            let at = self.selection_for_track(index).start_frame();
                             { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.paste_with(index, at, &behavior)) };
                         }
                     }
@@ -5432,7 +5432,7 @@ impl<'a> AppScriptHost<'a> {
             let a = au_core::secs_to_frames(self.sel.t0.max(0.0), rate).min(len);
             let b = au_core::secs_to_frames(self.sel.t1.max(0.0), rate).min(len);
             self.app.selected_track = Some(track);
-            self.app.selection = Some(Selection { track, start: a.min(b), end: a.max(b) });
+            self.app.selection = Some(Selection { track, start: a.min(b) as i64, end: a.max(b) as i64 });
             if self.sel.f0 >= 0.0 || self.sel.f1 >= 0.0 {
                 let mut region = au_core::selected_region::SelectedRegion::new(self.sel.t0, self.sel.t1);
                 region.set_frequencies(self.sel.f0, self.sel.f1);
@@ -5498,7 +5498,7 @@ impl au_script::ScriptHost for AppScriptHost<'_> {
             };
             let out = crate::fx_bridge::apply_builtin(
                 &mut self.app.editor,
-                Selection { track, start: a.min(b), end: a.max(b) },
+                Selection { track, start: a.min(b) as i64, end: a.max(b) as i64 },
                 effect.as_mut(),
                 None,
             )?;

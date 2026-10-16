@@ -602,7 +602,7 @@ impl AudacityApp {
                     }
                     if ui.button(au_core::i18n::tr_ui("Paste")).clicked() {
                         if let Some(track) = self.selected_track {
-                            let at_frame = self.selection_for_track(track).start;
+                            let at_frame = self.selection_for_track(track).start_frame();
                             self.edit_selection(|editor| editor.paste(track, at_frame));
                         }
                     }
