@@ -561,6 +561,7 @@ dependencies = [
  "au-runtime",
  "base64",
  "clap-sys",
+ "libc",
  "libloading",
  "tempfile",
  "vst3",

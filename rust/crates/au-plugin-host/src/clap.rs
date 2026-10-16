@@ -20,7 +20,7 @@ use clap_sys::{
         params::{clap_host_params, clap_param_info, clap_plugin_params, CLAP_EXT_PARAMS},
         posix_fd_support::{
             clap_host_posix_fd_support, clap_plugin_posix_fd_support, clap_posix_fd_flags,
-            CLAP_EXT_POSIX_FD_SUPPORT, CLAP_POSIX_FD_READ, CLAP_POSIX_FD_WRITE,
+            CLAP_EXT_POSIX_FD_SUPPORT, CLAP_POSIX_FD_ERROR, CLAP_POSIX_FD_READ, CLAP_POSIX_FD_WRITE,
         },
         state::{clap_host_state, clap_plugin_state, CLAP_EXT_STATE},
         thread_check::{clap_host_thread_check, CLAP_EXT_THREAD_CHECK},
@@ -796,12 +796,12 @@ pub fn run_loop_idle() {
             state
                 .fds
                 .iter()
-                .filter(|registration| registration.flags & CLAP_POSIX_FD_READ != 0)
                 .map(|registration| (registration.fd, registration.flags))
                 .collect::<Vec<_>>()
         };
 
-        if !fds.is_empty() {
+        let ready = poll_ready_fds(&fds);
+        if !ready.is_empty() {
             if let Some(posix_fd_support) =
                 get_plugin_extension::<clap_plugin_posix_fd_support>(
                     plugin,
@@ -809,17 +809,79 @@ pub fn run_loop_idle() {
                 )
             {
                 if let Some(on_fd) = unsafe { (*posix_fd_support).on_fd } {
-                    for (fd, flags) in fds {
-                        unsafe {
-                            on_fd(
-                                plugin,
-                                fd,
-                                flags & (CLAP_POSIX_FD_READ | CLAP_POSIX_FD_WRITE),
-                            )
-                        };
+                    for (fd, flags) in ready {
+                        unsafe { on_fd(plugin, fd, flags) };
                     }
                 }
             }
+        }
+    }
+}
+
+/// Non-blocking `poll()` over the registered posix fds. Returns only the fds
+/// that are actually ready, with the CLAP flags that fired (READ/WRITE/ERROR),
+/// masked to what the plugin registered for (ERROR is always reported).
+pub(crate) fn poll_ready_fds(fds: &[(i32, clap_posix_fd_flags)]) -> Vec<(i32, clap_posix_fd_flags)> {
+    let mut pollfds: Vec<libc::pollfd> = fds
+        .iter()
+        .filter(|(fd, flags)| *fd >= 0 && *flags != 0)
+        .map(|&(fd, flags)| {
+            let mut events: libc::c_short = 0;
+            if flags & CLAP_POSIX_FD_READ != 0 {
+                events |= libc::POLLIN;
+            }
+            if flags & CLAP_POSIX_FD_WRITE != 0 {
+                events |= libc::POLLOUT;
+            }
+            libc::pollfd { fd, events, revents: 0 }
+        })
+        .collect();
+    if pollfds.is_empty() {
+        return Vec::new();
+    }
+    let rc = unsafe { libc::poll(pollfds.as_mut_ptr(), pollfds.len() as libc::nfds_t, 0) };
+    if rc <= 0 {
+        return Vec::new();
+    }
+    let registered: std::collections::HashMap<i32, clap_posix_fd_flags> = fds.iter().copied().collect();
+    pollfds
+        .iter()
+        .filter(|p| p.revents != 0)
+        .filter_map(|p| {
+            let wanted = registered.get(&p.fd).copied().unwrap_or(0);
+            let mut out: clap_posix_fd_flags = 0;
+            if p.revents & (libc::POLLIN | libc::POLLHUP) != 0 {
+                out |= CLAP_POSIX_FD_READ & wanted;
+            }
+            if p.revents & libc::POLLOUT != 0 {
+                out |= CLAP_POSIX_FD_WRITE & wanted;
+            }
+            if p.revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
+                out |= CLAP_POSIX_FD_ERROR;
+            }
+            (out != 0).then_some((p.fd, out))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod posix_fd_poll_tests {
+    use super::*;
+
+    #[test]
+    fn idle_pipe_is_not_reported_until_written() {
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let (r, w) = (fds[0], fds[1]);
+        assert!(poll_ready_fds(&[(r, CLAP_POSIX_FD_READ)]).is_empty());
+        // write end is writable, but only reported if WRITE was registered
+        assert!(poll_ready_fds(&[(w, CLAP_POSIX_FD_READ)]).is_empty());
+        assert_eq!(poll_ready_fds(&[(w, CLAP_POSIX_FD_WRITE)]), vec![(w, CLAP_POSIX_FD_WRITE)]);
+        assert_eq!(unsafe { libc::write(w, b"x".as_ptr().cast(), 1) }, 1);
+        assert_eq!(poll_ready_fds(&[(r, CLAP_POSIX_FD_READ)]), vec![(r, CLAP_POSIX_FD_READ)]);
+        unsafe {
+            libc::close(r);
+            libc::close(w);
         }
     }
 }

@@ -16,6 +16,7 @@ clap-sys = "0.5"
 vst3 = "0.3"
 libloading = "0.8"
 base64 = "0.22"
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
