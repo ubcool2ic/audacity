@@ -82,6 +82,7 @@ mod toolbars;
 mod extra_glue;
 pub(crate) mod extra_nav_logic;
 pub(crate) mod extra_nav;
+mod scrub_glue;
 pub(crate) mod waveform_cache;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -219,6 +220,8 @@ struct AudacityApp {
     focused_track: Option<usize>,
     /// Extra-menu navigation state (items 46-67: focus/selection/label navigation).
     extra: extra_nav::ExtraState,
+    /// Transport > Scrubbing state (Scrub/Seek checks, scrub ruler, active ruler scrub).
+    scrub_ui: scrub_glue::ScrubUi,
     /// Active colour theme.
     theme: crate::theme::Theme,
     /// Custom theme loaded from components or a cache.
@@ -384,6 +387,7 @@ impl Default for AudacityApp {
             theme_applied: false,
             focused_track: None,
             extra: Default::default(),
+            scrub_ui: Default::default(),
             waveform_cache: waveform_cache::WaveformCache::new(),
             progress: progress::ProgressCenter::new(),
             test_jobs: Vec::new(),
@@ -875,6 +879,9 @@ fn export_midi(&mut self) {
 fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     let (command, params) = crate::script_bridge::parse_command(line);
     if let Some(result) = self.execute_extra_command(&command, &params) {
+        return Some(result);
+    }
+    if let Some(result) = self.scrub_command(&command) {
         return Some(result);
     }
 
@@ -3973,13 +3980,15 @@ fn draw_note_tracks(&mut self, ui: &mut egui::Ui) {
         }
     }
 
-    fn draw_ruler(&self, ui: &mut egui::Ui) {
-        let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width().max(1.0), 28.0),
-            egui::Sense::hover(),
+    fn draw_ruler(&mut self, ui: &mut egui::Ui) {
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width().max(1.0), self.ruler_height()),
+            egui::Sense::click_and_drag(),
         );
+        self.ruler_scrub(&response, rect);
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, egui::Color32::from_gray(24));
+        self.paint_scrub_bar(&painter, rect);
         painter.line_segment(
             [rect.left_bottom(), rect.right_bottom()],
             egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
@@ -4743,6 +4752,19 @@ if ui.button(au_core::i18n::tr_ui("FFmpeg status…")).clicked() {
                 });
                 ui.menu_button({ let t = au_core::i18n::tr_ui("View"); self.menu_titles.push(t.clone()); t }, |ui| {
                     self.toolbars_menu(ui);
+                    // Transport > Scrubbing (this port has no Transport menu yet).
+                    ui.menu_button(au_core::i18n::tr_ui("Scrubbing"), |ui| {
+                        for (label, id, on) in [
+                            ("Scrub", "Scrub", self.scrub_ui.scrub),
+                            ("Seek", "Seek", self.scrub_ui.seek),
+                            ("Scrub Ruler", "ToggleScrubRuler", self.scrub_ui.ruler_shown),
+                        ] {
+                            if ui.selectable_label(on, au_core::i18n::tr_ui(label)).clicked() {
+                                self.scrub_command(id);
+                                ui.close_menu();
+                            }
+                        }
+                    });
                     if ui.button(au_core::i18n::tr_ui("Spectrogram Settings…")).clicked() {
                         self.spectrogram_settings_open = true;
                         ui.close_menu();

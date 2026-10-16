@@ -363,3 +363,11 @@ Hand glue (not Luna): au-io Recorder applies the gain in the capture callback (u
 - gui/extra_nav.rs + gui/extra_nav_logic.rs: SelSetExtRight, SelCntrLeft/Right, MoveToPrev/NextLabel, ExportMp3/Wav/Ogg/FLAC/Sel, Prev/NextFrame, Prev/Next/First/LastTrack, ShiftUp/Down, Toggle/ToggleAlt, CursorLeft/Right. Items 68-89 left to the other helper.
 - Hand fix: boundary moves clamp to max(tracks end, screen end time) as in 3.7.3 DoBoundaryMove.
 - tools/compare_extra_b.py vs Audacity 3.7.3: 11/11 BizyBot cases pass.
+
+## BizyBot — Scrubbing UI (2026-10-15)
+
+| Model | Calls | Cost |
+|---|---|---|
+| openai/gpt-6-luna (via user-OpenRouterAPI) | 1 (scrub.rs logic + tests; 930 in / 2181 out) | ~$0.001 |
+
+- scrub.rs (Luna), gui/scrub_glue.rs + gui.rs ruler wiring (hand), settings: pinned_head, UnpinnedScrubbing default true.

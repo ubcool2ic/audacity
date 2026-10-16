@@ -293,7 +293,7 @@ This roadmap describes intended scope, not a claim that planned features are imp
 - [x] Recording: new track, overdub (plays mix while recording), latency compensation, punch-and-roll with preroll + crossfade, timer record, sound-activated record (threshold + hold); capture via SPSC ring
 - [x] System-audio loopback: Windows WASAPI only; Linux = choose a PulseAudio/PipeWire "Monitor of…" input; macOS unsupported (needs BlackHole/ScreenCaptureKit). See `docs/AUDIO_ENGINE.md`
 - [x] Play-at-speed (0.1–3×, linear interpolation, negative = reverse) and loop playback
-- [ ] Scrubbing UI (engine supports negative/variable speed + seek; no mouse-scrub gesture yet)
+- [x] Scrubbing UI: scrub ruler (View > Scrubbing > Scrub Ruler / ToggleScrubRuler), Scrub and Seek (mutually exclusive checks), ruler drag scrubs (speed from mouse motion every 50 ms, |speed| <= 32) or seeks (scrub.rs + gui/scrub_glue.rs). Not pipe-compared: Audacity exposes no scrub state over the pipe
 - [x] Headless null backends (`NullOutput`, `NullInput`) — playback and record paths tested without hardware (`au-app::transport` tests)
 - [x] Undo/project: mixer changes (`Track Mix`), recordings (`Add Track`), punch (`Punch and Roll Record`), Draw; gain/pan/mute/solo persist in `.aurs`
 - [x] egui: transport (Play/Pause/Stop/Loop/speed/Record), meters, mixer side panel, record options, export dither/bit-depth
@@ -449,9 +449,10 @@ Every setting is checked against Audacity 3.7.3 sources. Where the pipe allows i
 - [x] Recording: Hear other tracks (Duplex), Audible input monitoring (software playthrough through a second output stream at the capture rate), Pre-roll (default fixed to 5 s), Crossfade, Sound-activated recording, Latency correction.
 - [x] Directories > Temporary files directory: untitled projects journal to `New Project <date> N-<n>.aup3unsaved` there (TempDirectory::UnsavedProjectFileName). The file is offered for recovery on the next launch after a crash and deleted on save or clean exit. Autosave now runs on a worker thread.
 - [x] Effects menu grouping and sorting, with a separate publisher for port-only effects. Compared: 15/15 menus.
-- [ ] Always scrub unpinned: there is no scrubbing gesture yet (see Stage 3).
+- [x] Always scrub unpinned (/AudioIO/UnpinnedScrubbing, default on as in 3.7.3; /AudioIO/PinnedHead read): with the head unpinned a ruler drag scrubs without Scrub checked.
 - [ ] RTL workaround = off: egui cannot mirror layouts, so we always behave as with the default (on).
 - [ ] Automated input level adjustment: `EXPERIMENTAL_AUTOMATED_INPUT_LEVEL_ADJUSTMENT` is commented out in 3.7.3's Experimental.cmake, so Audacity ignores the key too. Matches.
 - [x] Extra menu commands 1-45 of docs/SPLIT_extra.md (ubcool2ic): play-around-selection, cut preview, keyboard scrub, tools (F1/F2/F3/F6/A/D), mixer volume, play-at-speed, device dialogs, Delete key, clip left/right, Snap-To, SelStart/SelEnd/SelExtLeft/SelExtRight/SelSetExtLeft. tools/compare_extra.py: 17/18 match Audacity 3.7.3. The one failure is ClipLeft past time 0, because our clips cannot start before 0.
-- [ ] Extra menu commands 46-89 (BizyBot).
+- [x] Extra menu commands 46-67 (BizyBot): SelSetExtRight, SelCntrLeft/Right, Move to Prev/Next Label, Export as MP3/WAV/OGG/FLAC/Selected, Prev/NextFrame, track focus nav, ShiftUp/Down, Toggle/ToggleAlt, CursorLeft/Right (gui/extra_nav.rs). tools/compare_extra_b.py: 11/11 vs Audacity 3.7.3 (selection/cursor commands; label/export/focus commands are not pipe-observable).
+- [ ] Extra menu commands 68-89 (other helper).
 - [x] Envelope drawn and edited with GetWaveYPos/ValueOfPixel when the track is in dB view (linear view keeps the 0-2 scale).

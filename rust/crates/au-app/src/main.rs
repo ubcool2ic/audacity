@@ -29,6 +29,7 @@ mod wave_paint;
 mod extra_menu;
 #[cfg(feature = "gui")]
 mod extra_cmds;
+mod scrub;
 #[cfg(feature = "gui")]
 mod snapping;
 #[cfg(feature = "gui")]

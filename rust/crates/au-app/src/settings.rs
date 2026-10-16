@@ -142,8 +142,10 @@ pub struct AppSettings {
     pub seek_long_period: f64,
     /// Enable micro-fades.
     pub micro_fades: bool,
-    /// Always scrub when the playback head is unpinned.
+    /// Always scrub when the playback head is unpinned (3.7.3 default on).
     pub unpinned_scrubbing: bool,
+    /// Pinned playback head (/AudioIO/PinnedHead, default off).
+    pub pinned_head: bool,
 
     /// Number of input channels to record.
     pub record_channels: usize,
@@ -284,7 +286,8 @@ impl AppSettings {
             seek_short_period: p.get_double("/AudioIO/SeekShortPeriod"),
             seek_long_period: p.get_double("/AudioIO/SeekLongPeriod"),
             micro_fades: p.get_bool("/AudioIO/Microfades"),
-            unpinned_scrubbing: p.get_bool("/AudioIO/UnpinnedScrubbing"),
+            unpinned_scrubbing: p.read_bool_or("/AudioIO/UnpinnedScrubbing", true),
+            pinned_head: p.get_bool("/AudioIO/PinnedHead"),
 
             record_channels: p.get_int("/AudioIO/RecordChannels").max(1) as usize,
             duplex: p.get_bool("/AudioIO/Duplex"),
