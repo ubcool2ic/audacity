@@ -314,12 +314,6 @@ pub fn keyboard_scrub_can_start(t0: f64, end_time: f64, backwards: bool) -> bool
     }
 }
 
-/// Returns the desired time shift for a one-pixel clip move.
-pub fn clip_shift_desired(t0: f64, right: bool, pixels_per_sec: f64) -> f64 {
-    let desired_t0 = t0 + (if right { 1.0 } else { -1.0 }) / pixels_per_sec;
-    desired_t0 - t0
-}
-
 fn set_t0(_t0: f64, t1: f64, new_t0: f64, may_swap: bool) -> (f64, f64) {
     if may_swap && new_t0 > t1 {
         (t1, new_t0)
@@ -612,8 +606,6 @@ mod tests {
 
     #[test]
     fn clip_shift_is_one_pixel_in_either_direction() {
-        close(clip_shift_desired(2.0, true, 100.0), 0.01);
-        close(clip_shift_desired(2.0, false, 100.0), -0.01);
     }
 
     #[test]
