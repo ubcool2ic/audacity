@@ -278,7 +278,7 @@ impl AudacityApp {
                 Some((format!("Recording volume {:.2}", self.input_volume), true))
             }
             "DeleteKey" | "DeleteKey2" => {
-                // EditMenus OnDelete: the selection collapses to its start afterwards.
+                // EditMenus OnDelete: selectedRegion.collapseToT0().
                 let r = self.execute_script("Delete:");
                 if r.1 { self.set_sel_secs(t0, t0); }
                 Some(r)
@@ -347,19 +347,21 @@ impl AudacityApp {
         let rate = self.selected_rate();
         let Some(tr) = self.editor.state().tracks.get(track) else { return ("clip not moved".into(), true) };
         let f0 = au_core::secs_to_frames(t0, rate);
-        let Some((idx, start)) = tr.clips.clips.iter().enumerate().find(|(_, c)| c.start <= f0 && f0 < c.end()).map(|(i, c)| (i, c.start)) else {
+        let Some((idx, start)) = tr.clips.clips.iter().enumerate().find(|(_, c)| c.start <= f0 && f0 < c.end()).map(|(i, _)| (i, tr.clips.clip_start_frames(i))) else {
             return ("clip not moved".into(), true);
         };
-        let desired = xc::clip_shift_desired(t0, right, self.zoom.pixels_per_sec);
+        // ClipMenus: desiredT0 = viewInfo.OffsetTimeByPixels(t0, ±1), so horizontal scroll counts.
+        let desired = xc::offset_time_by_pixels(t0, if right { 1 } else { -1 }, self.zoom.pixels_per_sec, self.zoom.h_offset) - t0;
         // TrackShifter::HintOffsetLarger: whole samples, at least one.
         let frames = ((desired.abs() * f64::from(rate)).ceil() as i64).max(1) * if right { 1 } else { -1 };
-        let new_start = (start as i64 + frames).max(0);
-        let moved = new_start - start as i64;
+        // Clips may start before time 0, as in Audacity.
+        let new_start = start + frames;
+        let moved = new_start - start;
         if moved == 0 || self.editor.move_clip(track, idx, new_start).is_err() {
             return ("clip not moved".into(), true);
         }
         let d = moved as f64 / f64::from(rate);
-        self.set_sel_secs(t0 + d, t1 + d);
+        self.set_sel_secs((t0 + d).max(0.0), (t1 + d).max(0.0));
         (if right { "Moved clips to the right" } else { "Moved clips to the left" }.into(), true)
     }
 

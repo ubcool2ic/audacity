@@ -750,17 +750,19 @@ fn get_info_clips(host: &mut dyn ScriptHost) -> String {
     let mut entries = Vec::new();
     for (track_index, track) in state.tracks.iter().enumerate() {
         let rate = track.sample_rate();
-        for clip in &track.clips.clips {
+        for (clip_index, clip) in track.clips.clips.iter().enumerate() {
             let start = if rate == 0 {
                 0.0
             } else {
-                clip.start as f64 / rate as f64
+                track.clips.clip_start_frames(clip_index) as f64 / rate as f64
             };
             let end = start
                 + if rate == 0 {
                     0.0
                 } else {
-                    clip.buffer.len() as f64 * clip.stretch_ratio / rate as f64
+                    (clip.buffer.len() as f64 * clip.stretch_ratio
+                        + (clip.start as i64 - track.clips.clip_start_frames(clip_index)) as f64)
+                        / rate as f64
                 };
             entries.push(format!(
                 "{{\"track\":{},\"start\":{},\"end\":{},\"color\":0,\"name\":\"Clip\"}}",

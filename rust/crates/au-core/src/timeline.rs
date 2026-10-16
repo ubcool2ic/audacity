@@ -221,9 +221,49 @@ pub struct WaveClips {
     pub n_channels: usize,
     /// Cut lines left by cuts with "Enable cut lines" on.
     pub cut_lines: Vec<CutLine>,
+    /// Audio of the first clip that sits before time 0 (Audacity lets a clip start at a negative
+    /// time; that part is kept but never played or rendered).
+    pub hidden_head: Option<HiddenHead>,
+}
+
+/// The part of the clip at frame 0 that lies before time 0.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HiddenHead {
+    /// Source audio before time 0, in order.
+    pub audio: AudioBuffer,
+    /// Visible length of the owning clip when the head was stored; a different length or start
+    /// means the clip was edited or replaced and the head no longer applies.
+    pub owner_len: usize,
+}
+
+fn concat_buffers(a: &AudioBuffer, b: &AudioBuffer) -> AudioBuffer {
+    let channels = a.channels.iter().zip(&b.channels)
+        .map(|(x, y)| x.iter().chain(y.iter()).copied().collect()).collect();
+    AudioBuffer::from_channels(b.sample_rate, channels)
+}
+
+fn split_buffer(a: &AudioBuffer, at: usize) -> (AudioBuffer, AudioBuffer) {
+    let (l, r) = a.channels.iter().map(|c| (c[..at].to_vec(), c[at..].to_vec())).unzip();
+    (AudioBuffer::from_channels(a.sample_rate, l), AudioBuffer::from_channels(a.sample_rate, r))
 }
 
 impl WaveClips {
+    /// The hidden head of clip 0, if it still belongs to it.
+    pub fn hidden_head(&self) -> Option<&HiddenHead> {
+        let head = self.hidden_head.as_ref()?;
+        let first = self.clips.first()?;
+        (first.start == 0 && first.len() == head.owner_len && first.stretch_ratio == 1.0).then_some(head)
+    }
+
+    /// A clip's start in timeline frames; negative when it begins before time 0.
+    pub fn clip_start_frames(&self, idx: usize) -> i64 {
+        let Some(clip) = self.clips.get(idx) else { return 0 };
+        match (idx, self.hidden_head()) {
+            (0, Some(head)) => -(head.audio.len() as i64),
+            _ => clip.start as i64,
+        }
+    }
+
     /// Creates an empty wave track.
     pub fn new(rate: u32, n_ch: usize) -> Self {
         Self {
@@ -232,6 +272,7 @@ impl WaveClips {
             sample_rate: rate,
             n_channels: n_ch,
             cut_lines: Vec::new(),
+            hidden_head: None,
         }
     }
 
@@ -325,6 +366,31 @@ impl WaveClips {
     pub fn move_clip(&mut self, idx: usize, new_start: i64) -> Result<usize> {
         if idx >= self.clips.len() {
             return Err(CoreError::InvalidRange(idx, idx.saturating_add(1)));
+        }
+        // Audacity allows clips to start before 0. The part before 0 is kept in `hidden_head`
+        // (only for unstretched clips; stretched ones still clamp at 0).
+        if self.clips[idx].stretch_ratio == 1.0 && (new_start < 0 || (idx == 0 && self.hidden_head().is_some())) {
+            let head = if idx == 0 { self.hidden_head().cloned() } else { None };
+            let clip = &self.clips[idx];
+            let full = match &head { Some(h) => concat_buffers(&h.audio, &clip.buffer), None => clip.buffer.clone() };
+            let total = full.len() as i64;
+            let new_start = new_start.max(1 - total); // keep at least one sample at or after 0
+            let (start, hidden, visible) = if new_start < 0 {
+                let (h, v) = split_buffer(&full, (-new_start) as usize);
+                (0usize, Some(h), v)
+            } else {
+                (new_start as usize, None, full)
+            };
+            if !self.can_place(idx, start, visible.len()) {
+                return Err(CoreError::InvalidRange(start, start.saturating_add(visible.len())));
+            }
+            let owner_len = visible.len();
+            self.clips[idx].buffer = visible;
+            self.clips[idx].start = start;
+            self.hidden_head = hidden.map(|audio| HiddenHead { audio, owner_len });
+            self.sort_clips();
+            return self.clips.iter().position(|clip| clip.start == start)
+                .ok_or(CoreError::InvalidRange(start, start.saturating_add(owner_len)));
         }
         let start = new_start.max(0) as usize;
         let len = self.clips[idx].len();
@@ -1465,5 +1531,23 @@ mod tests {
         timeline.delete_range(0, 2, 4, 10).unwrap();
         assert_eq!(timeline.wave[1].end(), 8);
         assert!((timeline.labels[0].labels[0].start - 0.6).abs() < 1e-9);
+    }
+
+    #[test]
+    fn clip_moves_before_zero_and_back_like_audacity() {
+        let buf = AudioBuffer::from_channels(100, vec![(0..10).map(|i| i as f32).collect()]);
+        let mut t = WaveClips::from_buffer("c", buf.clone());
+        t.move_clip(0, -3).unwrap();
+        assert_eq!(t.clip_start_frames(0), -3);
+        assert_eq!(t.clips[0].start, 0);
+        assert_eq!(t.clips[0].buffer.channels[0], vec![3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]);
+        t.move_clip(0, -1).unwrap();
+        assert_eq!(t.clip_start_frames(0), -1);
+        t.move_clip(0, 2).unwrap();
+        assert_eq!(t.clip_start_frames(0), 2);
+        assert_eq!(t.clips[0].buffer, buf);
+        assert!(t.hidden_head().is_none());
+        t.move_clip(0, -50).unwrap();
+        assert_eq!(t.clip_start_frames(0), -9);
     }
 }
