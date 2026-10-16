@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WiX v3 schema for wixl (msitools) cross-builds; see build-cross.sh. -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="Audacity-RS" Language="1033" Version="@VERSION@"
+           Manufacturer="audacity-rs developers" UpgradeCode="8C63AC10-3B77-4E89-B8A2-746C7849E851">
+    <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Audacity-RS is already installed." />
+    <Media Id="1" Cabinet="app.cab" EmbedCab="yes" />
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="Audacity-RS" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="AppMenu" Name="Audacity-RS">
+          <Component Id="StartMenuShortcut" Guid="5E0B7A4C-2D3B-4F7A-9A8E-1C2B3D4E5F60" Win64="yes">
+            <Shortcut Id="AppShortcut" Name="Audacity-RS" Target="[INSTALLDIR]audacity-rs.exe" WorkingDirectory="INSTALLDIR" />
+            <RemoveFolder Id="RemoveAppMenu" On="uninstall" />
+            <RegistryValue Root="HKCU" Key="Software\audacity-rs" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+    <Feature Id="Main" Title="Audacity-RS" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Product>
+</Wix>
