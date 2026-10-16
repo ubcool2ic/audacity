@@ -180,6 +180,34 @@ unsafe impl Send for Ffmpeg {}
 // SAFETY: See the Send implementation; each import/export call owns its FFmpeg contexts.
 unsafe impl Sync for Ffmpeg {}
 
+/// FFmpeg 7 library file names (avutil, swresample, avcodec, avformat) per platform.
+#[cfg(windows)]
+const LIB_NAMES: [&str; 4] = ["avutil-59.dll", "swresample-5.dll", "avcodec-61.dll", "avformat-61.dll"];
+#[cfg(target_os = "macos")]
+const LIB_NAMES: [&str; 4] = ["libavutil.59.dylib", "libswresample.5.dylib", "libavcodec.61.dylib", "libavformat.61.dylib"];
+#[cfg(not(any(windows, target_os = "macos")))]
+const LIB_NAMES: [&str; 4] = ["libavutil.so.59", "libswresample.so.5", "libavcodec.so.61", "libavformat.so.61"];
+
+/// Extra directories tried after the system loader, like Audacity's FFmpeg lookup on Windows
+/// (next to the executable, then "FFmpeg for Audacity" under Program Files).
+fn fallback_dirs() -> Vec<std::path::PathBuf> {
+    #[allow(unused_mut)]
+    let mut dirs = Vec::new();
+    #[cfg(windows)]
+    {
+        if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
+            dirs.push(d);
+        }
+        for var in ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"] {
+            if let Some(pf) = std::env::var_os(var) {
+                dirs.push(std::path::PathBuf::from(&pf).join("FFmpeg for Audacity"));
+                dirs.push(std::path::PathBuf::from(pf).join("FFmpeg").join("bin"));
+            }
+        }
+    }
+    dirs
+}
+
 fn load_library(dir: Option<&Path>, soname: &str) -> Result<Library, String> {
     let path = dir.map(|directory| directory.join(soname));
     let target = path
@@ -207,10 +235,11 @@ impl Ffmpeg {
     /// Loads from `dir` (the files libavformat.so.61 etc. inside it) or, when None, by soname via
     /// the system loader.
     pub fn load_from(dir: Option<&Path>) -> Result<Ffmpeg, String> {
-        let avutil_library = load_library(dir, "libavutil.so.59")?;
-        let swresample_library = load_library(dir, "libswresample.so.5")?;
-        let avcodec_library = load_library(dir, "libavcodec.so.61")?;
-        let avformat_library = load_library(dir, "libavformat.so.61")?;
+        let [n_util, n_swr, n_codec, n_format] = LIB_NAMES;
+        let avutil_library = load_library(dir, n_util)?;
+        let swresample_library = load_library(dir, n_swr)?;
+        let avcodec_library = load_library(dir, n_codec)?;
+        let avformat_library = load_library(dir, n_format)?;
 
         macro_rules! symbol {
             ($library:expr, $name:literal, $ty:ty) => {
@@ -1257,7 +1286,12 @@ pub fn get() -> Result<&'static Ffmpeg, IoError> {
     static INSTANCE: OnceLock<Result<Ffmpeg, String>> = OnceLock::new();
     match INSTANCE.get_or_init(|| match std::env::var_os("AU_FFMPEG_LIBDIR") {
         Some(directory) => Ffmpeg::load_from(Some(Path::new(&directory))),
-        None => Ffmpeg::load_from(None),
+        None => Ffmpeg::load_from(None).or_else(|first| {
+            fallback_dirs()
+                .iter()
+                .find_map(|d| Ffmpeg::load_from(Some(d)).ok())
+                .ok_or(first)
+        }),
     }) {
         Ok(ffmpeg) => Ok(ffmpeg),
         Err(detail) => Err(IoError::FfmpegMissing(missing_message(detail))),
@@ -1284,13 +1318,13 @@ pub fn status() -> FfmpegStatus {
 
 pub fn missing_message(detail: &str) -> String {
     format!(
-        "FFmpeg support is unavailable. Looked for libavutil.so.59, libswresample.so.5, \
-         libavcodec.so.61, and libavformat.so.61 in AU_FFMPEG_LIBDIR (when configured) \
+        "FFmpeg support is unavailable. Looked for {} in AU_FFMPEG_LIBDIR (when configured) \
          or the system library search path.\n\
          Loader error: {detail}\n\
          FFmpeg 7 is needed for M4A/AAC, WMA, AC3, and audio from video files.\n\
          On Debian/Ubuntu: sudo apt install ffmpeg (or libavformat61 libavcodec61 libswresample5).\n\
-         WAV, FLAC, MP3 and Ogg import keep working without FFmpeg."
+         WAV, FLAC, MP3 and Ogg import keep working without FFmpeg.",
+        LIB_NAMES.join(", ")
     )
 }
 
