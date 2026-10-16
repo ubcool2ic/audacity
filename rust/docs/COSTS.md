@@ -396,6 +396,8 @@ Hand edits (trivial): removed the unused clip_shift_desired helper, VERSION_3_7 
 
 **BizyBot6 total: $0.011886.** posix-fd poll(), envelope contours and the gui.rs embed slot were hand-written.
 
+Follow-up (windows-gnu cfg(unix) fix, Effect-menu editor test under Xvfb): hand-written, 0 OpenRouter calls, $0.00. **BizyBot6 running total: $0.011886.**
+
 ## BizyBot3: Windows script pipe, system-mixer input gain, record slider (2026-10-15)
 
 | Subtask | Model | Tokens in / out | USD |
