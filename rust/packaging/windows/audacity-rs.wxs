@@ -11,23 +11,20 @@
 
     <Feature Id="MainFeature" Title="Audacity-RS" Level="1">
       <ComponentRef Id="MainApplication" />
-      <ComponentRef Id="NyquistWorker" />
+      <ComponentGroupRef Id="StagedFiles" />
       <ComponentRef Id="StartMenuShortcut" />
     </Feature>
 
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="Audacity-RS">
         <Component Id="MainApplication" Guid="*">
-          <File Id="AudacityRSExe" Source="$(var.BinDir)\audacity-rs.exe" KeyPath="yes">
+          <File Id="AudacityRSExe" Source="$(var.StageDir)\audacity-rs.exe" KeyPath="yes">
             <ProgId Id="Audacity-RS.Project" Description="Audacity-RS Project">
               <Extension Id="aup3" ContentType="application/x-audacity-project">
                 <Verb Id="open" Command="Open" TargetFile="AudacityRSExe" Argument="&quot;%1&quot;" />
               </Extension>
             </ProgId>
           </File>
-        </Component>
-        <Component Id="NyquistWorker" Guid="*">
-          <File Id="NyquistWorkerExe" Source="$(var.BinDir)\au-nyquist-worker.exe" KeyPath="yes" />
         </Component>
       </Directory>
     </StandardDirectory>
@@ -51,4 +48,14 @@
       </Directory>
     </StandardDirectory>
   </Package>
+
+  <!-- Everything else build-cross.sh stages: helper exes (au-nyquist-engine, au-nyquist-worker,
+       au-plugin-editor, au-plugin-scan), runtime DLLs, nyquist\, plug-ins\, locale\. -->
+  <Fragment>
+    <ComponentGroup Id="StagedFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.StageDir)\**">
+        <Exclude Files="$(var.StageDir)\audacity-rs.exe" />
+      </Files>
+    </ComponentGroup>
+  </Fragment>
 </Wix>
