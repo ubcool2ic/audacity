@@ -284,9 +284,12 @@ fn read_block(
 
 struct ReadClip {
     offset: f64,
+    seq_offset: f64,
     name: String,
     stretch: f64,
+    left: Vec<f32>,
     samples: Vec<f32>,
+    right: Vec<f32>,
     env: Vec<(f64, f64)>,
 }
 
@@ -318,7 +321,9 @@ fn read_clip(
     let to_src = |t: f64| ((t * rate / stretch.max(1e-9)).round().max(0.0)) as usize;
     let (l, r) = (to_src(trim_l).min(samples.len()), to_src(trim_r));
     let end = samples.len().saturating_sub(r).max(l);
-    let samples = samples[l..end].to_vec();
+    let left = samples[..l].to_vec();
+    let visible = samples[l..end].to_vec();
+    let right = samples[end..].to_vec();
     let env = n
         .children_named("envelope")
         .flat_map(|e| e.children_named("controlpoint"))
@@ -327,9 +332,12 @@ fn read_clip(
     Ok(ReadClip {
         // Audacity's play start = sequence offset + left trim.
         offset: offset + trim_l,
+        seq_offset: offset,
         name: n.str("name").unwrap_or("").to_string(),
         stretch,
-        samples,
+        left,
+        samples: visible,
+        right,
         env,
     })
 }
@@ -385,12 +393,36 @@ fn from_xml(root: &XmlNode, c: &Connection) -> Result<Aup3Project> {
                         s.resize(first.samples.len(), 0.0);
                         channels.push(s);
                     }
+                    let trim_left = if first.left.is_empty() {
+                        None
+                    } else {
+                        let mut left_channels = vec![first.left.clone()];
+                        for other in per_chan.iter().skip(1) {
+                            let mut s = other.get(ci).map(|x| x.left.clone()).unwrap_or_default();
+                            s.resize(first.left.len(), 0.0);
+                            left_channels.push(s);
+                        }
+                        Some(AudioBuffer::from_channels(r, left_channels))
+                    };
+                    let trim_right = if first.right.is_empty() {
+                        None
+                    } else {
+                        let mut right_channels = vec![first.right.clone()];
+                        for other in per_chan.iter().skip(1) {
+                            let mut s = other.get(ci).map(|x| x.right.clone()).unwrap_or_default();
+                            s.resize(first.right.len(), 0.0);
+                            right_channels.push(s);
+                        }
+                        Some(AudioBuffer::from_channels(r, right_channels))
+                    };
                     let start_frame = (first.offset * rate).round() as i64;
-                    let head_len = if start_frame < 0 && first.stretch == 1.0 {
-                        start_frame
-                            .checked_neg()
-                            .and_then(|frames| usize::try_from(frames).ok())
-                            .filter(|&frames| channels.first().map_or(false, |s| s.len() > frames))
+                    let head_len = if ci == 0 && start_frame < 0 {
+                        let hs = ((-start_frame as f64) / first.stretch.max(1e-9)).round() as usize;
+                        if channels.first().map_or(false, |s| s.len() > hs) && hs > 0 {
+                            Some(hs)
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     };
@@ -415,9 +447,11 @@ fn from_xml(root: &XmlNode, c: &Connection) -> Result<Aup3Project> {
                         AudioBuffer::from_channels(r, channels),
                     );
                     clip.stretch_ratio = first.stretch;
-                    // Control point times are relative to the clip's offset.
+                    clip.trim_left = trim_left;
+                    clip.trim_right = trim_right;
+                    // Control point times are relative to the clip's sequence offset.
                     for &(t, v) in &first.env {
-                        env.push(EnvPoint { time: first.offset + t, value: v });
+                        env.push(EnvPoint { time: first.seq_offset + t, value: v });
                     }
                     wc.clips.push(clip);
                 }
@@ -583,24 +617,48 @@ fn build_xml(c: &Connection, p: &Aup3Project) -> Result<XmlNode> {
                 }
             }
             for (clip_index, clip) in t.clips.clips.iter().enumerate() {
-                let offset = if clip_index == 0 && t.clips.hidden_head().is_some() {
-                    t.clips.clip_start_frames(clip_index) as f64 / trate
+                let tl_chan = clip
+                    .trim_left
+                    .as_ref()
+                    .and_then(|b| b.channels.get(ch).or(b.channels.first()))
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let head_chan = if clip_index == 0 {
+                    t.clips
+                        .hidden_head()
+                        .and_then(|h| h.audio.channels.get(ch).or(h.audio.channels.first()))
+                        .map(|v| v.as_slice())
+                        .unwrap_or(&[])
                 } else {
-                    clip.start as f64 / trate
+                    &[]
                 };
-                let empty: Vec<f32> = Vec::new();
-                let visible = clip.buffer.channels.get(ch).or(clip.buffer.channels.first()).unwrap_or(&empty);
-                let mut data = visible.to_vec();
-                if clip_index == 0 {
-                    if let Some(head) = t.clips.hidden_head() {
-                        let head_channel = head.audio.channels.get(ch).or(head.audio.channels.first()).unwrap_or(&empty);
-                        let mut combined = Vec::with_capacity(head_channel.len() + visible.len());
-                        combined.extend_from_slice(head_channel);
-                        combined.extend_from_slice(visible);
-                        data = combined;
-                    }
-                }
-                let end = offset + data.len() as f64 / trate;
+                let vis_chan = clip
+                    .buffer
+                    .channels
+                    .get(ch)
+                    .or(clip.buffer.channels.first())
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let tr_chan = clip
+                    .trim_right
+                    .as_ref()
+                    .and_then(|b| b.channels.get(ch).or(b.channels.first()))
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+
+                let mut data = Vec::with_capacity(tl_chan.len() + head_chan.len() + vis_chan.len() + tr_chan.len());
+                data.extend_from_slice(tl_chan);
+                data.extend_from_slice(head_chan);
+                data.extend_from_slice(vis_chan);
+                data.extend_from_slice(tr_chan);
+
+                let stretch = clip.stretch_ratio;
+                let play_start = t.clips.clip_start_frames(clip_index) as f64 / trate;
+                let trim_l = tl_chan.len() as f64 * stretch / trate;
+                let trim_r = tr_chan.len() as f64 * stretch / trate;
+                let offset = play_start - trim_l;
+                let end = play_start + (head_chan.len() + vis_chan.len()) as f64 * stretch / trate;
+
                 let mut seq = XmlNode::new("sequence")
                     .attr("maxsamples", V::SizeT(fmt.max_samples() as u32))
                     .attr("sampleformat", V::SizeT(fmt.code()))
@@ -614,13 +672,13 @@ fn build_xml(c: &Connection, p: &Aup3Project) -> Result<XmlNode> {
                             .attr("blockid", V::LongLong(id)),
                     );
                 }
-                // Envelope points that fall inside this clip, relative to its offset.
+                // Envelope points that fall inside this clip, relative to its sequence offset.
                 let pts: Vec<&EnvPoint> = t
                     .clips
                     .envelope
                     .points
                     .iter()
-                    .filter(|pt| pt.time >= offset && pt.time <= end)
+                    .filter(|pt| pt.time >= play_start && pt.time <= end)
                     .collect();
                 let mut env = XmlNode::new("envelope").attr("numpoints", V::SizeT(pts.len() as u32));
                 for pt in pts {
@@ -632,8 +690,8 @@ fn build_xml(c: &Connection, p: &Aup3Project) -> Result<XmlNode> {
                 }
                 let wc = XmlNode::new("waveclip")
                     .attr("offset", d(offset, 8))
-                    .attr("trimLeft", d(0.0, 8))
-                    .attr("trimRight", d(0.0, 8))
+                    .attr("trimLeft", d(trim_l, 8))
+                    .attr("trimRight", d(trim_r, 8))
                     .attr("centShift", V::Int(0))
                     .attr("pitchAndSpeedPreset", V::Long(0))
                     .attr("clipStretchRatio", d(clip.stretch_ratio, 8))
@@ -878,5 +936,56 @@ mod spectral_selection_tests {
         assert_eq!(clips.clip_start_frames(0), -512);
         assert_eq!(clips.hidden_head().unwrap().audio.channels[0].len(), 512);
         assert_eq!(clips.clips[0].len(), 1488);
+    }
+
+    #[test]
+    fn clip_trim_hidden_audio_round_trip() {
+        let dir = std::env::temp_dir().join(format!("aup3-trim-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("trimmed.aup3");
+
+        let samples: Vec<f32> = (0..1000).map(|i| i as f32).collect();
+        let mut clip = Clip::new(
+            "Clip",
+            500,
+            AudioBuffer::from_channels(44_100, vec![samples]),
+        );
+        clip.trim_left_to(600);
+        clip.trim_right_to(1300);
+
+        let mut clips = WaveClips::new(44_100, 1);
+        clips.clips.push(clip);
+
+        let mut state = ProjectState::default();
+        state.sample_rate = 44_100;
+        state.tracks.push(Track {
+            name: "Audio".into(),
+            clips,
+            gain: 1.0,
+            pan: 0.0,
+            mute: false,
+            solo: false,
+            int_bits: None,
+        });
+        save_state(&path, &state).unwrap();
+
+        let loaded = load(&path).unwrap();
+        let clip = &loaded.state.tracks[0].clips.clips[0];
+        assert_eq!(clip.start, 600);
+        assert_eq!(clip.buffer.channels[0].len(), 700);
+
+        let tl = clip.trim_left.as_ref().expect("trim_left should be present");
+        let tr = clip.trim_right.as_ref().expect("trim_right should be present");
+        assert_eq!(tl.channels[0].len(), 100);
+        assert_eq!(tr.channels[0].len(), 200);
+
+        let expected_visible: Vec<f32> = (100..800).map(|i| i as f32).collect();
+        assert_eq!(clip.buffer.channels[0], expected_visible);
+
+        let expected_left: Vec<f32> = (0..100).map(|i| i as f32).collect();
+        assert_eq!(tl.channels[0], expected_left);
+
+        let expected_right: Vec<f32> = (800..1000).map(|i| i as f32).collect();
+        assert_eq!(tr.channels[0], expected_right);
     }
 }
