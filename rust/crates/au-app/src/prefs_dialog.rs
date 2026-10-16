@@ -41,6 +41,9 @@ pub struct PreferencesDialog {
     page: usize,
     original: Option<Prefs>,
     working: Option<Prefs>,
+    ai_key: String,
+    ai_key_clear: bool,
+    ai_key_status: String,
 }
 
 impl Default for PreferencesDialog {
@@ -57,6 +60,9 @@ impl PreferencesDialog {
             page: 0,
             original: None,
             working: None,
+            ai_key: String::new(),
+            ai_key_clear: false,
+            ai_key_status: String::new(),
         }
     }
 
@@ -95,6 +101,9 @@ impl PreferencesDialog {
         {
             let page = &mut self.page;
             let working = self.working.as_mut().expect("working preferences exist");
+            let ai_key = &mut self.ai_key;
+            let ai_key_clear = &mut self.ai_key_clear;
+            let ai_key_status = &self.ai_key_status;
             let mut still_open = self.open;
 
             egui::Window::new(tr("Audacity Preferences"))
@@ -131,6 +140,14 @@ impl PreferencesDialog {
                                 ui.heading(tr(titles.get(*page).copied().unwrap_or("Devices")));
                                 ui.add_space(8.0);
                                 render_page(ui, *page, working, devices, keyboard_page);
+                                if titles[*page] == "Application" {
+                                    group(ui, "AI Music (OpenRouter)", |ui| {
+                                        ui.add(egui::TextEdit::singleline(ai_key).password(true).hint_text("sk-or-..."));
+                                        ui.checkbox(ai_key_clear, tr("Remove saved key"));
+                                        ui.label(ai_key_status.as_str());
+                                        ui.small(tr("Also read from OPENROUTER_API_KEY or openrouter.env in the settings folder."));
+                                    });
+                                }
                             });
                     });
 
@@ -154,6 +171,17 @@ impl PreferencesDialog {
 
         match action {
             DialogAction::Accept => {
+                if self.ai_key_clear {
+                    if let Err(e) = au_ai::openrouter::save_key("") {
+                        eprintln!("could not save OpenRouter key: {e}");
+                    }
+                } else if !self.ai_key.trim().is_empty() {
+                    if let Err(e) = au_ai::openrouter::save_key(&self.ai_key) {
+                        eprintln!("could not save OpenRouter key: {e}");
+                    }
+                }
+                self.ai_key.clear();
+                self.ai_key_clear = false;
                 self.open = false;
                 self.original = None;
                 self.working.take().map(Some)
@@ -174,11 +202,20 @@ impl PreferencesDialog {
         let copy = Prefs::parse_cfg(&prefs.to_cfg());
         self.original = Some(Prefs::parse_cfg(&prefs.to_cfg()));
         self.working = Some(copy);
+        self.ai_key.clear();
+        self.ai_key_clear = false;
+        self.ai_key_status = if au_ai::openrouter::has_saved_key() {
+            "A key is saved.".to_string()
+        } else {
+            "No key saved.".to_string()
+        };
     }
 
     fn cancel_edit(&mut self) {
         self.working = None;
         self.original = None;
+        self.ai_key.clear();
+        self.ai_key_clear = false;
         self.open = false;
     }
 }

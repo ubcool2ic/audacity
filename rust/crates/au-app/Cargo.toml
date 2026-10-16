@@ -19,6 +19,7 @@ au-plugin-host = { path = "../au-plugin-host" }
 au-scriptpipe = { path = "../au-scriptpipe" }
 au-script = { path = "../au-script" }
 au-nyquist = { path = "../au-nyquist" }
+au-ai = { path = "../au-ai" }
 eframe = { version = "0.29", optional = true, default-features = false, features = ["glow","default_fonts","x11","wayland","accesskit"] }
 raw-window-handle = { version = "0.6", optional = true }
 rfd = { version = "0.15", optional = true }
