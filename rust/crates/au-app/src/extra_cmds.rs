@@ -119,7 +119,15 @@ pub fn seek_step(direction: f64, fast: bool) -> f64 {
 /// `OffsetTime`. When snapping is enabled, `single_step` supplies the next grid
 /// point; if that point moves fewer than the requested pixels, the requested
 /// pixel offset is used and passed through `snap`.
+/// ZoomInfo::OffsetTimeByPixels: PositionToTime(TimeToPosition(t) + pixels), where
+/// TimeToPosition = floor(0.5 + zoom * (t - h)) and PositionToTime(p) = h + p / zoom.
+pub fn offset_time_by_pixels(t: f64, pixels: i64, pixels_per_sec: f64, h: f64) -> f64 {
+    let pos = (0.5 + pixels_per_sec * (t - h)).floor() as i64;
+    h + (pos + pixels) as f64 / pixels_per_sec
+}
+
 pub fn seek_inactive(
+    h: f64,
     t0: f64,
     t1: f64,
     step_pixels: f64,
@@ -135,7 +143,7 @@ pub fn seek_inactive(
     let offset_time = |t: f64| {
         let forward = pixels >= 0;
         if !snap_on {
-            t + pixels as f64 / pixels_per_sec
+            offset_time_by_pixels(t, pixels as i64, pixels_per_sec, h)
         } else {
             let grid_time = single_step(t, forward);
             if ((grid_time * pixels_per_sec) - (t * pixels_per_sec)).abs()
@@ -192,6 +200,7 @@ pub fn seek_inactive(
 /// boundary is clamped to `[0, end]`, and the selection boundary setter may
 /// swap endpoints if the moved boundary crosses the other one.
 pub fn boundary_move(
+    h: f64,
     t0: f64,
     t1: f64,
     step: i32,
@@ -206,7 +215,7 @@ pub fn boundary_move(
     };
     let move_t0 = step < 0;
     let origin = if move_t0 { t0 } else { t1 };
-    let new_t = (origin + pixels as f64 / pixels_per_sec)
+    let new_t = offset_time_by_pixels(origin, pixels as i64, pixels_per_sec, h)
         .max(0.0)
         .min(end);
 
@@ -456,46 +465,46 @@ mod tests {
         let single = |t: f64, forward: bool| t + if forward { 1.0 } else { -1.0 };
 
         close_pair(
-            seek_inactive(2.0, 4.0, -1.0, SelOp::Extend, 1.0, 10.0, &identity, false, &single),
+            seek_inactive(0.0, 2.0, 4.0, -1.0, SelOp::Extend, 1.0, 10.0, &identity, false, &single),
             (1.0, 4.0),
         );
         close_pair(
-            seek_inactive(2.0, 4.0, 1.0, SelOp::Extend, 1.0, 10.0, &identity, false, &single),
+            seek_inactive(0.0, 2.0, 4.0, 1.0, SelOp::Extend, 1.0, 10.0, &identity, false, &single),
             (2.0, 5.0),
         );
         close_pair(
-            seek_inactive(2.0, 4.0, 1.0, SelOp::Contract, 1.0, 10.0, &identity, false, &single),
+            seek_inactive(0.0, 2.0, 4.0, 1.0, SelOp::Contract, 1.0, 10.0, &identity, false, &single),
             (3.0, 4.0),
         );
         close_pair(
-            seek_inactive(2.0, 4.0, -1.0, SelOp::Contract, 1.0, 10.0, &identity, false, &single),
+            seek_inactive(0.0, 2.0, 4.0, -1.0, SelOp::Contract, 1.0, 10.0, &identity, false, &single),
             (2.0, 3.0),
         );
 
         // Contracting cannot cross the other edge.
         close_pair(
-            seek_inactive(2.0, 4.0, 20.0, SelOp::Contract, 1.0, 30.0, &identity, false, &single),
+            seek_inactive(0.0, 2.0, 4.0, 20.0, SelOp::Contract, 1.0, 30.0, &identity, false, &single),
             (4.0, 4.0),
         );
         close_pair(
-            seek_inactive(2.0, 4.0, -20.0, SelOp::Contract, 1.0, 30.0, &identity, false, &single),
+            seek_inactive(0.0, 2.0, 4.0, -20.0, SelOp::Contract, 1.0, 30.0, &identity, false, &single),
             (2.0, 2.0),
         );
 
         // The selection endpoints are constrained to zero and end.
         close_pair(
-            seek_inactive(2.0, 4.0, -20.0, SelOp::Extend, 1.0, 10.0, &identity, false, &single),
+            seek_inactive(0.0, 2.0, 4.0, -20.0, SelOp::Extend, 1.0, 10.0, &identity, false, &single),
             (0.0, 4.0),
         );
         close_pair(
-            seek_inactive(2.0, 4.0, 20.0, SelOp::Extend, 1.0, 6.0, &identity, false, &single),
+            seek_inactive(0.0, 2.0, 4.0, 20.0, SelOp::Extend, 1.0, 6.0, &identity, false, &single),
             (2.0, 6.0),
         );
 
         // Extending may cross; SelectedRegion's setter swaps the endpoints.
         let far_grid = |_t: f64, _forward: bool| 9.0;
         close_pair(
-            seek_inactive(2.0, 4.0, -1.0, SelOp::Extend, 1.0, 10.0, &identity, true, &far_grid),
+            seek_inactive(0.0, 2.0, 4.0, -1.0, SelOp::Extend, 1.0, 10.0, &identity, true, &far_grid),
             (4.0, 9.0),
         );
     }
@@ -508,24 +517,24 @@ mod tests {
         // An adequate single step is accepted directly.
         let adequate = |t: f64, forward: bool| t + if forward { 2.0 } else { -2.0 };
         close_pair(
-            seek_inactive(1.0, 3.0, 2.0, SelOp::Extend, 1.0, 10.0, &identity, true, &adequate),
+            seek_inactive(0.0, 1.0, 3.0, 2.0, SelOp::Extend, 1.0, 10.0, &identity, true, &adequate),
             (1.0, 5.0),
         );
 
         // A too-small grid step falls back to the requested pixel offset, then snaps.
         let round_to_half = |t: f64| (t * 2.0).round() / 2.0;
         close_pair(
-            seek_inactive(1.0, 3.0, 2.0, SelOp::Extend, 1.0, 10.0, &round_to_half, true, &tiny_step),
+            seek_inactive(0.0, 1.0, 3.0, 2.0, SelOp::Extend, 1.0, 10.0, &round_to_half, true, &tiny_step),
             (1.0, 5.0),
         );
 
         // Cursor movement from a point applies the pixel move and clamps at zero.
         close_pair(
-            seek_inactive(1.0, 1.0, -3.0, SelOp::CursorMove, 1.0, 10.0, &identity, false, &tiny_step),
+            seek_inactive(0.0, 1.0, 1.0, -3.0, SelOp::CursorMove, 1.0, 10.0, &identity, false, &tiny_step),
             (0.0, 0.0),
         );
         close_pair(
-            seek_inactive(1.0, 1.0, 2.0, SelOp::CursorMove, 1.0, 10.0, &identity, false, &tiny_step),
+            seek_inactive(0.0, 1.0, 1.0, 2.0, SelOp::CursorMove, 1.0, 10.0, &identity, false, &tiny_step),
             (3.0, 3.0),
         );
 
@@ -533,21 +542,21 @@ mod tests {
         // if enabled, without applying an additional pixel move.
         let snap_up = |t: f64| t + 0.5;
         close_pair(
-            seek_inactive(2.0, 4.0, -1.0, SelOp::CursorMove, 1.0, 10.0, &snap_up, true, &tiny_step),
+            seek_inactive(0.0, 2.0, 4.0, -1.0, SelOp::CursorMove, 1.0, 10.0, &snap_up, true, &tiny_step),
             (2.5, 2.5),
         );
         close_pair(
-            seek_inactive(2.0, 4.0, 1.0, SelOp::CursorMove, 1.0, 10.0, &identity, false, &tiny_step),
+            seek_inactive(0.0, 2.0, 4.0, 1.0, SelOp::CursorMove, 1.0, 10.0, &identity, false, &tiny_step),
             (4.0, 4.0),
         );
     }
 
     #[test]
     fn boundary_move_clamps_fast_moves_and_swaps() {
-        close_pair(boundary_move(2.0, 4.0, -1, false, 1.0, 10.0), (1.0, 4.0));
-        close_pair(boundary_move(2.0, 4.0, 1, true, 1.0, 10.0), (2.0, 8.0));
-        close_pair(boundary_move(2.0, 4.0, -20, false, 1.0, 10.0), (0.0, 4.0));
-        close_pair(boundary_move(2.0, 4.0, 20, false, 1.0, 6.0), (2.0, 6.0));
+        close_pair(boundary_move(0.0, 2.0, 4.0, -1, false, 1.0, 10.0), (1.0, 4.0));
+        close_pair(boundary_move(0.0, 2.0, 4.0, 1, true, 1.0, 10.0), (2.0, 8.0));
+        close_pair(boundary_move(0.0, 2.0, 4.0, -20, false, 1.0, 10.0), (0.0, 4.0));
+        close_pair(boundary_move(0.0, 2.0, 4.0, 20, false, 1.0, 6.0), (2.0, 6.0));
 
     }
 
@@ -605,5 +614,15 @@ mod tests {
     fn clip_shift_is_one_pixel_in_either_direction() {
         close(clip_shift_desired(2.0, true, 100.0), 0.01);
         close(clip_shift_desired(2.0, false, 100.0), -0.01);
+    }
+
+    #[test]
+    fn offset_time_by_pixels_matches_audacity_3_7_3() {
+        // Measured over the pipe at ZoomNormal (44100/512 px/s): Shift+Left/Right from 2..4 and 3..3.
+        let z = 86.1328125;
+        assert!((offset_time_by_pixels(2.0, -1, z, 0.0) - 1.9853).abs() < 1e-4);
+        assert!((offset_time_by_pixels(4.0, 1, z, 0.0) - 4.0171).abs() < 1e-4);
+        assert!((offset_time_by_pixels(3.0, -1, z, 0.0) - 2.9838).abs() < 1e-4);
+        assert!((offset_time_by_pixels(3.0, 1, z, 0.0) - 3.0070).abs() < 1e-4);
     }
 }

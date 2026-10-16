@@ -38,7 +38,7 @@ impl AudacityApp {
     }
 
     /// Selection in seconds on the selected (or first) track; a point when nothing is selected.
-    fn sel_secs(&self) -> (f64, f64) {
+    pub(super) fn sel_secs(&self) -> (f64, f64) {
         if self.selection.is_some() {
             self.selection_secs()
         } else {
@@ -197,11 +197,11 @@ impl AudacityApp {
             }
             None => t,
         };
-        let (pps, end) = (self.zoom.pixels_per_sec, self.seek_end());
+        let (pps, end, h) = (self.zoom.pixels_per_sec, self.seek_end(), self.zoom.h_offset);
         let (a, b) = {
             let base = self.snap_fn();
             let snap = |t: f64| if prior { grid.map_or(base(t), |g| (t / g).floor() * g) } else { base(t) };
-            xc::seek_inactive(t0, t1, step, op, pps, end, &snap, snap_on, &single)
+            xc::seek_inactive(h, t0, t1, step, op, pps, end, &snap, snap_on, &single)
         };
         self.set_sel_secs(a, b);
     }
@@ -277,7 +277,12 @@ impl AudacityApp {
                 self.input_volume = xc::volume_adjust(self.input_volume, adj);
                 Some((format!("Recording volume {:.2}", self.input_volume), true))
             }
-            "DeleteKey" | "DeleteKey2" => Some(self.execute_script("Delete:")),
+            "DeleteKey" | "DeleteKey2" => {
+                // EditMenus OnDelete: the selection collapses to its start afterwards.
+                let r = self.execute_script("Delete:");
+                if r.1 { self.set_sel_secs(t0, t0); }
+                Some(r)
+            }
             "ClipLeft" | "ClipRight" => Some(self.clip_left_or_right(name == "ClipRight")),
             "PlayAtSpeed" | "PlayAtSpeedLooped" => {
                 let (a, b) = if t1 > t0 { (t0, t1) } else { (t0, self.project_duration()) };
@@ -326,7 +331,7 @@ impl AudacityApp {
                 let now = std::time::Instant::now();
                 let fast = self.last_seek.is_some_and(|t| now.duration_since(t).as_millis() < xc::FAST_REPEAT_MS as u128);
                 self.last_seek = Some(now);
-                let (a, b) = xc::boundary_move(t0, t1, -1, fast, self.zoom.pixels_per_sec, self.seek_end());
+                let (a, b) = xc::boundary_move(self.zoom.h_offset, t0, t1, -1, fast, self.zoom.pixels_per_sec, self.seek_end());
                 self.set_sel_secs(a, b);
                 ok("")
             }

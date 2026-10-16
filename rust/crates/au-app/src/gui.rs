@@ -1404,6 +1404,16 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 self.start_export_audio(std::path::PathBuf::from(&file), fmt, tags, false);
                 Some((format!("Started export to {file}"), true))
             }
+            // Test hook: the current selection in seconds (Audacity reads it back via AddLabel).
+            // View > Zoom > Zoom Normal (ViewMenus: ZoomInfo::GetDefaultZoom = 44100 / 512).
+            "ZoomNormal" => {
+                self.zoom.pixels_per_sec = 44100.0 / 512.0;
+                Some((String::new(), true))
+            }
+            "GetSelection" => {
+                let (t0, t1) = self.sel_secs();
+                Some((format!("{t0:.6} {t1:.6}"), true))
+            }
             "GetProgress" => {
                 let snapshot = self.progress.snapshot();
                 if snapshot.is_empty() {
