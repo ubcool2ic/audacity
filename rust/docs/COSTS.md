@@ -436,3 +436,12 @@ Per model: gemini-3.8-flash $0.7621 (4 calls), muse-spark-1.3 $0.0979 (1 call), 
 Hand edits (trivial): sort_clips made pub(crate), Trim pipe command dispatch, removed the leftover 0-clamp of the selection in ClipLeft, compare_extra.py cases.
 
 **Running total (ubcool2ic): $2.9306**
+
+## BizyBot4 — test hardening + Extra 46–67 verification (2026-10-16)
+
+| Work | Model | USD |
+|---|---|---|
+| crash_recovery_gui / ui_automation Xvfb deflake (xvfb-run -a per launch, own TMPDIR/XDG/crash dirs, process-group kill, 10s pipe timeout) | none (hand edit) | 0.0000 |
+| compare_extra_b.py label/focus/toggle cases; ShiftUp/ShiftDown edge fix in extra_nav.rs | none (hand edit) | 0.0000 |
+
+Per model: gpt-6-luna none, gemini-3.8-flash none, muse-spark-1.3 none, gpt-6-sol none. **BizyBot4 total: $0.0000**
