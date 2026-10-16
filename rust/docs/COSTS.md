@@ -342,3 +342,15 @@ Hand glue (not Luna):
 - tools/compare_extra.py: pipe comparison against Audacity 3.7.3.
 
 **Running total (ubcool2ic): $2.0591**
+
+## Recording volume (software gain / OS mixer)
+
+| File | Model | USD |
+|---|---|---|
+| au-io/src/input_gain.rs | openai/gpt-6-luna | 0.0021 |
+
+Luna 1 call, $0.0021. Sol: none. **Batch total: $0.0021**.
+
+Hand glue (not Luna): au-io Recorder applies the gain in the capture callback (unity path untouched); gui.rs sync_record_volume pushes the slider / Extra volume commands to the pactl source volume or the software gain.
+
+**Running total (ubcool2ic): $2.0612**

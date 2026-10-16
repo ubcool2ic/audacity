@@ -11,6 +11,7 @@ pub mod midi;
 pub mod engine;
 pub mod export;
 pub mod record;
+pub mod input_gain;
 
 #[derive(Debug, Error)]
 pub enum IoError {
@@ -601,6 +602,9 @@ pub mod device {
         rx: rtrb::Consumer<f32>,
         peak: Arc<std::sync::atomic::AtomicU32>,
         dropped_samples: Arc<AtomicU64>,
+        /// Software input gain applied in the capture callback (Audacity's emulated
+        /// recording volume when no OS mixer is available). 1.0 = untouched.
+        input_gain: crate::input_gain::InputGain,
         /// Interleaved channel count of the capture.
         pub channels: u16,
         /// Capture sample rate.
@@ -664,6 +668,9 @@ pub mod device {
             let dropped_samples = Arc::new(AtomicU64::new(0));
             let dropped_samples_cb = dropped_samples.clone();
             let in_channels = channels as usize;
+            let input_gain = crate::input_gain::InputGain::default();
+            let gain_cb = input_gain.clone();
+            let mut scratch: Vec<f32> = Vec::with_capacity(sample_rate as usize * in_channels);
             let (monitor, mut monitor_tx) = match playthrough.map(|c| start_playthrough(c, sample_rate, in_channels)) {
                 Some(Ok((stream, tx))) => (Some(stream), Some(tx)),
                 _ => (None, None),
@@ -671,7 +678,16 @@ pub mod device {
             let stream = device
                 .build_input_stream(
                     &config,
-                    move |input: &[f32], _| {
+                    move |raw: &[f32], _| {
+                        let g = gain_cb.get();
+                        let input: &[f32] = if g == 1.0 {
+                            raw
+                        } else {
+                            scratch.clear();
+                            scratch.extend_from_slice(raw);
+                            crate::input_gain::apply_input_gain(&mut scratch, g);
+                            &scratch
+                        };
                         let mut p = f32::from_bits(peak_cb.load(Ordering::Relaxed));
                         if let Some(tx) = monitor_tx.as_mut() {
                             for &s in input {
@@ -691,7 +707,18 @@ pub mod device {
                 )
                 .map_err(|error| IoError::Device(error.to_string()))?;
             stream.play().map_err(|error| IoError::Device(error.to_string()))?;
-            Ok(Recorder { _stream: stream, _monitor: monitor, rx, peak, dropped_samples, channels, sample_rate })
+            Ok(Recorder { _stream: stream, _monitor: monitor, rx, peak, dropped_samples, input_gain, channels, sample_rate })
+        }
+
+        /// Sets the software recording gain (0..=1) applied to captured samples,
+        /// meters and playthrough. Use only when no OS mixer handles the volume.
+        pub fn set_input_gain(&self, gain: f32) {
+            self.input_gain.set(gain);
+        }
+
+        /// Handle to this capture's software gain (shareable with a [`crate::input_gain::RecordVolume`]).
+        pub fn input_gain(&self) -> crate::input_gain::InputGain {
+            self.input_gain.clone()
         }
 
         /// Drains captured interleaved samples into `out`.

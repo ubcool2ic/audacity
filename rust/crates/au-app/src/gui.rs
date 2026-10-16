@@ -243,6 +243,8 @@ struct AudacityApp {
     extra_dialog: Option<extra_glue::ExtraDialog>,
     /// Recording volume slider (no hardware mixer through cpal: display only, like Audacity without one).
     input_volume: f32,
+    /// OS input mixer when available, else software gain applied in the capture callback.
+    record_volume: au_io::input_gain::RecordVolume,
     /// The command being run came from a key press (key-up matters for scrubbing).
     keyboard_event: bool,
     /// Undo pushes already handled by Tracks > Auto-fit track height.
@@ -314,6 +316,10 @@ struct LabelEdit {
 
 impl Default for AudacityApp {
     fn default() -> Self {
+        let record_volume = au_io::input_gain::RecordVolume::new(
+            au_io::input_gain::PulseSourceMixer::detect(None)
+                .map(|m| Box::new(m) as Box<dyn au_io::input_gain::InputMixer>),
+        );
         Self {
             editor: Editor::new(au_core::ProjectState::default()),
             selected_track: None,
@@ -358,7 +364,9 @@ impl Default for AudacityApp {
             snap_prior: false,
             snap_restore: au_core::timeline::SnapMode::Grid { secs: 1.0 },
             extra_dialog: None,
-            input_volume: 1.0,
+            // Start the slider at the OS mixer's level (as Audacity does), else 1.0.
+            input_volume: record_volume.get(),
+            record_volume,
             keyboard_event: false,
             fit_seen_pushes: 0,
             spectrogram_cache: crate::spectrogram_view::SpectrogramCache::new(),
@@ -2057,6 +2065,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         self.live_denoised.clear();
         self.live_take_active = self.room_noise.begin_live_take(&key, rate, channels);
         self.recorder = Some(recorder);
+        self.sync_record_volume();
         self.record_controller = Some(controller);
         self.record_buffer.clear();
         self.record_opts_window = false;
@@ -2140,7 +2149,23 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         }
     }
 
+    /// Pushes the recording-volume slider to the OS mixer, or to the software gain of
+    /// the active captures when there is no working mixer (Audacity's emulation).
+    fn sync_record_volume(&mut self) {
+        let v = self.input_volume.clamp(0.0, 1.0);
+        if (self.record_volume.get() - v).abs() > 1e-4 {
+            self.record_volume.set(v);
+        }
+        let g = self.record_volume.software_gain().get();
+        for rec in [self.recorder.as_ref(), self.noise_capture.as_ref()].into_iter().flatten() {
+            rec.set_input_gain(g);
+        }
+    }
+
     fn process_recording(&mut self) {
+        if self.recorder.is_some() || self.noise_capture.is_some() {
+            self.sync_record_volume();
+        }
         let Some(recorder) = self.recorder.as_mut() else {
             return;
         };
@@ -4595,6 +4620,7 @@ if let Some(pipe) = self.script_pipe.as_mut() {
             self.process_recording();
         }
         if self.noise_capture.is_some() {
+            self.sync_record_volume();
             self.process_noise_capture();
             ctx.request_repaint();
         }
