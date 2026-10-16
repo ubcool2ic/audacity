@@ -7,13 +7,14 @@ Audacity-RS is a Rust rewrite of Audacity 3.7.3. It opens and saves real Audacit
 - **Real `.aup3` projects** that round-trip with Audacity 3.7.3, with autosave and crash recovery.
 - **Plug-ins:** CLAP, VST3, LV2, LADSPA and Nyquist, with crash-isolated scanning.
 - **Bit-identical Noise Reduction**, plus a room noise profile for live recording.
-- **AI music:** generate songs with Google Lyria (through OpenRouter, using your own key) and split stems locally with HTDemucs.
+- **AI music (library preview):** the `au-ai` crate generates songs with Google Lyria (through OpenRouter, using your own key, which you can save in Preferences) and splits stems locally with HTDemucs. It is not in the GUI yet.
 - **Windows first:** MSI installer and portable zip.
 
 ## Verification
 - Exports: 27/27 bit-identical with Audacity 3.7.3.
 - Noise Reduction: 6/6 parameter sets bit-identical.
-- Extra commands: 24/24 and 35/35 match through Audacity's own scripting pipe.
+- Extra commands: 24/24, 35/35, 34/34 and 29/29 match through Audacity's own scripting pipe.
+- Effects: 74/74 match.
 - Snap/GridMove: 132/132 match.
 - Effects menu: 15/15 match.
 
@@ -21,7 +22,7 @@ Audacity-RS is a Rust rewrite of Audacity 3.7.3. It opens and saves real Audacit
 See README.md. FFmpeg 7 is optional (M4A/AAC/WMA/AC3). Nyquist effects need an installed Audacity 3.7.x.
 
 ## Known issues
-See docs/KNOWN_ISSUES.md. The main ones: 22 Extra-menu commands are missing, nothing has been tested on real audio hardware and most GUI clicks have no automated test.
+See docs/KNOWN_ISSUES.md. The main ones: AI music is not in the GUI yet, nothing has been tested on real audio hardware and most GUI clicks have no automated test.
 
 ## License
 GPL-3.0-or-later. See THIRD_PARTY_NOTICES.md.

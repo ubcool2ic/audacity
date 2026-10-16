@@ -4,7 +4,9 @@ This list collects every open item from ROADMAP.md and the docs, as of 2026-10-1
 
 ## Parity gaps
 
-- **22 Extra-menu commands are not implemented.** They answer "not recognized" on the pipe: CursorShortJumpLeft/Right, CursorLongJumpLeft/Right, TrackPan, TrackPanLeft/Right, TrackGain, TrackGainInc/Dec, TrackMenu, TrackMute, TrackSolo, TrackClose, TrackMoveUp/Down/Top/Bottom, SetEnvelope, SetProject, Drag, CompareAudio (docs/SPLIT_extra.md, items 68–89).
+- Extra-menu commands 68-89 are done (verified 29/29 + 34/34 against 3.7.3), with these approximations: Drag maps coordinates using Audacity's default track heights (150 px mono / 300 px stereo); RemoveTracks makes one undo step per track; SelectAll with no tracks fails; out-of-range SetProject values are clamped instead of rejected; Make Stereo needs the two tracks' clips to line up.
+- Audacity's TrackPan/TrackGain/TrackMenu dialogs are modal and block its scripting pipe, so those dialogs are compared by hand (our versions match the 3.7.3 layout and behaviour).
+- **AI music is not in the GUI.** `au-ai` (Lyria generation, HTDemucs stems) is only reachable from the examples; there is no menu item or dialog yet. The OpenRouter key field in Preferences > Application is saved but nothing in the app uses it yet.
 - Some effects are not exact: Rhythm Track, Pluck and Studio Fade Out differ from 3.7.3. Some other effects have not been compared.
 - Applying a macro has not been compared against Audacity.
 - Hidden audio in a stretched clip that extends before 0 is converted approximately.
@@ -27,7 +29,7 @@ This list collects every open item from ROADMAP.md and the docs, as of 2026-10-1
 - **The Windows build, packages and the scripting pipe on Windows are being rechecked separately (verify worker). 1.0 waits on that result.**
 - Loopback recording is native on Windows only. On Linux, choose a "Monitor of" source. macOS needs a virtual device.
 - Not tested with a real screen reader.
-- The CI workflow is not enabled.
+- The CI workflow is not enabled. `packaging/windows/build-msi.ps1` (WiX 5) now stages the same files as `build-cross.sh` (all 5 exes, runtime DLLs, Nyquist runtime, plug-ins, locales) but has not been run on a Windows machine; the MSI we ship is built by `build-cross.sh` (wixl).
 
 ## Features
 
@@ -35,9 +37,8 @@ This list collects every open item from ROADMAP.md and the docs, as of 2026-10-1
 - Long jobs (effect apply, export, import, waveform drawing) still run serially instead of as `Runtime` jobs with progress bars.
 - audio.com cloud saving is deferred.
 - Some format strings are English only.
-- AI music: on Windows the OpenRouter key is read from the `OPENROUTER_API_KEY` environment variable only, because `~/.config/openrouter/env` is found through `HOME`, which Windows usually doesn't set. Stem separation needs a local Python install with `demucs`.
+- AI music: stem separation needs a local Python install with `demucs`. The OpenRouter key is looked up in `OPENROUTER_API_KEY`, then the key saved from Preferences (DPAPI-encrypted on Windows, a 0600 file elsewhere), then `%APPDATA%\audacity-rs\openrouter.env`, then `%USERPROFILE%\.config\openrouter\env` (or `$HOME`).
 - Nyquist effects need `lib-nyquist-effects.dll` from an installed Audacity 3.7.x.
-- The CLAP host reports its version as `0.1.0` (`au-plugin-host/src/clap.rs`).
 
 ## Licensing
 

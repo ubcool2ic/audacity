@@ -456,7 +456,9 @@ Every setting is checked against Audacity 3.7.3 sources. Where the pipe allows i
 - [ ] Automated input level adjustment: `EXPERIMENTAL_AUTOMATED_INPUT_LEVEL_ADJUSTMENT` is commented out in 3.7.3's Experimental.cmake, so Audacity ignores the key too. Matches.
 - [x] Extra menu commands 1-45 of docs/SPLIT_extra.md (ubcool2ic): play-around-selection, cut preview, keyboard scrub, tools (F1/F2/F3/F6/A/D), mixer volume, play-at-speed, device dialogs, Delete key, clip left/right, Snap-To, SelStart/SelEnd/SelExtLeft/SelExtRight/SelSetExtLeft. tools/compare_extra.py: 24/24 match Audacity 3.7.3 (clips may now start before 0).
 - [x] Extra menu commands 46-67 (BizyBot): SelSetExtRight, SelCntrLeft/Right, Move to Prev/Next Label, Export as MP3/WAV/OGG/FLAC/Selected, Prev/NextFrame, track focus nav, ShiftUp/Down, Toggle/ToggleAlt, CursorLeft/Right (gui/extra_nav.rs). tools/compare_extra_b.py: 11/11 vs Audacity 3.7.3 (selection/cursor commands; label/export/focus commands are not pipe-observable).
-- [ ] Extra menu commands 68-89: 22 ids still answer "not recognized" (CursorShortJumpLeft/Right, CursorLongJumpLeft/Right, TrackPan/PanLeft/PanRight, TrackGain/GainInc/GainDec, TrackMenu/Mute/Solo/Close/MoveUp/MoveDown/MoveTop/MoveBottom, SetEnvelope, SetProject, Drag, CompareAudio). **Blocks 1.0.**
+- [x] Extra menu commands 68-89 (BizyBot5 ff6f56a + ubcool2ic 90de6e2): SetEnvelope exponential clip envelope, SetProject sizing, Drag mapped like DragCommand, CompareAudio exact, Pan/Gain/TrackMenu dialogs; compare_extra2 34/34, compare_extra2_close 29/29, compare_effects 74/74 (all under tools/iso_run.sh).
+- [x] Windows OpenRouter key lookup (%APPDATA%, %USERPROFILE%, DPAPI key from Preferences); CLAP host version from Cargo; WiX MSI stages DLLs + helper exes like build-cross.sh.
+- [ ] AI music in the GUI (au-ai is examples-only).
 - [x] Envelope drawn and edited with GetWaveYPos/ValueOfPixel when the track is in dB view (linear view keeps the 0-2 scale).
 
 ## Final status for 1.0.0 (2026-10-15)

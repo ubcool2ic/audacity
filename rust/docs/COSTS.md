@@ -475,3 +475,19 @@ No gemini-3.8-flash / muse-spark-1.3 / gpt-6-sol calls. **Batch total: $0.0016**
 | Windows path/FFmpeg/Nyquist/pipe/packaging fixes, clippy fixes | none (hand-edited glue) | 0.0000 |
 
 **Batch total: $0.1301**
+
+## ubcool2ic — extra 68-89 close-out, Windows key, CLAP version, harness isolation (2026-10-16)
+
+| Work | Model | USD |
+|---|---|---|
+| OpenRouter key lookup (unparsable) | google/gemini-3.8-flash | 0.0141 |
+| OpenRouter key lookup | meta/muse-spark-1.3 | 0.0207 |
+| Preferences key field | google/gemini-3.8-flash | 0.0088 |
+| track_ops.rs | google/gemini-3.8-flash | 0.0120 |
+| TrackMenu (failed) | google/gemini-3.8-flash | 0.0225 |
+| TrackMenu | meta/muse-spark-1.3 | 0.0627 |
+| Drag mapping (failed) | google/gemini-3.8-flash | 0.0105 |
+| Drag mapping | meta/muse-spark-1.3 | 0.0265 |
+| compare_effects/iso_run/make_aup3_fixtures/WiX, docs | none (hand-edited) | 0.0000 |
+
+gemini $0.0678, muse $0.1099, sol $0. **Batch total: $0.1777**
