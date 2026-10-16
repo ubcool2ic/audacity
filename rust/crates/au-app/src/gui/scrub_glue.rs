@@ -1,9 +1,11 @@
 //! Transport > Scrubbing: Scrub / Seek checks, the scrub ruler, and ruler-drag scrubbing
 //! (Audacity 3.7.3 Scrubbing.cpp). Logic in crate::scrub; keyboard scrub is in extra_glue.rs.
 use super::AudacityApp;
-use crate::scrub::{self, ScrubAction, ScrubMode, Scrubber};
+use crate::scrub::{self, ScrubMode, Scrubber};
+use crate::scrub_queue::ScrubQueue;
 use au_io::engine::EngineCommand;
 use eframe::egui;
+use std::time::Instant;
 
 #[derive(Default)]
 pub(crate) struct ScrubUi {
@@ -11,6 +13,7 @@ pub(crate) struct ScrubUi {
     pub seek: bool,
     pub ruler_shown: bool,
     pub active: Option<Scrubber>,
+    pub queue: Option<(crate::scrub_queue::ScrubQueue, std::time::Instant)>,
     epoch: Option<std::time::Instant>,
 }
 
@@ -60,6 +63,7 @@ impl AudacityApp {
                 let t = time_at(self, pos.x).clamp(0.0, end);
                 let speed = if mode == ScrubMode::Seek { 1.0 } else { 0.0 };
                 self.extra_play_from(t, end, speed);
+                self.scrub_ui.queue = Some((ScrubQueue::new(), Instant::now()));
                 let now = self.scrub_ui.now_ms();
                 self.scrub_ui.active = Some(Scrubber::start(mode, t, now));
             }
@@ -70,6 +74,7 @@ impl AudacityApp {
                     s.stop();
                 }
                 self.scrub_ui.active = None;
+                self.scrub_ui.queue = None;
                 self.stop_playback();
                 return;
             }
@@ -77,17 +82,68 @@ impl AudacityApp {
             let t = time_at(self, pos.x);
             let now = self.scrub_ui.now_ms();
             let rate = self.project_rate() as f64;
-            let action = self.scrub_ui.active.as_mut().and_then(|s| s.poll(t, now, end));
-            if let (Some(action), Some(player)) = (action, self.player.as_mut()) {
-                match action {
-                    ScrubAction::SetSpeed(v) => {
-                        player.handle.send(EngineCommand::SetSpeed(v));
+            let end_samples = (end * rate).round() as i64;
+            let should_poll = self.scrub_ui.active.as_mut().map_or(false, |s| s.poll(t, now, end).is_some());
+            let is_seek = self.scrub_ui.active.as_ref().map_or(false, |s| s.mode == ScrubMode::Seek);
+            let player_pos = self.player.as_ref().map_or((t * rate).round() as i64, |p| p.position() as i64);
+
+            let mut cmds = Vec::new();
+            if let Some((queue, started_at)) = self.scrub_ui.queue.as_mut() {
+                if should_poll {
+                    let duration = ((rate * scrub::SCRUB_POLL_INTERVAL_MS as f64) / 1000.0).round() as i64;
+                    let s0 = queue.next_start(player_pos);
+                    let s1 = ((t * rate).round() as i64).clamp(0, end_samples);
+                    let entry = if is_seek {
+                        crate::extra_cmds::scrub_entry_init(
+                            queue.last_goal(),
+                            s0,
+                            s1,
+                            duration,
+                            1.0,
+                            crate::scrub::MAX_SCRUB_SPEED,
+                            true,
+                            (0.2 * rate).round() as i64,
+                            0,
+                            end_samples,
+                        )
+                    } else {
+                        crate::extra_cmds::scrub_entry_init(
+                            queue.last_goal(),
+                            s0,
+                            s1,
+                            duration,
+                            0.0,
+                            crate::scrub::MAX_SCRUB_SPEED,
+                            false,
+                            duration,
+                            0,
+                            end_samples,
+                        )
+                    };
+                    if let Some(entry) = entry {
+                        queue.push(entry);
                     }
-                    ScrubAction::SeekTo(t) => {
-                        let frame = (t * rate * player.rate_ratio).round() as usize;
-                        player.handle.send(EngineCommand::Seek(frame));
+                }
+                let elapsed_ms = started_at.elapsed().as_millis() as u64;
+                cmds = queue.tick(elapsed_ms, rate);
+            }
+            if let Some(player) = self.player.as_mut() {
+                for cmd in cmds {
+                    match cmd {
+                        crate::scrub_queue::ScrubCmd::Seek(sample) => {
+                            let engine_frame = (sample as f64 * player.rate_ratio).round() as usize;
+                            let _ = player.handle.send(EngineCommand::Seek(engine_frame));
+                        }
+                        crate::scrub_queue::ScrubCmd::Speed(speed) => {
+                            let _ = player.handle.send(EngineCommand::SetSpeed(speed));
+                        }
+                        crate::scrub_queue::ScrubCmd::Pause => {
+                            let _ = player.handle.send(EngineCommand::Pause);
+                        }
+                        crate::scrub_queue::ScrubCmd::Play => {
+                            let _ = player.handle.send(EngineCommand::Play);
+                        }
                     }
-                    ScrubAction::Stop => {}
                 }
             }
             response.ctx.request_repaint();
