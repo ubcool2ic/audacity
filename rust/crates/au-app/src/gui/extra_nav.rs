@@ -287,7 +287,9 @@ impl AudacityApp {
                 } else {
                     xl::next_track(Some(focus), n, false)
                 };
-                let Some(target) = target else {
+                // Audacity 3.7.3 DoPrev/NextTrack(shift): at the first/last track with
+                // circular navigation off, nothing changes (no select of the focused track).
+                let Some(target) = target.filter(|&t| t != focus) else {
                     return ok();
                 };
                 xl::shift_nav(&mut self.extra.track_sel, focus, target);
