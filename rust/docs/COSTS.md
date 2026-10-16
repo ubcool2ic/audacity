@@ -455,3 +455,11 @@ Per model: gpt-6-luna none, gemini-3.8-flash none, muse-spark-1.3 none, gpt-6-so
 | openai/gpt-6-sol | 0 | $0.00 |
 
 Release docs (README, CHANGELOG, THIRD_PARTY_NOTICES, RELEASE_NOTES, KNOWN_ISSUES, ROADMAP) were hand-written, $0. **Batch: $0.2369. Running total (ubcool2ic): $3.1675**
+## BizyBot5: Extra commands 68-89 (gui/extra2_cmds.rs, gui/extra2_logic.rs, tools/compare_extra2.py)
+
+| File | Model | USD |
+|---|---|---|
+| gui/extra2_logic.rs (cursor jump, pan/gain step, mute/solo, move, compare) | openai/gpt-6-luna | 0.0016 |
+
+Started from BizyBot's unpushed backup (extra_cmds.rs/extra_logic.rs/compare_extra.py), items 68-89 only; glue by hand.
+No gemini-3.8-flash / muse-spark-1.3 / gpt-6-sol calls. **Batch total: $0.0016**.

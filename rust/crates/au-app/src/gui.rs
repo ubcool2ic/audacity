@@ -84,6 +84,8 @@ pub(crate) mod extra_nav_logic;
 pub(crate) mod extra_nav;
 mod scrub_glue;
 pub(crate) mod waveform_cache;
+mod extra2_logic;
+mod extra2_cmds;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
@@ -228,6 +230,8 @@ struct AudacityApp {
     extra: extra_nav::ExtraState,
     /// Transport > Scrubbing state (Scrub/Seek checks, scrub ruler, active ruler scrub).
     scrub_ui: scrub_glue::ScrubUi,
+    /// State of Extra commands 68-89 (extra2_cmds.rs).
+    extra2: extra2_cmds::Extra2State,
     /// Active colour theme.
     theme: crate::theme::Theme,
     /// Custom theme loaded from components or a cache.
@@ -406,6 +410,7 @@ impl Default for AudacityApp {
             focused_track: None,
             extra: Default::default(),
             scrub_ui: Default::default(),
+            extra2: Default::default(),
             waveform_cache: waveform_cache::WaveformCache::new(),
             progress: progress::ProgressCenter::new(),
             test_jobs: Vec::new(),
@@ -900,6 +905,9 @@ fn export_midi(&mut self) {
 /// Handles pipe commands that change application state. Returns `None` when the command is not app-level (the caller then uses the read-only interpreter), otherwise `Some((message, ok))`.
 fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     let (command, params) = crate::script_bridge::parse_command(line);
+    if let Some(result) = self.execute_extra2_command(&command, &params) {
+        return Some(result);
+    }
     if let Some(result) = self.execute_extra_command(&command, &params) {
         return Some(result);
     }
@@ -4837,6 +4845,10 @@ impl eframe::App for AudacityApp {
         self.discard_session_file();
     }
 
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.inject_extra2_input(raw_input);
+    }
+
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if self.host_xid.is_none() {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -4920,6 +4932,7 @@ if let Some(pipe) = self.script_pipe.as_mut() {
             self.player = None;
         }
         self.extra_dialogs(ctx);
+        self.show_extra2_dialogs(ctx);
         self.ensure_track_mix();
         self.maybe_autosave();
         self.recovery_dialog(ctx);
