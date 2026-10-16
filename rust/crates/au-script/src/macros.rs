@@ -51,13 +51,9 @@ pub fn default_macro_dir() -> PathBuf {
             return PathBuf::from(home).join(".local/share/audacity/Macros");
         }
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        PathBuf::from(home)
-            .join(".config")
-            .join("audacity")
-            .join("Macros")
-    } else {
-        PathBuf::from(".config")
+    {
+        // Windows: %APPDATA%\audacity\Macros; macOS: ~/Library/Application Support/audacity/Macros.
+        au_core::paths::user_config_base()
             .join("audacity")
             .join("Macros")
     }

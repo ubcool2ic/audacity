@@ -522,13 +522,7 @@ pub fn parse_cfg(text: &str) -> Prefs {
 /// absent.
 pub fn default_cfg_path() -> PathBuf {
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let modern = if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
-        PathBuf::from(xdg).join("audacity").join("audacity.cfg")
-    } else if let Some(home) = &home {
-        home.join(".config").join("audacity").join("audacity.cfg")
-    } else {
-        PathBuf::from(".config").join("audacity").join("audacity.cfg")
-    };
+    let modern = crate::paths::user_config_base().join("audacity").join("audacity.cfg");
 
     if modern.exists() {
         return modern;

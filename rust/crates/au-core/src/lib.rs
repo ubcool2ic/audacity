@@ -4,6 +4,7 @@
 //! Core audio data types and editing operations.
 
 pub mod edit_behaviors;
+pub mod paths;
 pub mod prefs;
 pub mod i18n;
 pub mod selected_region;

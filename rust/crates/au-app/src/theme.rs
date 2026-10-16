@@ -438,14 +438,7 @@ pub fn theme_dir() -> Option<PathBuf> {
         return Some(PathBuf::from(path));
     }
 
-    let config_home = std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .filter(|value| !value.is_empty())
-                .map(|home| PathBuf::from(home).join(".config"))
-        })?;
+    let config_home = au_core::paths::user_config_base();
 
     Some(config_home.join("audacity-rs").join("Theme"))
 }

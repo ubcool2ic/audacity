@@ -97,15 +97,7 @@ impl RoomNoise {
 
     /// Returns the directory used to store per-device room-noise profiles.
     pub fn user_profile_dir() -> PathBuf {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("HOME")
-                    .filter(|value| !value.is_empty())
-                    .map(|home| PathBuf::from(home).join(".config"))
-            })
-            .unwrap_or_else(|| PathBuf::from(".config"));
+        let base = au_core::paths::user_config_base();
 
         base.join("audacity-rs").join("noise-profiles")
     }

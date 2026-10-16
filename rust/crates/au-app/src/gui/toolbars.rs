@@ -386,13 +386,7 @@ impl ToolbarLayout {
             return Some(PathBuf::from(path));
         }
 
-        let base = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("HOME")
-                    .map(PathBuf::from)
-                    .map(|home| home.join(".config"))
-            })?;
+        let base = au_core::paths::user_config_base();
 
         Some(base.join("audacity-rs").join("toolbars.cfg"))
     }

@@ -5764,10 +5764,7 @@ fn prefs_path() -> PathBuf {
     if let Some(p) = std::env::var_os("AU_PREFS_PATH") {
         return PathBuf::from(p);
     }
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .unwrap_or_else(|| PathBuf::from("."));
+    let base = au_core::paths::user_config_base();
     base.join("audacity-rs").join("audacity.cfg")
 }
 

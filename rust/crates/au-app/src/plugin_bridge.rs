@@ -370,13 +370,7 @@ impl PluginCatalog {
     }
 
     fn default_config_path() -> Option<std::path::PathBuf> {
-        let config_dir = std::env::var_os("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("HOME")
-                    .map(std::path::PathBuf::from)
-                    .map(|home| home.join(".config"))
-            })?;
+        let config_dir = au_core::paths::user_config_base();
 
         Some(
             config_dir

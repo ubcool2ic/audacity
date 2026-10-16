@@ -414,10 +414,7 @@ pub fn factory_presets(id: &str) -> Vec<Preset> {
 
 /// Directory holding user presets (`$XDG_CONFIG_HOME/audacity-rs/presets`).
 pub fn user_preset_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .unwrap_or_else(|| PathBuf::from("."));
+    let base = au_core::paths::user_config_base();
     base.join("audacity-rs").join("presets")
 }
 
