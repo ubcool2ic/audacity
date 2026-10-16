@@ -411,13 +411,14 @@ impl NyquistEngine for AudacityNyquist {
             callback_error: None,
         };
 
-        let plugin_dir = job
-            .script_path
-            .parent()
-            .unwrap_or_else(|| Path::new("/usr/share/audacity/plug-ins"));
+        let bundled = plugins_dir();
+        let plugin_dir = job.script_path.parent().unwrap_or(&bundled);
+        let sep = if cfg!(windows) { ";" } else { ":" };
         let search_path = format!(
-            "/usr/share/audacity/nyquist:{}:/usr/share/audacity/plug-ins",
-            plugin_dir.display()
+            "{}{sep}{}{sep}{}",
+            runtime_dir().display(),
+            plugin_dir.display(),
+            bundled.display()
         );
         let search_path =
             CString::new(search_path).map_err(|_| "Nyquist search path contains NUL".to_owned())?;
@@ -755,7 +756,8 @@ unsafe extern "C" fn subr_ngettext() -> Lval {
     let s1 = xl_arg(7);
     let s2 = xl_arg(7);
     let n = xl_arg(5);
-    let num = *(n.add(8) as *const i64);
+    // FIXNUM is C `long`: 8 bytes on LP64 (Linux/macOS), 4 bytes on LLP64 (Windows).
+    let num = *(n.add(8) as *const std::os::raw::c_long) as i64;
     xl_skip_optional();
     xl_last();
     if num == 1 { s1 } else { s2 }
@@ -796,11 +798,26 @@ fn load_library() -> Result<Library, String> {
             .map_err(|e| format!("could not load Nyquist library {}: {e}", path.display()));
     }
 
-    let candidates = [
+    #[cfg(not(windows))]
+    let candidates = vec![
         PathBuf::from("/usr/lib/audacity/lib-nyquist-effects.so"),
         PathBuf::from("/usr/lib/x86_64-linux-gnu/audacity/lib-nyquist-effects.so"),
         PathBuf::from("/usr/local/lib/audacity/lib-nyquist-effects.so"),
     ];
+    // Windows: next to our exe, then an installed Audacity 3.x.
+    #[cfg(windows)]
+    let candidates = {
+        let mut v = Vec::new();
+        if let Some(d) = exe_dir() {
+            v.push(d.join("lib-nyquist-effects.dll"));
+        }
+        for var in ["ProgramFiles", "ProgramW6432"] {
+            if let Some(pf) = std::env::var_os(var) {
+                v.push(PathBuf::from(pf).join("Audacity").join("lib-nyquist-effects.dll"));
+            }
+        }
+        v
+    };
     let mut errors = Vec::new();
     for path in candidates {
         if !path.is_file() {
@@ -822,6 +839,39 @@ fn load_library() -> Result<Library, String> {
             errors.join("; ")
         ))
     }
+}
+
+fn exe_dir() -> Option<PathBuf> {
+    std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf))
+}
+
+/// Directory holding Nyquist's init.lsp/nyinit.lsp runtime: `AU_NYQUIST_DIR`, then a
+/// `nyquist` folder next to the exe (Windows zip/MSI, AppImage), `../share/audacity-rs/nyquist`,
+/// then the system Audacity's `/usr/share/audacity/nyquist`.
+fn runtime_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("AU_NYQUIST_DIR").filter(|v| !v.is_empty()) {
+        return PathBuf::from(d);
+    }
+    if let Some(exe) = exe_dir() {
+        for c in [exe.join("nyquist"), exe.join("Nyquist"), exe.join("../share/audacity-rs/nyquist")] {
+            if c.join("init.lsp").is_file() {
+                return c;
+            }
+        }
+    }
+    PathBuf::from("/usr/share/audacity/nyquist")
+}
+
+/// Bundled Nyquist plug-ins folder, found the same way as [`runtime_dir`].
+fn plugins_dir() -> PathBuf {
+    if let Some(exe) = exe_dir() {
+        for c in [exe.join("plug-ins"), exe.join("Plug-Ins"), exe.join("../share/audacity-rs/plug-ins")] {
+            if c.is_dir() {
+                return c;
+            }
+        }
+    }
+    PathBuf::from("/usr/share/audacity/plug-ins")
 }
 
 fn build_prologue(
@@ -964,8 +1014,10 @@ fn version_four_properties(
     out.push_str("(putprop '*AUDACITY* \"en\" 'LANGUAGE)\n");
     out.push_str("(setf *DECIMAL-SEPARATOR* #\\.)\n");
 
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
-    let temp = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into());
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| "/".into());
+    let temp = std::env::temp_dir().to_string_lossy().trim_end_matches(['/', '\\']).to_owned();
     for (property, value) in [
         ("BASE", "/usr"),
         ("DATA", "/usr/share/audacity"),
@@ -982,13 +1034,13 @@ fn version_four_properties(
         ));
     }
 
-    let script_dir = job
-        .script_path
-        .parent()
-        .unwrap_or_else(|| Path::new("/usr/share/audacity/plug-ins"));
+    let bundled = plugins_dir();
+    let script_dir = job.script_path.parent().unwrap_or(&bundled);
     let paths = format!(
-        "\"/usr/share/audacity/nyquist\" \"{}\" \"/usr/share/audacity/plug-ins\"",
-        escape_lisp_string(&script_dir.to_string_lossy())
+        "\"{}\" \"{}\" \"{}\"",
+        escape_lisp_string(&runtime_dir().to_string_lossy()),
+        escape_lisp_string(&script_dir.to_string_lossy()),
+        escape_lisp_string(&bundled.to_string_lossy())
     );
     out.push_str(&format!(
         "(putprop '*SYSTEM-DIR* (list {paths}) 'PLUGIN)\n"
