@@ -248,8 +248,12 @@ struct AudacityApp {
     snap_prior: bool,
     snap_restore: au_core::timeline::SnapMode,
     extra_dialog: Option<extra_glue::ExtraDialog>,
-    /// Recording volume slider (no hardware mixer through cpal: display only, like Audacity without one).
+    /// Recording volume slider value (system mixer level, or software gain when there is no mixer).
     input_volume: f32,
+    /// Recording device the system mixer is bound to (empty = default device).
+    record_mixer_device: String,
+    /// Last time the system mixer was polled for external changes.
+    record_mixer_poll: std::time::Instant,
     /// OS input mixer when available, else software gain applied in the capture callback.
     record_volume: au_io::input_gain::RecordVolume,
     /// The command being run came from a key press (key-up matters for scrubbing).
@@ -331,10 +335,8 @@ struct LabelEdit {
 
 impl Default for AudacityApp {
     fn default() -> Self {
-        let record_volume = au_io::input_gain::RecordVolume::new(
-            au_io::input_gain::PulseSourceMixer::detect(None)
-                .map(|m| Box::new(m) as Box<dyn au_io::input_gain::InputMixer>),
-        );
+        let record_volume =
+            au_io::input_gain::RecordVolume::new(au_io::input_gain::system_input_mixer(None));
         Self {
             editor: Editor::new(au_core::ProjectState::default()),
             selected_track: None,
@@ -382,6 +384,8 @@ impl Default for AudacityApp {
             // Start the slider at the OS mixer's level (as Audacity does), else 1.0.
             input_volume: record_volume.get(),
             record_volume,
+            record_mixer_device: String::new(),
+            record_mixer_poll: std::time::Instant::now(),
             keyboard_event: false,
             fit_seen_pushes: 0,
             spectrogram_cache: crate::spectrogram_view::SpectrogramCache::new(),
@@ -2191,6 +2195,25 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
         let g = self.record_volume.software_gain().get();
         for rec in [self.recorder.as_ref(), self.noise_capture.as_ref()].into_iter().flatten() {
             rec.set_input_gain(g);
+        }
+    }
+
+    /// Rebinds the system mixer when the recording device changes and picks up
+    /// level changes made in the OS mixer (polled once a second).
+    fn poll_record_mixer(&mut self) {
+        if self.record_mixer_poll.elapsed() < std::time::Duration::from_secs(1) {
+            return;
+        }
+        self.record_mixer_poll = std::time::Instant::now();
+        let dev = self.settings.recording_device.clone();
+        if dev != self.record_mixer_device {
+            let mixer = au_io::input_gain::system_input_mixer((!dev.is_empty()).then_some(dev.as_str()));
+            self.record_volume.set_mixer(mixer);
+            self.record_mixer_device = dev;
+            self.input_volume = self.record_volume.get();
+            self.sync_record_volume();
+        } else if let Some(v) = self.record_volume.poll_external() {
+            self.input_volume = v;
         }
     }
 
@@ -4520,6 +4543,28 @@ if self.ffmpeg_window {
                     }
                 }
                 ui.separator();
+                let software = self.record_volume.kind() == au_io::input_gain::MixerKind::Software;
+                let label = if software { "Recording volume (software gain)" } else { "Recording volume" };
+                let hint = if software {
+                    "No system input mixer control for this device: the level scales captured samples in software and cannot boost a quiet input."
+                } else {
+                    "Sets the device input level in the system mixer; changes made in the system mixer are picked up here."
+                };
+                let rec_slider = egui::Slider::new(&mut self.input_volume, 0.0..=1.0).text(label);
+                let rec_response = if software {
+                    // Greyed look while still adjustable: software gain is a fallback, not a mixer.
+                    ui.scope(|ui| {
+                        ui.visuals_mut().override_text_color = Some(ui.visuals().weak_text_color());
+                        ui.add(rec_slider)
+                    })
+                    .inner
+                } else {
+                    ui.add(rec_slider)
+                }
+                .on_hover_text(hint);
+                if rec_response.changed() {
+                    self.sync_record_volume();
+                }
                 let master_response = ui.add(
                     egui::Slider::new(&mut self.master_gain, 0.0..=2.0).text("Master gain"),
                 );
@@ -4705,6 +4750,7 @@ impl eframe::App for AudacityApp {
 
 impl AudacityApp {
     fn update_frame(&mut self, ctx: &egui::Context) {
+        self.poll_record_mixer();
         if !self.prefs_applied {
             self.prefs_applied = true;
             self.apply_prefs();
