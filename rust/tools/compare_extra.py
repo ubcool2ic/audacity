@@ -13,7 +13,7 @@ SEL_CASES = [  # (start, end, command)
     (2.0, 4.0, "SelExtLeft"), (2.0, 4.0, "SelExtRight"),
     (2.0, 4.0, "SelSetExtLeft"), (3.0, 3.0, "SelExtLeft"), (3.0, 3.0, "SelExtRight"),
     (0.0, 4.0, "SelExtLeft"), (6.0, 7.0, "SelExtRight"), (3.0, 3.0, "SelSetExtLeft"),
-    (2.0, 4.0, "DeleteKey"),
+    (2.0, 4.0, "DeleteKey"), (2.0, 4.0, "Delete"),
 ]
 
 def setup(X):
@@ -46,7 +46,7 @@ def main():
             ok = bool(a[0] and o[0]) and abs(a[0][0]-o[0][0]) < 2e-3 and abs(a[0][1]-o[0][1]) < 2e-3 and a[1] == o[1]
             o = ((round(o[0][0], 4), round(o[0][1], 4)) if o[0] else None, o[1], o[2])
             report(f"{cmd} [{s},{e}]", ok, f"aud sel {a[0]} clips {a[1]} | ours sel {o[0]} clips {o[1]} {o[2][:60]!r}")
-        for seq in (["ClipRight"] * 3, ["ClipRight"] * 3 + ["ClipLeft"], ["ClipLeft"]):
+        for seq in (["ClipRight"] * 3, ["ClipRight"] * 3 + ["ClipLeft"], ["ClipLeft"], ["ClipLeft"] * 3 + ["ClipRight"] * 5):
             out = []
             for X in (A, None):
                 ctx = Ours() if X is None else None

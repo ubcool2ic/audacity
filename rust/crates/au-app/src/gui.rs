@@ -1140,7 +1140,14 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 match name.as_str() {
                     "Cut" => { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.cut_with(selection, &behavior)) },
                     "Copy" => self.edit_selection(|editor| editor.copy(selection)),
-                    "Delete" => { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.delete_with(selection, &behavior)) },
+                    "Delete" => {
+                        let behavior = self.edit_behavior();
+                        self.edit_selection(|editor| editor.delete_with(selection, &behavior));
+                        // EditMenus OnDelete: selectedRegion.collapseToT0().
+                        if !status_failed(&self.status) {
+                            if let Some(sel) = self.selection.as_mut() { sel.end = sel.start; }
+                        }
+                    }
                     "Paste" => {
                         { let behavior = self.edit_behavior(); self.edit_selection(|editor| editor.paste_with(track, selection.start, &behavior)) }
                     }
