@@ -13,7 +13,7 @@ SEL_CASES = [  # (start, end, command)
     (2.0, 4.0, "SelExtLeft"), (2.0, 4.0, "SelExtRight"),
     (2.0, 4.0, "SelSetExtLeft"), (3.0, 3.0, "SelExtLeft"), (3.0, 3.0, "SelExtRight"),
     (0.0, 4.0, "SelExtLeft"), (6.0, 7.0, "SelExtRight"), (3.0, 3.0, "SelSetExtLeft"),
-    (2.0, 4.0, "DeleteKey"), (2.0, 4.0, "Delete"),
+    (2.0, 4.0, "DeleteKey"), (2.0, 4.0, "Delete"), (0.0, 2.0, "ClipLeft"), (0.0, 2.0, "Trim"),
 ]
 
 def setup(X):
