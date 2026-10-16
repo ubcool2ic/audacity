@@ -308,6 +308,14 @@ ffmpeg_status: au_io::ffmpeg::FfmpegStatus,
     plugins: crate::plugin_bridge::PluginCatalog,
     /// Crash-isolated editor process for the currently edited plugin, if any.
     plugin_editor: Option<(String, au_plugin_host::editor::EditorProcess)>,
+    /// X11 window id of the main window (for embedding plugin editors), if on X11.
+    host_xid: Option<u64>,
+    /// Embedded-editor geometry: Some(true) once the child confirmed X11 embedding.
+    plugin_editor_embedded: Option<bool>,
+    /// Plugin editor size in physical pixels, from the child's READY line.
+    plugin_editor_size: Option<(u32, u32)>,
+    /// Last physical position sent to an embedded editor.
+    plugin_editor_pos: Option<(i32, i32)>,
     spectrum_win: Option<crate::analyze_ui::SpectrumWindow>,
     contrast_win: Option<crate::analyze_ui::ContrastWindow>,
     rt_window: bool,
@@ -453,6 +461,10 @@ ffmpeg_status: au_io::ffmpeg::status(),
                 catalog
             },
             plugin_editor: None,
+            host_xid: None,
+            plugin_editor_embedded: None,
+            plugin_editor_size: None,
+            plugin_editor_pos: None,
             rt_window: false,
             rt_target: crate::fx_ui::RtTarget::Master,
             spectrum_win: None,
@@ -2386,19 +2398,53 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 let mut open_editor = false;
                 let mut close_editor = false;
 
+                // Effect dialog editor area: the plugin's X11 editor is reparented into
+                // the main window over this reserved rect (Audacity embeds editors in the
+                // effect dialog); without X11 it falls back to a top-level window.
+                let ppp = ctx.pixels_per_point();
+                let mut editor_slot: Option<egui::Rect> = None;
+                let embedded = self.plugin_editor_embedded;
+                let size = self.plugin_editor_size;
                 egui::Window::new(au_core::i18n::tr_ui("Plugin editor")).show(ctx, |ui| {
                     if editor_open {
                         if ui.button(au_core::i18n::tr_ui("Close editor")).clicked() {
                             close_editor = true;
                         }
-                        ui.label(au_core::i18n::tr_ui("Editor process active"));
+                        match embedded {
+                            Some(true) => {
+                                let (w, h) = size.unwrap_or((400, 300));
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(w as f32 / ppp, h as f32 / ppp),
+                                    egui::Sense::hover(),
+                                );
+                                editor_slot = Some(rect);
+                            }
+                            Some(false) => {
+                                ui.label(au_core::i18n::tr_ui("Editor shown in its own window (embedding not available)"));
+                            }
+                            None => {
+                                ui.label(au_core::i18n::tr_ui("Editor process active"));
+                            }
+                        }
                     } else {
                         if ui.button(au_core::i18n::tr_ui("Open editor")).clicked() {
                             open_editor = true;
                         }
                         ui.label(au_core::i18n::tr_ui("Editor is not running"));
                     }
+                    editor_slot.get_or_insert(ui.min_rect());
                 });
+                let slot_pos = editor_slot.map(|r| {
+                    let y = if editor_open { r.top() } else { r.bottom() + 4.0 };
+                    ((r.left() * ppp).round() as i32, (y * ppp).round() as i32)
+                });
+                if editor_open && embedded == Some(true) {
+                    if let (Some(pos), Some((_, editor))) = (slot_pos, self.plugin_editor.as_mut()) {
+                        if self.plugin_editor_pos != Some(pos) && editor.move_to(pos.0, pos.1).is_ok() {
+                            self.plugin_editor_pos = Some(pos);
+                        }
+                    }
+                }
 
                 if close_editor {
                     if let Some((_, editor)) = self.plugin_editor.take() {
@@ -2417,7 +2463,16 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                             })
                             .collect();
 
-                        match au_plugin_host::editor::EditorProcess::spawn(&desc, &state) {
+                        self.plugin_editor_embedded = None;
+                        self.plugin_editor_size = None;
+                        let spawned = match (self.host_xid, slot_pos) {
+                            (Some(xid), Some((x, y))) => {
+                                self.plugin_editor_pos = Some((x, y));
+                                au_plugin_host::editor::EditorProcess::spawn_embedded(&desc, &state, xid, x, y)
+                            }
+                            _ => au_plugin_host::editor::EditorProcess::spawn(&desc, &state),
+                        };
+                        match spawned {
                             Ok(editor) => self.plugin_editor = Some((id.clone(), editor)),
                             Err(e) => self.status = e.to_string(),
                         }
@@ -2431,7 +2486,12 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     if editor_id == &id {
                         for event in editor.poll() {
                             match event {
-                                au_plugin_host::editor::EditorEvent::Ready { .. } => {}
+                                au_plugin_host::editor::EditorEvent::Embedded(embedded) => {
+                                    self.plugin_editor_embedded = Some(embedded);
+                                }
+                                au_plugin_host::editor::EditorEvent::Ready { width, height, .. } => {
+                                    self.plugin_editor_size = Some((width, height));
+                                }
                                 au_plugin_host::editor::EditorEvent::Param { id, value } => {
                                     dlg.effect.set(&format!("p{id}"), value as f64);
                                 }
@@ -3236,7 +3296,6 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     .map(|point| (point.time, point.value)),
             );
             if !envelope_points.is_empty() {
-                let value_y = |value: f64| self.envelope_y(index, value, body.top(), body.height());
                 let points = envelope_points
                     .iter()
                     .enumerate()
@@ -4625,7 +4684,15 @@ impl eframe::App for AudacityApp {
         self.discard_session_file();
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if self.host_xid.is_none() {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            self.host_xid = frame.window_handle().ok().and_then(|h| match h.as_raw() {
+                RawWindowHandle::Xlib(x) => Some(x.window as u64),
+                RawWindowHandle::Xcb(x) => Some(x.window.get() as u64),
+                _ => None,
+            });
+        }
         // The panic hook has already written the crash report; flush unsaved
         // edits to the autosave before the panic continues to unwind.
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.update_frame(ctx)));

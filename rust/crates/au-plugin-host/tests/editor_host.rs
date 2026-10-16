@@ -196,3 +196,61 @@ fn crashing_editor_is_contained() {
 
     println!("{event:?}");
 }
+
+/// Parent window for embedding tests: AU_TEST_PARENT_XID if set, else the X root window.
+fn parent_xid() -> Option<u64> {
+    if let Some(xid) = std::env::var("AU_TEST_PARENT_XID").ok().and_then(|v| {
+        v.strip_prefix("0x").map_or_else(|| v.parse().ok(), |h| u64::from_str_radix(h, 16).ok())
+    }) {
+        return Some(xid);
+    }
+    let out = std::process::Command::new("xwininfo").arg("-root").output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let hex = text.split("Window id: 0x").nth(1)?.split_whitespace().next()?;
+    u64::from_str_radix(hex, 16).ok()
+}
+
+fn embedded_flag(process: &mut EditorProcess) -> bool {
+    match process.wait_event(Duration::from_secs(5), |e| matches!(e, EditorEvent::Embedded(_))) {
+        Some(EditorEvent::Embedded(flag)) => flag,
+        other => panic!("no EMBED report: {other:?}"),
+    }
+}
+
+#[test]
+fn again_editor_embeds_into_parent_window() {
+    let path = again_path();
+    let Some(_guard) = setup(&path) else { return };
+    let Some(xid) = parent_xid() else { return };
+    let descriptor = again_descriptor(&path);
+    let mut process = EditorProcess::spawn_embedded(&descriptor, &[], xid, 20, 40).unwrap();
+    let _ = ready(&mut process, Duration::from_secs(20));
+    assert!(embedded_flag(&mut process));
+    process.move_to(30, 50).unwrap();
+    assert!(process.is_running());
+    process.close();
+}
+
+#[test]
+fn surge_editor_embeds_into_parent_window() {
+    let path = surge_path();
+    let Some(_guard) = setup(&path) else { return };
+    let Some(xid) = parent_xid() else { return };
+    let descriptor = au_plugin_host::clap::scan_file(&path).unwrap().into_iter().next().unwrap();
+    let mut process = EditorProcess::spawn_embedded(&descriptor, &[], xid, 0, 0).unwrap();
+    let _ = ready(&mut process, Duration::from_secs(30));
+    assert!(embedded_flag(&mut process));
+    process.close();
+}
+
+#[test]
+fn invalid_parent_falls_back_to_top_level_window() {
+    let path = again_path();
+    let Some(_guard) = setup(&path) else { return };
+    let descriptor = again_descriptor(&path);
+    // Not a window on this display: the child must fall back instead of aborting on BadWindow.
+    let mut process = EditorProcess::spawn_embedded(&descriptor, &[], 0x7ff_fff1, 0, 0).unwrap();
+    let _ = ready(&mut process, Duration::from_secs(20));
+    assert!(!embedded_flag(&mut process));
+    process.close();
+}

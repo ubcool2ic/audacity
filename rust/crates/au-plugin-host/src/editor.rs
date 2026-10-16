@@ -18,6 +18,9 @@ pub enum EditorEvent {
         value: f32,
     },
     State(Vec<(String, String)>),
+    /// Whether the child embedded its editor in the host window (`true`) or fell
+    /// back to a top-level window (`false`). Sent before `Ready`.
+    Embedded(bool),
     Error(String),
     Closed,
     Crashed {
@@ -73,6 +76,7 @@ fn parse_child_line(
 ) -> Option<EditorEvent> {
     let mut parts = line.splitn(4, '\t');
     match parts.next()? {
+        "EMBED" => Some(EditorEvent::Embedded(parts.next()?.trim() == "1")),
         "READY" => {
             let width = parts.next()?.parse().ok()?;
             let height = parts.next()?.parse().ok()?;
@@ -152,10 +156,38 @@ impl EditorProcess {
         Self::spawn_with_env(descriptor, state, &[])
     }
 
+    /// Spawn the editor embedded in the host's X11 window `parent_xid` at physical
+    /// position (`x`, `y`). Falls back to a top-level window inside the child if
+    /// the parent is not a valid X11 window (see [`EditorEvent::Embedded`]).
+    pub fn spawn_embedded(
+        descriptor: &PluginDescriptor,
+        state: &[(String, String)],
+        parent_xid: u64,
+        x: i32,
+        y: i32,
+    ) -> Result<Self, PluginError> {
+        Self::spawn_inner(descriptor, state, &[], Some((parent_xid, x, y)))
+    }
+
+    /// Move an embedded editor within its parent window (physical pixels).
+    pub fn move_to(&mut self, x: i32, y: i32) -> Result<(), PluginError> {
+        self.write_command(&format!("MOVE\t{x}\t{y}"))
+            .map_err(|error| plugin_error(format!("failed to move editor: {error}")))
+    }
+
     pub fn spawn_with_env(
         descriptor: &PluginDescriptor,
         state: &[(String, String)],
         env: &[(&str, &str)],
+    ) -> Result<Self, PluginError> {
+        Self::spawn_inner(descriptor, state, env, None)
+    }
+
+    fn spawn_inner(
+        descriptor: &PluginDescriptor,
+        state: &[(String, String)],
+        env: &[(&str, &str)],
+        embed: Option<(u64, i32, i32)>,
     ) -> Result<Self, PluginError> {
         let executable = editor_path()
             .ok_or_else(|| plugin_error("could not find au-plugin-editor"))?;
@@ -182,7 +214,17 @@ impl EditorProcess {
             .arg("--path")
             .arg(module_path)
             .arg("--id")
-            .arg(&descriptor.id)
+            .arg(&descriptor.id);
+        if let Some((parent_xid, x, y)) = embed {
+            command
+                .arg("--parent-xid")
+                .arg(parent_xid.to_string())
+                .arg("--x")
+                .arg(x.to_string())
+                .arg("--y")
+                .arg(y.to_string());
+        }
+        command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
@@ -404,18 +446,25 @@ pub fn editor_main(args: &[String]) -> i32 {
 }
 
 #[cfg(target_os = "linux")]
-fn editor_main_linux(args: &[String]) -> Result<(), String> {
-    use au_plugin_api::{EditorParent, PluginHost, PluginInstance};
-    use std::collections::HashMap;
-    use std::ffi::{c_char, c_int, c_long, c_ulong, c_void, CString};
-    use std::ptr;
-    use std::time::Instant;
+#[derive(Debug, PartialEq, Eq)]
+pub struct EditorArgs {
+    pub format: String,
+    pub path: PathBuf,
+    pub id: String,
+    pub parent_xid: Option<u64>,
+    pub x: i32,
+    pub y: i32,
+}
 
+pub fn parse_editor_args(args: &[String]) -> Result<EditorArgs, String> {
     let mut format_arg: Option<String> = None;
     let mut path_arg: Option<PathBuf> = None;
     let mut id_arg: Option<String> = None;
-    let mut index = 0;
+    let mut parent_xid: Option<u64> = None;
+    let mut x: i32 = 0;
+    let mut y: i32 = 0;
 
+    let mut index = 0;
     while index < args.len() {
         let value = args
             .get(index + 1)
@@ -424,14 +473,84 @@ fn editor_main_linux(args: &[String]) -> Result<(), String> {
             "--format" => format_arg = Some(value.clone()),
             "--path" => path_arg = Some(PathBuf::from(value)),
             "--id" => id_arg = Some(value.clone()),
+            "--parent-xid" => {
+                parent_xid = Some(
+                    value
+                        .parse::<u64>()
+                        .map_err(|e| format!("invalid --parent-xid: {e}"))?,
+                )
+            }
+            "--x" => {
+                x = value
+                    .parse::<i32>()
+                    .map_err(|e| format!("invalid --x: {e}"))?
+            }
+            "--y" => {
+                y = value
+                    .parse::<i32>()
+                    .map_err(|e| format!("invalid --y: {e}"))?
+            }
             unknown => return Err(format!("unknown argument: {unknown}")),
         }
         index += 2;
     }
 
-    let format = format_arg.ok_or_else(|| "missing --format".to_owned())?;
-    let path = path_arg.ok_or_else(|| "missing --path".to_owned())?;
-    let requested_id = id_arg.ok_or_else(|| "missing --id".to_owned())?;
+    Ok(EditorArgs {
+        format: format_arg.ok_or_else(|| "missing --format".to_owned())?,
+        path: path_arg.ok_or_else(|| "missing --path".to_owned())?,
+        id: id_arg.ok_or_else(|| "missing --id".to_owned())?,
+        parent_xid,
+        x,
+        y,
+    })
+}
+
+#[cfg(test)]
+mod editor_args_tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_editor_args() {
+        let args = vec![
+            "--format".to_string(),
+            "clap".to_string(),
+            "--path".to_string(),
+            "/path/to/plugin.clap".to_string(),
+            "--id".to_string(),
+            "plugin-id".to_string(),
+            "--parent-xid".to_string(),
+            "123456".to_string(),
+            "--x".to_string(),
+            "10".to_string(),
+            "--y".to_string(),
+            "20".to_string(),
+        ];
+        let parsed = parse_editor_args(&args).unwrap();
+        assert_eq!(
+            parsed,
+            EditorArgs {
+                format: "clap".to_string(),
+                path: PathBuf::from("/path/to/plugin.clap"),
+                id: "plugin-id".to_string(),
+                parent_xid: Some(123456),
+                x: 10,
+                y: 20,
+            }
+        );
+    }
+}
+
+fn editor_main_linux(args: &[String]) -> Result<(), String> {
+    use au_plugin_api::{EditorParent, PluginHost, PluginInstance};
+    use std::collections::HashMap;
+    use std::ffi::{c_char, c_int, c_long, c_ulong, c_void, CString};
+    use std::ptr;
+    use std::time::Instant;
+
+    let parsed_args = parse_editor_args(args)?;
+    let format = parsed_args.format.clone();
+    let path = parsed_args.path.clone();
+    let requested_id = parsed_args.id.clone();
 
     let (descriptor, is_vst3) = match format.to_ascii_lowercase().as_str() {
         "clap" => {
@@ -506,6 +625,17 @@ fn editor_main_linux(args: &[String]) -> Result<(), String> {
     type XNextEvent = unsafe extern "C" fn(*mut Display, *mut XEvent) -> c_int;
     type XDestroyWindow = unsafe extern "C" fn(*mut Display, Window) -> c_int;
     type XCloseDisplay = unsafe extern "C" fn(*mut Display) -> c_int;
+    type XErrorHandler = unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int;
+    type XSetErrorHandler = unsafe extern "C" fn(Option<XErrorHandler>) -> Option<XErrorHandler>;
+    type XGetWindowAttributes = unsafe extern "C" fn(*mut Display, Window, *mut u8) -> c_int;
+    type XMoveWindow = unsafe extern "C" fn(*mut Display, Window, c_int, c_int) -> c_int;
+    type XSync = unsafe extern "C" fn(*mut Display, c_int) -> c_int;
+
+    static X11_HAD_ERROR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    unsafe extern "C" fn x11_error_handler(_display: *mut c_void, _event: *mut c_void) -> c_int {
+        X11_HAD_ERROR.store(true, std::sync::atomic::Ordering::SeqCst);
+        0
+    }
 
     struct X11 {
         _library: libloading::Library,
@@ -525,6 +655,10 @@ fn editor_main_linux(args: &[String]) -> Result<(), String> {
         next_event: XNextEvent,
         destroy_window: XDestroyWindow,
         close_display: XCloseDisplay,
+        set_error_handler: XSetErrorHandler,
+        get_window_attributes: XGetWindowAttributes,
+        move_window: XMoveWindow,
+        sync: XSync,
     }
 
     use std::ffi::c_uint;
@@ -559,6 +693,10 @@ fn editor_main_linux(args: &[String]) -> Result<(), String> {
         next_event: symbol!("XNextEvent", XNextEvent),
         destroy_window: symbol!("XDestroyWindow", XDestroyWindow),
         close_display: symbol!("XCloseDisplay", XCloseDisplay),
+        set_error_handler: symbol!("XSetErrorHandler", XSetErrorHandler),
+        get_window_attributes: symbol!("XGetWindowAttributes", XGetWindowAttributes),
+        move_window: symbol!("XMoveWindow", XMoveWindow),
+        sync: symbol!("XSync", XSync),
         _library: library,
     };
 
@@ -571,8 +709,32 @@ fn editor_main_linux(args: &[String]) -> Result<(), String> {
     let root = unsafe { (x11.root_window)(display, screen) };
     let black = unsafe { (x11.black_pixel)(display, screen) };
     let white = unsafe { (x11.white_pixel)(display, screen) };
+    unsafe { (x11.set_error_handler)(Some(x11_error_handler)) };
+
+    // Embed into the host's effect dialog when the parent X11 window is valid
+    // (X11 reparenting); otherwise fall back to a top-level window.
+    let mut embedded = false;
+    let mut parent_window = root;
+    let (mut win_x, mut win_y) = (0, 0);
+    if let Some(parent_xid) = parsed_args.parent_xid {
+        X11_HAD_ERROR.store(false, std::sync::atomic::Ordering::SeqCst);
+        let mut attrs = [0u8; 256];
+        let status = unsafe {
+            (x11.sync)(display, 0);
+            let status = (x11.get_window_attributes)(display, parent_xid as Window, attrs.as_mut_ptr());
+            (x11.sync)(display, 0);
+            status
+        };
+        if status != 0 && !X11_HAD_ERROR.load(std::sync::atomic::Ordering::SeqCst) {
+            parent_window = parent_xid as Window;
+            win_x = parsed_args.x;
+            win_y = parsed_args.y;
+            embedded = true;
+        }
+    }
+
     let window = unsafe {
-        (x11.create_simple_window)(display, root, 0, 0, 640, 480, 0, black, white)
+        (x11.create_simple_window)(display, parent_window, win_x, win_y, 640, 480, 0, black, white)
     };
     if window == 0 {
         unsafe {
@@ -581,17 +743,18 @@ fn editor_main_linux(args: &[String]) -> Result<(), String> {
         return Err("could not create X11 editor window".to_owned());
     }
 
-    let title = CString::new(format!("{} - Audacity-RS", descriptor.name).replace('\0', " "))
-        .map_err(|error| error.to_string())?;
-    unsafe {
-        (x11.store_name)(display, window, title.as_ptr());
-    }
-
     let delete_name = CString::new("WM_DELETE_WINDOW").expect("static atom name");
     let wm_delete = unsafe { (x11.intern_atom)(display, delete_name.as_ptr(), 0) };
-    let mut wm_delete_mut = wm_delete;
+    if !embedded {
+        let title = CString::new(format!("{} - Audacity-RS", descriptor.name).replace('\0', " "))
+            .map_err(|error| error.to_string())?;
+        let mut wm_delete_mut = wm_delete;
+        unsafe {
+            (x11.store_name)(display, window, title.as_ptr());
+            (x11.set_wm_protocols)(display, window, &mut wm_delete_mut, 1);
+        }
+    }
     unsafe {
-        (x11.set_wm_protocols)(display, window, &mut wm_delete_mut, 1);
         (x11.map_window)(display, window);
         (x11.flush)(display);
     }
@@ -630,6 +793,8 @@ fn editor_main_linux(args: &[String]) -> Result<(), String> {
 
     let stdout = io::stdout();
     let mut output = stdout.lock();
+    writeln!(output, "EMBED\t{}", u8::from(embedded))
+        .map_err(|error| format!("failed to report embedding: {error}"))?;
     writeln!(output, "READY\t{width}\t{height}\t{window}")
         .and_then(|()| output.flush())
         .map_err(|error| format!("failed to report editor readiness: {error}"))?;
@@ -713,6 +878,16 @@ fn editor_main_linux(args: &[String]) -> Result<(), String> {
                                         )
                                         .and_then(|()| output.flush())
                                         .ok();
+                                    }
+                                }
+                            }
+                        }
+                        "MOVE" => {
+                            if let (Some(x), Some(y)) = (parts.next(), parts.next()) {
+                                if let (Ok(x), Ok(y)) = (x.parse::<i32>(), y.trim().parse::<i32>()) {
+                                    unsafe {
+                                        (x11.move_window)(display, window, x, y);
+                                        (x11.flush)(display);
                                     }
                                 }
                             }

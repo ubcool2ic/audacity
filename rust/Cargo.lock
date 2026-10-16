@@ -490,6 +490,7 @@ dependencies = [
  "au-scriptpipe",
  "eframe",
  "png",
+ "raw-window-handle",
  "rfd",
  "rustfft",
  "tempfile",
