@@ -14,7 +14,7 @@ use crate::binxml::{self, AttrValue as V, XmlNode};
 use crate::blocks::{self, SampleFormat};
 use crate::{ProjectError, Result};
 use au_core::{
-    timeline::{Clip, EnvPoint, Label, LabelTrack, WaveClips},
+    timeline::{Clip, EnvPoint, HiddenHead, Label, LabelTrack, WaveClips},
     AudioBuffer, ProjectState, Track,
 };
 use rusqlite::{params, Connection, OptionalExtension};
@@ -27,6 +27,9 @@ pub const APPLICATION_ID: i32 = 0x4155_4459;
 pub const VERSION_3_0: u32 = 0x0300_0000;
 /// Audacity 3.4 introduced clip time-stretching (`clipStretchRatio`).
 pub const VERSION_3_4: u32 = 0x0304_0000;
+/// What Audacity 3.7.3 writes for a new project. Saving a new project as 3.0 makes Audacity
+/// 3.7.3 show its modal "saved by an older version" notice when opening it.
+pub const VERSION_3_7: u32 = 0x0307_0000;
 /// Newest project format this port reads (the Audacity 3.7 line).
 pub const MAX_READ_VERSION: u32 = 0x0307_FFFF;
 
@@ -127,7 +130,7 @@ impl Default for Aup3Extras {
             track_formats: Vec::new(),
             track_selected: Vec::new(),
             audacity_version: "3.7.3".into(),
-            user_version: VERSION_3_0,
+            user_version: VERSION_3_7,
             track_effects: Vec::new(),
             master_effects: RealtimeEffectList::default(),
             tags: au_core::tags::Tags::new(),
@@ -382,9 +385,33 @@ fn from_xml(root: &XmlNode, c: &Connection) -> Result<Aup3Project> {
                         s.resize(first.samples.len(), 0.0);
                         channels.push(s);
                     }
+                    let start_frame = (first.offset * rate).round() as i64;
+                    let head_len = if start_frame < 0 && first.stretch == 1.0 {
+                        start_frame
+                            .checked_neg()
+                            .and_then(|frames| usize::try_from(frames).ok())
+                            .filter(|&frames| channels.first().map_or(false, |s| s.len() > frames))
+                    } else {
+                        None
+                    };
+                    if let Some(head_len) = head_len {
+                        let mut head_channels = Vec::with_capacity(channels.len());
+                        for channel in &mut channels {
+                            head_channels.push(channel[..head_len].to_vec());
+                            *channel = channel[head_len..].to_vec();
+                        }
+                        wc.hidden_head = Some(HiddenHead {
+                            audio: AudioBuffer::from_channels(r, head_channels),
+                        });
+                    }
+                    let clip_start = if head_len.is_some() {
+                        0
+                    } else {
+                        start_frame.max(0) as usize
+                    };
                     let mut clip = Clip::new(
                         first.name.clone(),
-                        (first.offset * rate).round().max(0.0) as usize,
+                        clip_start,
                         AudioBuffer::from_channels(r, channels),
                     );
                     clip.stretch_ratio = first.stretch;
@@ -555,11 +582,25 @@ fn build_xml(c: &Connection, p: &Aup3Project) -> Result<XmlNode> {
                     wt.children.push(effects_to_xml(l));
                 }
             }
-            for clip in &t.clips.clips {
-                let offset = clip.start as f64 / trate;
-                let end = offset + clip.len() as f64 / trate;
+            for (clip_index, clip) in t.clips.clips.iter().enumerate() {
+                let offset = if clip_index == 0 && t.clips.hidden_head().is_some() {
+                    t.clips.clip_start_frames(clip_index) as f64 / trate
+                } else {
+                    clip.start as f64 / trate
+                };
                 let empty: Vec<f32> = Vec::new();
-                let data = clip.buffer.channels.get(ch).or(clip.buffer.channels.first()).unwrap_or(&empty);
+                let visible = clip.buffer.channels.get(ch).or(clip.buffer.channels.first()).unwrap_or(&empty);
+                let mut data = visible.to_vec();
+                if clip_index == 0 {
+                    if let Some(head) = t.clips.hidden_head() {
+                        let head_channel = head.audio.channels.get(ch).or(head.audio.channels.first()).unwrap_or(&empty);
+                        let mut combined = Vec::with_capacity(head_channel.len() + visible.len());
+                        combined.extend_from_slice(head_channel);
+                        combined.extend_from_slice(visible);
+                        data = combined;
+                    }
+                }
+                let end = offset + data.len() as f64 / trate;
                 let mut seq = XmlNode::new("sequence")
                     .attr("maxsamples", V::SizeT(fmt.max_samples() as u32))
                     .attr("sampleformat", V::SizeT(fmt.code()))
@@ -803,5 +844,39 @@ mod spectral_selection_tests {
         let path2 = dir.join("b.aup3");
         save(&path2, &p).unwrap();
         assert_eq!(load(&path2).unwrap().extras.frequencies, (-1.0, -1.0));
+    }
+
+    #[test]
+    fn negative_clip_start_round_trip() {
+        let dir = std::env::temp_dir().join(format!("aup3-negative-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("negative.aup3");
+
+        let mut clips = WaveClips::new(44_100, 1);
+        clips.clips.push(Clip::new(
+            "Clip",
+            0,
+            AudioBuffer::from_channels(44_100, vec![vec![0.5; 2000]]),
+        ));
+        clips.move_clip(0, -512);
+
+        let mut state = ProjectState::default();
+        state.sample_rate = 44_100;
+        state.tracks.push(Track {
+            name: "Audio".into(),
+            clips,
+            gain: 1.0,
+            pan: 0.0,
+            mute: false,
+            solo: false,
+            int_bits: None,
+        });
+        save_state(&path, &state).unwrap();
+
+        let loaded = load(&path).unwrap();
+        let clips = &loaded.state.tracks[0].clips;
+        assert_eq!(clips.clip_start_frames(0), -512);
+        assert_eq!(clips.hidden_head().unwrap().audio.channels[0].len(), 512);
+        assert_eq!(clips.clips[0].len(), 1488);
     }
 }
