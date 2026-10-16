@@ -20,6 +20,43 @@ impl Default for SnapContext {
 /// Default of SnapToSetting.
 pub const DEFAULT_SNAP_TO: &str = "bar_1_8";
 
+/// Snap formats grouped in Audacity's registry order.
+pub const SNAP_GROUPS: [(&str, &[(&str, &str)]); 5] = [
+    ("Beats", &[
+        ("bar", "Bar"),
+        ("bar_1_2", "1/2"),
+        ("bar_1_4", "1/4"),
+        ("bar_1_8", "1/8"),
+        ("bar_1_16", "1/16"),
+        ("bar_1_32", "1/32"),
+        ("bar_1_64", "1/64"),
+        ("bar_1_128", "1/128"),
+    ]),
+    ("Triplets", &[
+        ("triplet_1_2", "1/2 (triplets)"),
+        ("triplet_1_4", "1/4 (triplets)"),
+        ("triplet_1_8", "1/8 (triplets)"),
+        ("triplet_1_16", "1/16 (triplets)"),
+        ("triplet_1_32", "1/32 (triplets)"),
+        ("triplet_1_64", "1/64 (triplets)"),
+        ("triplet_1_128", "1/128 (triplets)"),
+    ]),
+    ("Seconds & samples", &[
+        ("seconds", "Seconds"),
+        ("deciseconds", "Deciseconds"),
+        ("centiseconds", "Centiseconds"),
+        ("milliseconds", "Milliseconds"),
+        ("samples", "Samples"),
+    ]),
+    ("Video frames", &[
+        ("film_24_fps", "Film frames (24 fps)"),
+        ("ntsc_29.97_fps", "NTSC frames (29.97 fps)"),
+        ("ntsc_30_fps", "NTSC frames (30 fps)"),
+        ("film_25_fps", "PAL frames (25 fps)"),
+    ]),
+    ("CD frames", &[("cd_75_fps", "CDDA frames (75 fps)")]),
+];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Off,
@@ -79,6 +116,13 @@ fn lookup(id: &str) -> Option<Mult> {
         "cd_75_fps" => Const(75.0),
         _ => return None,
     })
+}
+
+pub fn label_of(id: &str) -> Option<&'static str> {
+    SNAP_GROUPS
+        .iter()
+        .flat_map(|(_, formats)| formats.iter())
+        .find_map(|(format_id, label)| (*format_id == id).then_some(*label))
 }
 
 pub fn is_known(id: &str) -> bool {
@@ -238,5 +282,15 @@ mod tests {
         assert_eq!(parse_mode(Some("PRIOR"), None), Mode::Prior);
         assert_eq!(parse_mode(None, Some(1)), Mode::Nearest);
         assert!(is_known("cd_75_fps"));
+    }
+
+    #[test]
+    fn snap_groups_have_known_ids_and_labels() {
+        for (_, formats) in SNAP_GROUPS {
+            for (id, label) in formats {
+                assert!(is_known(id), "{id} is not known");
+                assert_eq!(label_of(id), Some(*label));
+            }
+        }
     }
 }

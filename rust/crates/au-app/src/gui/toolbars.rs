@@ -686,38 +686,77 @@ impl AudacityApp {
             }
             ToolbarId::Selection => self.selection_toolbar(ui, ctx),
             ToolbarId::Snapping => {
+                let mut snapping = matches!(self.snapper.mode, SnapMode::Grid { .. });
+                if ui.checkbox(&mut snapping, au_core::i18n::tr_ui("Snap")).changed() {
+                    if snapping {
+                        self.snapper.mode = SnapMode::Grid { secs: 1.0 };
+                        self.prefs.set(
+                            "/Snap/Mode",
+                            au_core::prefs::PrefValue::Str(
+                                if self.snap_prior { "PRIOR" } else { "NEAREST" }.to_string(),
+                            ),
+                        );
+                    } else {
+                        self.snapper.mode = SnapMode::Off;
+                        self.prefs.set(
+                            "/Snap/Mode",
+                            au_core::prefs::PrefValue::Str("OFF".to_string()),
+                        );
+                    }
+                }
+
+                let snap_to = self.snap_to_id();
                 let mut mode = self.snapper.mode.clone();
-                egui::ComboBox::from_id_salt("toolbar_snap_mode")
-                    .selected_text(match &mode {
-                        SnapMode::Off => "Off",
-                        SnapMode::Grid { secs } if (*secs - 1.0).abs() < f64::EPSILON => {
-                            "Grid 1s"
-                        }
-                        SnapMode::Grid { .. } => "Grid 0.1s",
-                        SnapMode::Samples => "Samples",
-                        SnapMode::ZeroCrossing => "Zero crossings",
-                        SnapMode::Labels => "Labels",
-                    })
+                let mut selected_snap_to = None;
+                egui::ComboBox::from_id_salt("toolbar_snap_to")
+                    .selected_text(
+                        crate::snapping::label_of(&snap_to).unwrap_or("Seconds"),
+                    )
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut mode, SnapMode::Off, au_core::i18n::tr_ui("Off"));
+                        for (group, formats) in crate::snapping::SNAP_GROUPS {
+                            ui.label(egui::RichText::new(au_core::i18n::tr_ui(group)).strong());
+                            for (id, label) in formats.iter() {
+                                if ui
+                                    .selectable_label(
+                                        snap_to == *id,
+                                        au_core::i18n::tr_ui(label),
+                                    )
+                                    .clicked()
+                                {
+                                    selected_snap_to = Some(*id);
+                                }
+                            }
+                        }
+                        ui.label(egui::RichText::new(au_core::i18n::tr_ui("Other")).strong());
                         ui.selectable_value(
                             &mut mode,
-                            SnapMode::Grid { secs: 1.0 },
-                            "Grid 1s",
+                            SnapMode::Samples,
+                            au_core::i18n::tr_ui("Samples"),
                         );
-                        ui.selectable_value(
-                            &mut mode,
-                            SnapMode::Grid { secs: 0.1 },
-                            "Grid 0.1s",
-                        );
-                        ui.selectable_value(&mut mode, SnapMode::Samples, au_core::i18n::tr_ui("Samples"));
                         ui.selectable_value(
                             &mut mode,
                             SnapMode::ZeroCrossing,
-                            "Zero crossings",
+                            au_core::i18n::tr_ui("Zero crossings"),
                         );
-                        ui.selectable_value(&mut mode, SnapMode::Labels, au_core::i18n::tr_ui("Labels"));
+                        ui.selectable_value(
+                            &mut mode,
+                            SnapMode::Labels,
+                            au_core::i18n::tr_ui("Labels"),
+                        );
                     });
+                if let Some(id) = selected_snap_to {
+                    self.prefs.set(
+                        "/Snap/To",
+                        au_core::prefs::PrefValue::Str(id.to_string()),
+                    );
+                    mode = SnapMode::Grid { secs: 1.0 };
+                    self.prefs.set(
+                        "/Snap/Mode",
+                        au_core::prefs::PrefValue::Str(
+                            if self.snap_prior { "PRIOR" } else { "NEAREST" }.to_string(),
+                        ),
+                    );
+                }
                 if mode != self.snapper.mode {
                     self.snapper.mode = mode;
                 }
