@@ -29,6 +29,7 @@ mod wave_paint;
 mod extra_menu;
 #[cfg(feature = "gui")]
 mod extra_cmds;
+#[cfg_attr(not(feature = "gui"), allow(dead_code))] // used only by the GUI
 mod scrub;
 #[cfg(feature = "gui")]
 mod snapping;
