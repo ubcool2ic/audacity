@@ -443,8 +443,11 @@ Hand edits (trivial): sort_clips made pub(crate), Trim pipe command dispatch, re
 |---|---|---|
 | crash_recovery_gui / ui_automation Xvfb deflake (xvfb-run -a per launch, own TMPDIR/XDG/crash dirs, process-group kill, 10s pipe timeout) | none (hand edit) | 0.0000 |
 | compare_extra_b.py label/focus/toggle cases; ShiftUp/ShiftDown edge fix in extra_nav.rs | none (hand edit) | 0.0000 |
+| Script pipe gaps: AddLabel, Import2 label .txt, GetInfo focus, SetTrackStatus Focused=; compare_extra_b label nav unskipped + direct focus compare (45/45 vs 3.7.3) | none (hand edit) | 0.0000 |
 
 Per model: gpt-6-luna none, gemini-3.8-flash none, muse-spark-1.3 none, gpt-6-sol none. **BizyBot4 total: $0.0000**
+
+BizyBot4 running total: **$0.0000** (no OpenRouter calls).
 
 ## ubcool2ic: mouse scrub, clip edge drag, GridMove, 1.0.0 release docs (2026-10-16)
 

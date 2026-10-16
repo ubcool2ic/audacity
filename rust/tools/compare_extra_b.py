@@ -5,8 +5,7 @@ Reuses compare_extra.py's harness for the selection/cursor cases, then adds labe
 ShiftUp/ShiftDown, Toggle/ToggleAlt), compared through the pipe-visible track selection.
 Not pipe-comparable (see docs/SPLIT_extra.md notes): ExportMp3/Wav/Ogg/FLAC/Sel open a modal
 export dialog in Audacity that blocks the pipe; PrevFrame/NextFrame only move keyboard focus
-between toolbars and tracks. Our GetInfo reports focused=false, so focus itself is compared
-only through its effect on selection."""
+between toolbars and tracks. Track focus is compared directly via GetInfo "focused"."""
 import os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 import compare_extra as X
@@ -51,7 +50,6 @@ def label_case(X, s, e, seq):
     X_(f"SelectTime: Start={s} End={e}"); X_("SelectTracks: Track=0 TrackCount=1 Mode=Set")
     for c in seq: X_(f"{c}:")
     if ours(X_):
-        if not labels(X_): return "no-labels"
         v = [float(t) for t in body(X_("GetSelection:")).split()]
         return (round(v[0], 4), round(v[1], 4))
     before = labels(X_); X_("AddLabel:"); after = labels(X_)
@@ -75,15 +73,12 @@ def main():
         for s, e, seq in LABEL_CASES:
             a = label_case(A, s, e, seq)
             with Ours() as O: o = label_case(O, s, e, seq)
-            if o == "no-labels":
-                print(f"SKIP {'+'.join(seq)} [{s},{e}]  aud {a}; ours cannot create labels over the pipe (AddLabel/label Import2 unsupported)", flush=True)
-                continue
             ok = a is not None and o is not None and abs(a[0]-o[0]) < 2e-3 and abs(a[1]-o[1]) < 2e-3
             report(f"{'+'.join(seq)} [{s},{e}]", ok, f"aud {a} ours {o}")
         for seq in FOCUS_CASES:
             a = focus_case(A, seq)
             with Ours() as O: o = focus_case(O, seq)
-            report("+".join(seq), a[0] == o[0], f"aud sel {a[0]} focus {a[1]} | ours sel {o[0]}")
+            report("+".join(seq), a == o, f"aud sel {a[0]} focus {a[1]} | ours sel {o[0]} focus {o[1]}")
     print(f"labels/focus: {sum(res)}/{len(res)} passed")
     return rc or (0 if all(res) else 1)
 
