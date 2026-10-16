@@ -2900,27 +2900,27 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
     /// Envelope value -> y. In dB view this is Audacity's GetWaveYPos(value, zoomMin, zoomMax,
     /// height, dB=true, outer=true, dBRange, clip=false) (Envelope::DrawPoints); linear view keeps 0..2.
     fn envelope_y(&self, index: usize, value: f64, top: f32, height: f32) -> f32 {
-        match self.wave_ui.get(index) {
-            Some(w) if w.db => {
-                let range = self.settings.env_db_range.max(1) as f32;
-                top + crate::wave_paint::get_wave_y_pos(value as f32, w.zoom_min, w.zoom_max,
-                    height.round().max(1.0) as i32, true, true, range, false) as f32
-            }
-            _ => top + ((2.0 - value.clamp(0.0, 2.0)) / 2.0) as f32 * height,
-        }
+        top + self.envelope_contours(index, value, height).0
     }
 
-    /// y -> envelope value, inverse of [`Self::envelope_y`] (ValueOfPixel in dB view).
+    /// Mirrored envelope contours (upper, lower) relative to the body top, like Audacity's
+    /// Envelope::DrawPoints: GetWaveYPos(+value) and GetWaveYPos(-value) in both linear and dB view.
+    fn envelope_contours(&self, index: usize, value: f64, height: f32) -> (f32, f32) {
+        let (zmin, zmax, db) = self.wave_ui.get(index).map_or((-1.0, 1.0, false), |w| (w.zoom_min, w.zoom_max, w.db));
+        let range = self.settings.env_db_range.max(1) as f32;
+        let (u, l) = crate::wave_paint::envelope_contour_ys(value.clamp(0.0, 2.0) as f32, zmin, zmax,
+            height.round().max(1.0) as i32, db, range);
+        (u as f32, l as f32)
+    }
+
+    /// y -> envelope value, inverse of [`Self::envelope_y`] (ValueOfPixel); either contour
+    /// (above or below the center line) maps to the same magnitude, as in Audacity.
     fn envelope_value(&self, index: usize, y: f32, top: f32, height: f32) -> f64 {
-        match self.wave_ui.get(index) {
-            Some(w) if w.db => {
-                let range = self.settings.env_db_range.max(1) as f64;
-                let v = crate::wave_paint::value_of_pixel((y - top).round() as i32,
-                    height.round().max(1.0) as i32, false, true, range, w.zoom_min, w.zoom_max);
-                (v.abs() as f64).clamp(0.0, 2.0)
-            }
-            _ => ((1.0 - (y - top) as f64 / height as f64) * 2.0).clamp(0.0, 2.0),
-        }
+        let (zmin, zmax, db) = self.wave_ui.get(index).map_or((-1.0, 1.0, false), |w| (w.zoom_min, w.zoom_max, w.db));
+        let range = self.settings.env_db_range.max(1) as f64;
+        let v = crate::wave_paint::value_of_pixel((y - top).round() as i32,
+            height.round().max(1.0) as i32, false, db, range, zmin, zmax);
+        (v.abs() as f64).clamp(0.0, 2.0)
     }
 
     fn wave_ui(&mut self, index: usize) -> WaveUi {
@@ -3252,23 +3252,38 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                         _ => (time, value),
                     })
                     .collect::<Vec<_>>();
-                for pair in points.windows(2) {
-                    let (t0, v0) = pair[0];
-                    let (t1, v1) = pair[1];
-                    painter.line_segment(
-                        [
-                            egui::pos2(rect.left() + zoom.time_to_x(t0) as f32, value_y(v0)),
-                            egui::pos2(rect.left() + zoom.time_to_x(t1) as f32, value_y(v1)),
-                        ],
-                        egui::Stroke::new(2.0, egui::Color32::from_rgb(80, 160, 255)),
-                    );
+                // Audacity draws the envelope as two contours mirrored about the
+                // center line, flat before the first and after the last point.
+                let contours = |v: f64| {
+                    let (u, l) = self.envelope_contours(index, v, body.height());
+                    (body.top() + u, body.top() + l)
+                };
+                let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(80, 160, 255));
+                let x_of = |t: f64| rect.left() + zoom.time_to_x(t) as f32;
+                let mut segments: Vec<(f32, f64, f32, f64)> = Vec::new();
+                if let (Some(&(tf, vf)), Some(&(tl, vl))) = (points.first(), points.last()) {
+                    segments.push((rect.left(), vf, x_of(tf), vf));
+                    for pair in points.windows(2) {
+                        segments.push((x_of(pair[0].0), pair[0].1, x_of(pair[1].0), pair[1].1));
+                    }
+                    segments.push((x_of(tl), vl, rect.right(), vl));
+                }
+                let clip_painter = painter.with_clip_rect(body);
+                for (x0, v0, x1, v1) in segments {
+                    let (u0, l0) = contours(v0);
+                    let (u1, l1) = contours(v1);
+                    clip_painter.line_segment([egui::pos2(x0, u0), egui::pos2(x1, u1)], stroke);
+                    clip_painter.line_segment([egui::pos2(x0, l0), egui::pos2(x1, l1)], stroke);
                 }
                 for (time, value) in points {
-                    painter.circle_filled(
-                        egui::pos2(rect.left() + zoom.time_to_x(time) as f32, value_y(value)),
-                        3.5,
-                        egui::Color32::from_rgb(110, 185, 255),
-                    );
+                    let (u, l) = contours(value);
+                    for y in [u, l] {
+                        clip_painter.circle_filled(
+                            egui::pos2(x_of(time), y),
+                            3.5,
+                            egui::Color32::from_rgb(110, 185, 255),
+                        );
+                    }
                 }
             }
 

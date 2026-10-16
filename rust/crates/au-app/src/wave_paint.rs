@@ -191,9 +191,39 @@ pub fn min_max_rms_pixels(
     (h1, h2, r1, r2)
 }
 
+/// Envelope contour pixels, as Audacity's Envelope::DrawPoints / WaveformView DrawEnvLine:
+/// the envelope value is drawn mirrored about the center line, at
+/// GetWaveYPos(value, ...) above and GetWaveYPos(-value, ...) below (outer=true, clip=false).
+/// Returns `(upper_y, lower_y)` relative to the view top.
+pub fn envelope_contour_ys(
+    value: f32,
+    zoom_min: f32,
+    zoom_max: f32,
+    height: i32,
+    db: bool,
+    db_range: f32,
+) -> (i32, i32) {
+    let v = value.max(0.0);
+    (
+        get_wave_y_pos(v, zoom_min, zoom_max, height, db, true, db_range, false),
+        get_wave_y_pos(-v, zoom_min, zoom_max, height, db, true, db_range, false),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn envelope_contours_are_mirrored_about_center() {
+        // Unity gain sits on the top and bottom edges; zero collapses to the center line.
+        assert_eq!(envelope_contour_ys(1.0, -1.0, 1.0, 101, false, 60.0), (0, 100));
+        assert_eq!(envelope_contour_ys(0.0, -1.0, 1.0, 101, false, 60.0), (50, 50));
+        assert_eq!(envelope_contour_ys(0.5, -1.0, 1.0, 101, false, 60.0), (25, 75));
+        let (u, l) = envelope_contour_ys(0.3, -1.0, 1.0, 101, true, 60.0);
+        assert_eq!(u - 50, 50 - l);
+        assert!(u < 50 && l > 50);
+    }
 
     #[test]
     fn linear_mapping_at_full_scale() {
