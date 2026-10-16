@@ -161,6 +161,11 @@ class Aud:
         cfg = os.path.expanduser("~/.config/audacity/audacity.cfg"); s = open(cfg).read()
         s = re.sub(r"\[ActiveProjects\]\n(?:[^\[\n][^\n]*\n)*", "", s)
         s = re.sub(r"DefaultProjectSampleFormatChoice=.*", "DefaultProjectSampleFormatChoice=Format32BitFloat", s)
+        if os.environ.get("AU_ISO_RUN"):
+            # Under tools/iso_run.sh: keep Audacity's temp/autosave files in our private /tmp, so
+            # other agents' unsaved projects in the shared TempDir never trigger crash recovery here.
+            os.makedirs("/tmp/audacity-iso", exist_ok=True)
+            s = re.sub(r"(?m)^TempDir=.*$", "TempDir=/tmp/audacity-iso", s)
         open(cfg, "w").write(s)
         self.proc = subprocess.Popen("cd /tmp && exec xvfb-run -a -s '-screen 0 1280x1024x24' audacity >/tmp/aud.log 2>&1", shell=True, start_new_session=True)
         try:
@@ -244,7 +249,9 @@ def main():
         try:
             run_case(A, name, acmd, rid, rp, kind, thr, note, results)
         except TimeoutError as e:
-            row = {"case": name, "note": note, "thr": thr, "pass_": False, "error": f"AUDACITY: {e}"}
+            try: shot = screenshot(aud_env(A), name)
+            except Exception: shot = None
+            row = {"case": name, "note": note, "thr": thr, "pass_": False, "error": f"AUDACITY: {e}", "screenshot": shot}
             results.append(row); print(json.dumps(row), flush=True)
             A.__exit__(); A = Aud().__enter__()
     A.__exit__()
@@ -276,7 +283,7 @@ def run_case(A, name, acmd, rid, rp, kind, thr, note, results):
                 A("SelectTime: Start=0 End=2 RelativeTo=ProjectStart")
             elif src: A("SelectAll:")
             if kind == "gen" and cmd_is_gui(acmd):
-                gui_generate(acmd)
+                gui_generate(A, acmd)
             else:
                 A(acmd)
             ap = f"{W}/{name}.aud.aup3"
@@ -397,23 +404,51 @@ def run_contrast_ref(name, rp, results, note):
     results.append(row); print(json.dumps(row), flush=True)
 
 def cmd_is_gui(acmd): return acmd.startswith("DtmfTones:")
-def gui_generate(acmd):
+def aud_env(A):
+    """DISPLAY/XAUTHORITY of *our* Audacity (the process group started by Aud), never another bot's."""
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit(): continue
+        try:
+            if os.getpgid(int(pid)) != A.proc.pid or open(f"/proc/{pid}/comm").read().strip() != "audacity": continue
+            envs = dict(l.split("=", 1) for l in open(f"/proc/{pid}/environ").read().split("\0") if "=" in l)
+            return dict(os.environ, DISPLAY=envs["DISPLAY"], XAUTHORITY=envs.get("XAUTHORITY", ""))
+        except (OSError, KeyError): pass
+    raise RuntimeError("our Audacity process not found")
+
+def screenshot(e, tag):
+    path = f"{W}/fail_{tag}_{int(time.time())}.png"
+    subprocess.run(["import", "-window", "root", path], env=e, capture_output=True)
+    print("   screenshot:", path, flush=True)
+    return path
+
+def gui_generate(A, acmd):
     """Audacity 3.7.3 DTMF via scripting ignores Sequence/Duty Cycle and computes tone lengths from a stale
     duration (DtmfSettings::Recalculate runs before the selection duration is applied). So drive the real
     dialog: Generate > DTMF Tones... and press OK with the dialog defaults (sequence 'audacity', 55 %, 0.8),
-    duration = the 2 s selection."""
-    import shlex
-    pid = subprocess.run("pgrep -x audacity", shell=True, capture_output=True, text=True).stdout.split()[0]
-    envs = dict(l.split("=", 1) for l in open(f"/proc/{pid}/environ").read().split("\0") if "=" in l)
-    e = dict(os.environ, DISPLAY=envs["DISPLAY"], XAUTHORITY=envs.get("XAUTHORITY", ""))
+    duration = the 2 s selection. Only our own instance's display is touched."""
+    e = aud_env(A)
     x = lambda *a: subprocess.run(["xdotool", *a], env=e, capture_output=True)
-    x("search", "--onlyvisible", "--name", "Welcome to Audacity", "windowactivate", "--sync", "key", "Escape"); time.sleep(1)
-    x("search", "--onlyvisible", "--name", "^Audacity$", "windowactivate", "--sync"); time.sleep(0.5)
-    x("key", "alt+g"); time.sleep(1); x("key", "Down", "Down", "Return"); time.sleep(3)
-    wid = x("search", "--onlyvisible", "--name", "^DTMF Tones$").stdout.split()[-1].decode()
+    for title in ("Welcome to Audacity", "Automatic Crash Recovery"):
+        for w in x("search", "--onlyvisible", "--name", title).stdout.split():
+            x("windowactivate", "--sync", w.decode(), "key", "Escape"); time.sleep(1)
+    wid = None
+    for attempt in range(3):
+        main_w = x("search", "--onlyvisible", "--name", "^Audacity$").stdout.split()
+        if main_w: x("windowactivate", "--sync", main_w[-1].decode()); time.sleep(0.5)
+        # Generate menu: Plugin Manager, (separator), DTMF Tones... is the 2nd item in 3.7.3.
+        x("key", "alt+g"); time.sleep(1); x("key", "Down", "Down", "Return"); time.sleep(3)
+        ids = x("search", "--onlyvisible", "--name", "^DTMF Tones$").stdout.split()
+        if ids: wid = ids[-1].decode(); break
+        x("key", "Escape"); x("key", "Escape"); time.sleep(1)
+    if wid is None:
+        screenshot(e, "dtmf_dialog")
+        raise TimeoutError("DTMF Tones dialog did not open")
     geo = x("getwindowgeometry", wid).stdout.decode()
     w, h = map(int, re.search(r"Geometry: (\d+)x(\d+)", geo).groups())
     x("mousemove", "--window", wid, str(w - 52), str(h - 21), "click", "1"); time.sleep(4)  # 'Generate' button (bottom-right)
+    if x("search", "--onlyvisible", "--name", "^DTMF Tones$").stdout.split():
+        screenshot(e, "dtmf_still_open")
+        x("key", "--window", wid, "Return"); time.sleep(3)
 
 CF_TYPES = ["Butterworth", "Chebyshev Type I", "Chebyshev Type II"]; CF_SUB = ["Lowpass", "Highpass"]
 def run_classic_ref(name, rp, thr, note, results):
