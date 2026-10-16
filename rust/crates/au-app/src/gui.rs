@@ -628,7 +628,7 @@ fn import_path(&mut self, path: PathBuf) {
             match au_io::import_file(&path) {
                 Ok(buffer) => {
                     let name = path
-                        .file_name()
+                        .file_stem()
                         .and_then(|name| name.to_str())
                         .unwrap_or("Imported audio")
                         .to_owned();
@@ -683,7 +683,7 @@ fn poll_io_jobs(&mut self) {
         self.progress.finish(ticket);
         match (job, done) {
             (IoJob::Import(path, _), IoDone::Import(Ok(Ok(buffer)))) => {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("Imported audio").to_owned();
+                let name = path.file_stem().and_then(|n| n.to_str()).unwrap_or("Imported audio").to_owned();
                 self.editor.add_track(Track::new(name, buffer));
                 self.selected_track = Some(self.editor.state().tracks.len() - 1);
                 self.ensure_track_mix();
@@ -1026,7 +1026,8 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 .map(|(_, value)| value.as_str())
             {
                 Some(value) => value,
-                None => return Some(("Display is required".to_string(), false)),
+                // No Display: the generic SetTrack (name, pan, volume, ...) in au-script handles it.
+                None => return None,
             };
             let track_view = match display {
                 "Waveform" => crate::spectrogram_view::TrackView::Waveform,
@@ -3129,6 +3130,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
 
         let (rect, response) =
             ui.allocate_exact_size(egui::vec2(width, if wave.minimized { WaveUi::MINIMIZED_HEIGHT } else { wave.height }), egui::Sense::click_and_drag());
+        if self.extra2.track_rects.len() <= index { self.extra2.track_rects.resize(index + 1, egui::Rect::NOTHING); } self.extra2.track_rects[index] = rect;
         let info = {
             let state = self.editor.state();
             state.tracks.get(index).map(|track| {
@@ -3497,7 +3499,9 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             } else {
                 self.tool
             };
-            let hovering_edge = matches!(tool, Tool::Selection | Tool::Multi) && clip_bounds.iter().any(|&(start, end)| {
+            // WaveClipAdjustBorderHandle::HitTest: only the top 30 % of the first channel.
+            let edge_band = rect.top() + rect.height() / self.editor.state().tracks.get(index).map_or(1, |t| t.clips.n_channels.max(1)) as f32 * 0.3;
+            let hovering_edge = matches!(tool, Tool::Selection | Tool::Multi) && p.y <= edge_band && clip_bounds.iter().any(|&(start, end)| {
                 let x_start = rect.left() + zoom.time_to_x(au_core::frames_to_secs(start, rate)) as f32;
                 let x_end = rect.left() + zoom.time_to_x(au_core::frames_to_secs(end, rate)) as f32;
                 p.x >= x_start - 5.0 && p.x <= x_end + 5.0 && ((p.x - x_start).abs() <= 5.0 || (p.x - x_end).abs() <= 5.0)
@@ -3510,12 +3514,14 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
             }
         }
 
+        // Drag starts where the button went down (Audacity uses the press point), not where egui decided it was a drag.
         if response.drag_started() {
-            if let Some(pointer) = response.interact_pointer_pos() {
+            if let Some(pointer) = response.ctx.input(|i| i.pointer.press_origin()).or(response.interact_pointer_pos()) {
                 self.selected_track = Some(index);
                 let time = self.time_at_x(pointer.x, rect);
                 let tool = if self.tool == Tool::Multi { self.multi_tool_at(index, pointer, rect, rate) } else { self.tool };
-                if matches!(tool, Tool::Selection | Tool::Multi) {
+                let edge_band = rect.top() + rect.height() / self.editor.state().tracks.get(index).map_or(1, |t| t.clips.n_channels.max(1)) as f32 * 0.3;
+                if matches!(tool, Tool::Selection | Tool::Multi) && pointer.y <= edge_band {
                     let mut hit_edge = None;
                     for (clip_idx, &(start, end)) in clip_bounds.iter().enumerate() {
                         let x_start = rect.left() + zoom.time_to_x(au_core::frames_to_secs(start, rate)) as f32;
@@ -3543,7 +3549,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 match tool {
                     Tool::Selection | Tool::Multi => {
                         let snapped = self.snap_time(time, rate, None);
-                        let frame = au_core::secs_to_frames(snapped, rate).min(frames);
+                        let frame = au_core::secs_to_frames(snapped, rate); // not clamped to the audio end (SelectHandle)
                         self.drag = Some(PointerDrag::Selection {
                             track: index,
                             start: frame,
@@ -3636,7 +3642,7 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                 match self.drag {
                     Some(PointerDrag::Selection { track, start, .. }) if track == index => {
                         let snapped = self.snap_time(time, rate, None);
-                        let end = au_core::secs_to_frames(snapped, rate).min(frames);
+                        let end = au_core::secs_to_frames(snapped, rate);
                         self.drag = Some(PointerDrag::Selection { track, start, end });
                         self.selection = Some(Selection { track, start: start as i64, end: end as i64 });
                     }
@@ -4042,7 +4048,7 @@ fn draw_note_tracks(&mut self, ui: &mut egui::Ui) {
             };
 
             if response.drag_started() {
-                if let Some(pointer) = response.interact_pointer_pos() {
+                if let Some(pointer) = response.ctx.input(|i| i.pointer.press_origin()).or(response.interact_pointer_pos()) {
                     if let Some(label_index) = hit_label(pointer) {
                         let (start, end, _) = labels[label_index];
                         let time = zoom.x_to_time((pointer.x - rect.left()) as f64).max(0.0);
@@ -4240,6 +4246,7 @@ fn draw_note_tracks(&mut self, ui: &mut egui::Ui) {
             egui::vec2(ui.available_width().max(1.0), self.ruler_height()),
             egui::Sense::click_and_drag(),
         );
+        self.extra2.ruler_rect = Some(rect);
         self.ruler_scrub(&response, rect);
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, egui::Color32::from_gray(24));
@@ -4905,7 +4912,11 @@ if self.script_pipe_enabled && self.script_pipe.is_none() && !self.script_pipe_f
 if !self.script_pipe_enabled {
     self.script_pipe = None;
 }
-if let Some(pipe) = self.script_pipe.as_mut() {
+// Drag's pointer events run over several frames; later commands wait until they are
+// consumed so the script sees their result (Audacity processes them synchronously).
+let drag_pending = !self.extra2.injected.is_empty();
+if drag_pending { ctx.request_repaint_after(std::time::Duration::from_millis(5)); }
+if let Some(pipe) = self.script_pipe.as_mut().filter(|_| !drag_pending) {
     for request in pipe.drain(32) {
         let response = match self
             .execute_app_command(request.command())
@@ -5332,6 +5343,7 @@ if response.changed() && self.script_pipe_enabled {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let count = self.editor.state().tracks.len();
                 self.track_views.resize(count, Default::default());
+                self.extra2.track_rects.truncate(count);
                 for index in 0..count {
                     let mut selected_view = self.track_views[index];
                     egui::ComboBox::from_id_salt(("track_view", index))
@@ -5560,9 +5572,8 @@ impl<'a> AppScriptHost<'a> {
         self.app.extra.label_sel = (0..n_label).map(|i| self.sel.tracks.get(n_wave + i).copied().unwrap_or(false)).collect();
         if let Some(track) = self.sel.tracks.iter().take(n_wave).position(|s| *s) {
             let rate = self.app.editor.state().tracks[track].sample_rate();
-            let len = self.app.editor.state().tracks[track].len();
-            let a = au_core::secs_to_frames(self.sel.t0.max(0.0), rate).min(len);
-            let b = au_core::secs_to_frames(self.sel.t1.max(0.0), rate).min(len);
+            let a = au_core::secs_to_frames(self.sel.t0.max(0.0), rate); // not clamped to the audio (a selection may extend past it)
+            let b = au_core::secs_to_frames(self.sel.t1.max(0.0), rate);
             self.app.selected_track = Some(track);
             self.app.selection = Some(Selection { track, start: a.min(b) as i64, end: a.max(b) as i64 });
             if self.sel.f0 >= 0.0 || self.sel.f1 >= 0.0 {
@@ -5690,6 +5701,18 @@ impl AudacityApp {
         let mut host = AppScriptHost::new(self);
         let r = au_script::execute(&mut host, line);
         host.finish();
+        if line.trim_start().starts_with("SetTrack") {
+            // The mixer reads track_mix; take pan/volume/mute/solo from the edited tracks.
+            self.ensure_track_mix();
+            let mix: Vec<_> = self.editor.state().tracks.iter().map(|t| (t.gain, t.pan, t.mute, t.solo)).collect();
+            for (i, (gain, pan, mute, solo)) in mix.into_iter().enumerate() {
+                let p = TrackParams { gain, pan, mute, solo };
+                if self.track_mix[i] != p {
+                    self.track_mix[i] = p;
+                    self.send_track_mix(i, p, false);
+                }
+            }
+        }
         r
     }
 

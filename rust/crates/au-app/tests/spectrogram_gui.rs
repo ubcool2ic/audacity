@@ -156,8 +156,9 @@ fn gui_spectrogram_rendering_survives_script_commands() {
         "GetInfo: Type=Tracks",
         "BatchCommand finished: OK",
     );
+    // Imported tracks are named after the file stem, like Audacity.
     let wav_name = wav_path
-        .file_name()
+        .file_stem()
         .and_then(|name| name.to_str())
         .expect("WAV filename is valid UTF-8");
     assert!(

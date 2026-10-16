@@ -252,7 +252,10 @@ impl Envelope {
                     return right.value;
                 }
                 let fraction = (t - left.time) / span;
-                return left.value + (right.value - left.value) * fraction;
+                // WaveClip envelopes are exponential (Envelope(true, 1e-7, 4.0, 1.0)):
+                // Envelope::GetValuesRelative interpolates log10 values.
+                let (a, b) = (left.value.max(1e-7).log10(), right.value.max(1e-7).log10());
+                return 10f64.powf(a + (b - a) * fraction);
             }
         }
 
@@ -261,9 +264,10 @@ impl Envelope {
 
     /// Inserts or replaces a point, returning its sorted index.
     ///
-    /// Values are clamped to the Audacity volume envelope range `[0.0, 2.0]`.
+    /// Values are clamped to the Audacity clip envelope range (max 4.0; Audacity's
+    /// minimum is 1e-7, applied when interpolating).
     pub fn insert(&mut self, time: f64, value: f64) -> usize {
-        let value = value.clamp(0.0, 2.0);
+        let value = value.clamp(0.0, 4.0);
         if let Some(index) = self
             .points
             .iter()
@@ -1582,12 +1586,18 @@ mod tests {
     #[test]
     fn timeline_envelope_interpolation_and_apply() {
         let mut envelope = Envelope::new();
-        envelope.insert(0.0, 0.0);
+        // Exponential interpolation (Audacity's clip envelope): geometric mean halfway.
+        envelope.insert(0.0, 0.5);
         envelope.insert(2.0, 2.0);
-        assert_eq!(envelope.value_at(1.0), 1.0);
+        assert!((envelope.value_at(1.0) - 1.0).abs() < 1e-12);
         let mut buffer = mono(1, &[1.0, 1.0, 1.0]);
         envelope.apply(&mut buffer, 0);
-        assert_eq!(buffer.channels[0], vec![0.0, 1.0, 2.0]);
+        assert!(buffer.channels[0].iter().zip([0.5f32, 1.0, 2.0]).all(|(a, b)| (a - b).abs() < 1e-6));
+        // A 0 point counts as 1e-7 between points.
+        let mut e = Envelope::new();
+        e.insert(0.0, 0.0);
+        e.insert(1.0, 1.0);
+        assert!((e.value_at(0.5) - 10f64.powf(-3.5)).abs() < 1e-12);
     }
 
     #[test]

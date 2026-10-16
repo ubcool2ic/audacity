@@ -14,14 +14,18 @@ pub(crate) struct Extra2State {
     pub dialog: Option<Extra2Dialog>,
     /// Viewport commands queued by SetProject (title, position, size).
     pub viewport: Vec<egui::ViewportCommand>,
-    /// Pointer events queued by Drag, injected through `raw_input_hook` on the next frame.
-    pub injected: Vec<egui::Event>,
+    /// Pointer events queued by Drag, one batch per frame (egui needs press, motion and
+    /// release on separate frames to see a drag), injected through `raw_input_hook`.
+    pub injected: std::collections::VecDeque<Vec<egui::Event>>,
+    pub track_rects: Vec<egui::Rect>,
+    pub ruler_rect: Option<egui::Rect>,
 }
 
 pub(crate) enum Extra2Dialog {
-    Pan { track: usize, value: f32, orig: f32 },
-    Gain { track: usize, db: f32, orig: f32 },
+    Pan { track: usize, value: f32, orig: f32, text: String },
+    Gain { track: usize, db: f32, orig: f32, text: String },
     TrackMenu { track: usize },
+    Rename { track: usize, text: String },
 }
 
 impl AudacityApp {
@@ -63,6 +67,16 @@ impl AudacityApp {
         let ok = || Some((String::new(), true));
         let param = |name: &str| params.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str());
         match command {
+            // Tracks > Remove Tracks (TrackMenus.cpp OnRemoveTracks): delete the selected wave tracks.
+            "RemoveTracks" => {
+                let mut sel = self.selected_tracks();
+                sel.sort_unstable();
+                for i in sel.into_iter().rev() {
+                    self.focused_track = Some(i);
+                    let _ = self.execute_extra2_command("TrackClose", &[]);
+                }
+                ok()
+            }
             // 68-71 SelectMenus DoCursorMove: seek while playing, else MoveWhenAudioInactive
             // in seconds (snapping only when a range collapses).
             "CursorShortJumpLeft" | "CursorShortJumpRight" | "CursorLongJumpLeft" | "CursorLongJumpRight" => {
@@ -105,12 +119,14 @@ impl AudacityApp {
                     // 72/75/78: the slider pop-ups and the track drop-down menu.
                     "TrackPan" => {
                         let v = self.track_mix[i].pan;
-                        self.extra2.dialog = Some(Extra2Dialog::Pan { track: i, value: v, orig: v });
+                        let text = format!("{}", (v * 100.0).round() as i32);
+                        self.extra2.dialog = Some(Extra2Dialog::Pan { track: i, value: v, orig: v, text });
                     }
                     "TrackGain" => {
                         let g = self.track_mix[i].gain;
                         let db = if g <= 0.0 { -36.0 } else { (20.0 * g.log10()).clamp(-36.0, 36.0) };
-                        self.extra2.dialog = Some(Extra2Dialog::Gain { track: i, db, orig: db });
+                        let text = format!("{db:.1}");
+                        self.extra2.dialog = Some(Extra2Dialog::Gain { track: i, db, orig: db, text });
                     }
                     "TrackMenu" => self.extra2.dialog = Some(Extra2Dialog::TrackMenu { track: i }),
                     // 79/80: TrackUtilities::DoTrackMute / DoTrackSolo (not exclusive).
@@ -196,7 +212,13 @@ impl AudacityApp {
                 if ta.channels.len() != tb.channels.len() {
                     return Some(("Selected tracks must have the same number of channels!".into(), false));
                 }
-                let threshold = param("Threshold").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+                // Define(errorThreshold, "Threshold", 0.0f, 0.0f, 0.01f): out-of-range values are
+                // rejected by parameter validation (Audacity shows an error and does not run).
+                let raw = param("Threshold").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+                if !(0.0..=f64::from(0.01f32)).contains(&raw) {
+                    return Some((format!("Threshold={raw} is out of range 0 to 0.01"), false));
+                }
+                let threshold = raw as f32;
                 let rate = tracks[a].sample_rate().max(1);
                 let s0 = au_core::secs_to_frames(t0, rate);
                 let s1 = au_core::secs_to_frames(t1, rate);
@@ -251,7 +273,9 @@ impl AudacityApp {
                     }
                 }
                 let num = |k: &str, d: f32| param(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
-                if ["X", "Y", "Width", "Height"].iter().any(|k| param(k).is_some()) {
+                // X, Y, Width and Height share one bHasSizing flag that each OptionalY().Define()
+                // overwrites in turn, so only Height decides whether the frame is moved/resized.
+                if param("Height").is_some() {
                     self.extra2.viewport.push(egui::ViewportCommand::OuterPosition(egui::pos2(num("X", 10.0).clamp(0.0, 2000.0), num("Y", 10.0).clamp(0.0, 2000.0))));
                     self.extra2.viewport.push(egui::ViewportCommand::InnerSize(egui::vec2(num("Width", 1000.0).clamp(200.0, 4000.0), num("Height", 900.0).clamp(200.0, 4000.0))));
                 }
@@ -261,15 +285,29 @@ impl AudacityApp {
             // Coordinates are window points (Audacity's Id/Window targets are wx widgets).
             "Drag" => {
                 let num = |k: &str| param(k).and_then(|v| v.parse::<f32>().ok());
-                let from = egui::pos2(num("FromX").unwrap_or(200.0), num("FromY").unwrap_or(10.0));
+                let window: String = match param("Window") {
+                    Some(w) => w.trim_matches(|c| c == '"' || c == '\'').to_owned(),
+                    None => match param("Id") {
+                        Some(id) if id == "1003" => "Track Panel".to_owned(),
+                        Some(id) if id == "-2012" => "Timeline".to_owned(),
+                        // No Window/Id: coordinates are relative to the project frame itself.
+                        _ => String::new(),
+                    },
+                };
+                let from = self.drag_point(&window, num("FromX").unwrap_or(200.0), num("FromY").unwrap_or(10.0));
+                let to_opt = param("ToX").and_then(|v| v.parse::<f32>().ok()).map(|tx| {
+                    self.drag_point(&window, tx, num("ToY").unwrap_or(10.0))
+                });
                 let ev = &mut self.extra2.injected;
-                ev.push(egui::Event::PointerMoved(from));
-                if num("ToX").is_some() || num("ToY").is_some() {
-                    let to = egui::pos2(num("ToX").unwrap_or(400.0), num("ToY").unwrap_or(10.0));
+                // DragCommand::Apply sends each motion event twice (enter + move).
+                ev.push_back(vec![egui::Event::PointerMoved(from)]);
+                ev.push_back(vec![egui::Event::PointerMoved(from)]);
+                if let Some(to) = to_opt {
                     let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
-                    ev.push(button(from, true));
-                    ev.push(egui::Event::PointerMoved(to));
-                    ev.push(button(to, false));
+                    ev.push_back(vec![button(from, true)]);
+                    ev.push_back(vec![egui::Event::PointerMoved(to)]);
+                    ev.push_back(vec![egui::Event::PointerMoved(to)]);
+                    ev.push_back(vec![button(to, false)]);
                 }
                 ok()
             }
@@ -277,9 +315,68 @@ impl AudacityApp {
         }
     }
 
+    fn drag_point(&self, window: &str, x: f32, y: f32) -> egui::Pos2 {
+        if window == "Timeline" {
+            if let Some(r) = self.extra2.ruler_rect {
+                let t = self.zoom.h_offset + (x as f64 - 182.0) / self.zoom.pixels_per_sec;
+                let xx = r.left() + self.zoom.time_to_x(t) as f32;
+                let yy = r.top() + y.clamp(0.0, (r.height() - 1.0).max(0.0));
+                return egui::pos2(xx, yy);
+            }
+            return egui::pos2(x, y);
+        }
+        if window == "Track Panel" {
+            let n = self.extra2.track_rects.len();
+            if n == 0 {
+                return egui::pos2(x, y);
+            }
+            // Audacity default row heights: mono 150 px, stereo 300 px.
+            let row_h_for = |idx: usize| -> f32 {
+                match self.editor.state().tracks.get(idx) {
+                    Some(t) if t.clips.n_channels >= 2 => 300.0,
+                    _ => 150.0,
+                }
+            };
+            let mut found = n - 1;
+            let mut found_top = 0.0f32;
+            let mut acc = 0.0f32;
+            for idx in 0..n {
+                let rh = row_h_for(idx);
+                if y < acc + rh {
+                    found = idx;
+                    found_top = acc;
+                    break;
+                }
+                acc += rh;
+                if idx == n - 1 {
+                    found = idx;
+                    found_top = acc - rh;
+                }
+            }
+            let row_top = found_top;
+            let row_h = row_h_for(found);
+            let tr = match self.extra2.track_rects.get(found) {
+                Some(tr) if tr.is_finite() && tr.width() > 0.0 && tr.height() > 0.0 => *tr,
+                _ => return egui::pos2(x, y),
+            };
+            let t = self.zoom.h_offset + (x as f64 - 182.0) / self.zoom.pixels_per_sec;
+            let xx = tr.left() + self.zoom.time_to_x(t) as f32;
+            let dy = y - row_top;
+            let yy = if dy < 23.0 {
+                tr.top() + 4.0 * (dy / 23.0)
+            } else {
+                tr.top() + 4.0 + (dy - 23.0) / (row_h - 25.0) * (tr.height() - 4.0)
+            };
+            let yy = yy.clamp(tr.top(), (tr.bottom() - 1.0).max(tr.top()));
+            return egui::pos2(xx, yy);
+        }
+        egui::pos2(x, y)
+    }
     /// Feeds queued Drag pointer events into egui (called from `raw_input_hook`).
     pub(super) fn inject_extra2_input(&mut self, raw: &mut egui::RawInput) {
-        raw.events.append(&mut self.extra2.injected);
+        if let Some(mut batch) = self.extra2.injected.pop_front() {
+            raw.events.append(&mut batch);
+        }
     }
 
     pub(super) fn show_extra2_dialogs(&mut self, ctx: &egui::Context) {
@@ -292,47 +389,214 @@ impl AudacityApp {
         let Some(mut dialog) = self.extra2.dialog.take() else { return };
         let tr = au_core::i18n::tr_ui;
         // ASlider pop-up: live preview, OK commits one undo step, Cancel restores.
-        let (track, value, orig, is_pan) = match &mut dialog {
-            Extra2Dialog::Pan { track, value, orig } => (*track, value, *orig, true),
-            Extra2Dialog::Gain { track, db, orig } => (*track, db, *orig, false),
+        let (track, value, text, orig, is_pan) = match &mut dialog {
+            Extra2Dialog::Pan { track, value, orig, text } => (*track, value, text, *orig, true),
+            Extra2Dialog::Gain { track, db, orig, text } => (*track, db, text, *orig, false),
+            Extra2Dialog::Rename { track, text } => {
+                let track = *track;
+                let mut commit = false;
+                let mut cancel = false;
+                egui::Window::new(tr("Set Track Name")).collapsible(false).resizable(false).show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Name:"));
+                        ui.add(egui::TextEdit::singleline(&mut *text).desired_width(200.0));
+                    });
+                    ui.horizontal(|ui| {
+                        commit = ui.button(tr("OK")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        cancel = ui.button(tr("Cancel")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape));
+                    });
+                });
+                if commit {
+                    let new_name = text.clone();
+                    if let Some(t) = self.editor.state().tracks.get(track) {
+                        let old = t.name.clone();
+                        let mut state = self.editor.state().clone();
+                        if let Some(tt) = state.tracks.get_mut(track) { tt.name = new_name.clone(); }
+                        self.editor.replace_state(&format!("Renamed '{old}' to '{new_name}'"), state);
+                    }
+                } else if !cancel {
+                    self.extra2.dialog = Some(dialog);
+                }
+                return;
+            }
             Extra2Dialog::TrackMenu { track } => {
                 let track = *track;
-                let mut action: Option<&'static str> = None;
-                egui::Window::new(tr("Track")).collapsible(false).resizable(false).show(ctx, |ui| {
-                    for (label, command) in [
-                        ("Mute/Unmute", "TrackMute"), ("Solo/Unsolo", "TrackSolo"),
-                        ("Change Pan...", "TrackPan"), ("Change Gain...", "TrackGain"),
-                        ("Move Track Up", "TrackMoveUp"), ("Move Track Down", "TrackMoveDown"),
-                        ("Move Track to Top", "TrackMoveTop"), ("Move Track to Bottom", "TrackMoveBottom"),
-                        ("Delete Track", "TrackClose"),
-                    ] {
-                        if ui.button(tr(label)).clicked() { action = Some(command); }
+                let n = self.editor.state().tracks.len();
+                if track >= n { return; }
+                let tname = self.editor.state().tracks[track].name.clone();
+                let is_first = track == 0;
+                let is_last = track + 1 >= n;
+                let nch = self.editor.state().tracks[track].clips.n_channels;
+                let is_stereo = nch == 2;
+                let can_stereo = nch == 1 && track + 1 < n && self.editor.state().tracks[track + 1].clips.n_channels == 1;
+                let cur_view = self.track_views.get(track).cloned().unwrap_or(crate::spectrogram_view::TrackView::Waveform);
+                let is_mv = cur_view == crate::spectrogram_view::TrackView::Multiview;
+                let cur_bits = self.editor.state().tracks[track].int_bits;
+                let cur_rate = self.editor.state().tracks[track].sample_rate();
+                enum Act { None, Rename, Move(&'static str), View(crate::spectrogram_view::TrackView), MakeStereo, Swap, Split(bool), Format(Option<u32>, &'static str), Rate(u32) }
+                let mut act = Act::None;
+                let mut keep = true;
+                egui::Window::new(tname).collapsible(false).resizable(false).show(ctx, |ui| {
+                    if ui.button(tr("Rename Track...")).clicked() { act = Act::Rename; keep = false; }
+                    ui.separator();
+                    if ui.add_enabled(!is_first, egui::Button::new(tr("Move Track Up"))).clicked() { act = Act::Move("TrackMoveUp"); keep = false; }
+                    if ui.add_enabled(!is_last, egui::Button::new(tr("Move Track Down"))).clicked() { act = Act::Move("TrackMoveDown"); keep = false; }
+                    if ui.add_enabled(!is_first, egui::Button::new(tr("Move Track to Top"))).clicked() { act = Act::Move("TrackMoveTop"); keep = false; }
+                    if ui.add_enabled(!is_last, egui::Button::new(tr("Move Track to Bottom"))).clicked() { act = Act::Move("TrackMoveBottom"); keep = false; }
+                    ui.separator();
+                    let mut mv = is_mv;
+                    if ui.checkbox(&mut mv, tr("Multi-view")).changed() {
+                        act = Act::View(if mv { crate::spectrogram_view::TrackView::Multiview } else { crate::spectrogram_view::TrackView::Waveform });
+                        keep = false;
                     }
-                    if ui.button(tr("Close")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) { action = Some(""); }
+                    let mut v = cur_view;
+                    ui.radio_value(&mut v, crate::spectrogram_view::TrackView::Waveform, tr("Waveform"));
+                    ui.radio_value(&mut v, crate::spectrogram_view::TrackView::Spectrogram, tr("Spectrogram"));
+                    if v != cur_view { act = Act::View(v); keep = false; }
+                    ui.separator();
+                    if ui.add_enabled(can_stereo, egui::Button::new(tr("Make Stereo Track"))).clicked() { act = Act::MakeStereo; keep = false; }
+                    if ui.add_enabled(is_stereo, egui::Button::new(tr("Swap Stereo Channels"))).clicked() { act = Act::Swap; keep = false; }
+                    if ui.add_enabled(is_stereo, egui::Button::new(tr("Split Stereo Track"))).clicked() { act = Act::Split(false); keep = false; }
+                    if ui.add_enabled(is_stereo, egui::Button::new(tr("Split Stereo to Mono"))).clicked() { act = Act::Split(true); keep = false; }
+                    ui.separator();
+                    let mut b = cur_bits;
+                    ui.radio_value(&mut b, Some(16), tr("16-bit PCM"));
+                    ui.radio_value(&mut b, Some(24), tr("24-bit PCM"));
+                    ui.radio_value(&mut b, None, tr("32-bit float"));
+                    if b != cur_bits {
+                        let label: &'static str = match b { Some(16) => "16-bit PCM", Some(24) => "24-bit PCM", _ => "32-bit float" };
+                        act = Act::Format(b, label);
+                        keep = false;
+                    }
+                    ui.separator();
+                    for r in [8000u32, 11025, 16000, 22050, 44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000] {
+                        if ui.selectable_label(cur_rate == r, format!("{r} Hz")).clicked() { act = Act::Rate(r); keep = false; }
+                    }
+                    ui.separator();
+                    if ui.button(tr("Close")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) { keep = false; }
                 });
-                match action {
-                    Some(command) => {
-                        self.focused_track = Some(track);
-                        if !command.is_empty() { let _ = self.execute_extra2_command(command, &[]); }
+                match act {
+                    Act::None => {}
+                    Act::Rename => {
+                        let txt = self.editor.state().tracks[track].name.clone();
+                        self.extra2.dialog = Some(Extra2Dialog::Rename { track, text: txt });
+                        return;
                     }
-                    None => self.extra2.dialog = Some(dialog),
+                    Act::Move(cmd) => {
+                        self.focused_track = Some(track);
+                        let _ = self.execute_extra2_command(cmd, &[]);
+                    }
+                    Act::View(vv) => {
+                        if track < self.track_views.len() { self.track_views[track] = vv; }
+                    }
+                    Act::MakeStereo => {
+                        let mut state = self.editor.state().clone();
+                        let l = state.tracks[track].clone();
+                        let r = state.tracks[track + 1].clone();
+                        match au_core::track_ops::make_stereo(&l, &r) {
+                            Some(st) => {
+                                let nm = state.tracks[track].name.clone();
+                                state.tracks[track] = st;
+                                state.tracks.remove(track + 1);
+                                self.editor.replace_state(&format!("Made '{nm}' a stereo track"), state);
+                                if track + 1 < self.extra.track_sel.len() { self.extra.track_sel.remove(track + 1); }
+                                if track + 1 < self.track_mix.len() { self.track_mix.remove(track + 1); }
+                                if track + 1 < self.track_views.len() { self.track_views.remove(track + 1); }
+                                if track + 1 < self.wave_ui.len() { self.wave_ui.remove(track + 1); }
+                                self.ensure_track_mix();
+                            }
+                            None => { self.status = "Unable to make a stereo track (clips differ)".to_string(); }
+                        }
+                    }
+                    Act::Swap => {
+                        let mut state = self.editor.state().clone();
+                        let nm = state.tracks[track].name.clone();
+                        if let Some(t) = state.tracks.get_mut(track) { au_core::track_ops::swap_channels(t); }
+                        self.editor.replace_state(&format!("Swapped channels in '{nm}'"), state);
+                    }
+                    Act::Split(to_mono) => {
+                        let mut state = self.editor.state().clone();
+                        let t = state.tracks[track].clone();
+                        let nm = t.name.clone();
+                        let parts = au_core::track_ops::split_channels(&t, to_mono);
+                        state.tracks.remove(track);
+                        for (k, p) in parts.iter().enumerate() { state.tracks.insert(track + k, p.clone()); }
+                        let extra = parts.len().saturating_sub(1);
+                        for k in 0..extra {
+                            if track < self.extra.track_sel.len() { let c = self.extra.track_sel[track]; self.extra.track_sel.insert(track + k + 1, c); }
+                            if track < self.track_mix.len() { let c = self.track_mix[track]; self.track_mix.insert(track + k + 1, c); }
+                            if track < self.track_views.len() { let c = self.track_views[track].clone(); self.track_views.insert(track + k + 1, c); }
+                            if track < self.wave_ui.len() { let c = self.wave_ui[track].clone(); self.wave_ui.insert(track + k + 1, c); }
+                        }
+                        let undo = if to_mono { format!("Split stereo track '{nm}' to mono") } else { format!("Split stereo track '{nm}'") };
+                        self.editor.replace_state(&undo, state);
+                        self.ensure_track_mix();
+                        // Split Stereo Track pans the halves hard left/right; the mixer reads track_mix.
+                        for (k, p) in parts.iter().enumerate() {
+                            if let Some(m) = self.track_mix.get_mut(track + k) { m.pan = p.pan; }
+                        }
+                    }
+                    Act::Format(bits, label) => {
+                        let mut state = self.editor.state().clone();
+                        let nm = state.tracks[track].name.clone();
+                        if let Some(t) = state.tracks.get_mut(track) { au_core::track_ops::set_format(t, bits); }
+                        self.editor.replace_state(&format!("Changed '{nm}' to {label}"), state);
+                    }
+                    Act::Rate(r) => {
+                        let mut state = self.editor.state().clone();
+                        let nm = state.tracks[track].name.clone();
+                        if let Some(t) = state.tracks.get_mut(track) { au_core::track_ops::set_rate(t, r); }
+                        self.editor.replace_state(&format!("Changed '{nm}' to {r} Hz"), state);
+                    }
                 }
+                if keep { self.extra2.dialog = Some(dialog); }
                 return;
             }
         };
         let to_gain = |v: f32| if is_pan { v } else { 10f32.powf(v / 20.0) };
+        let fmt = |v: f32| if is_pan { format!("{}", (v * 100.0).round() as i32) } else { format!("{v:.1}") };
         let (mut commit, mut cancel, mut changed) = (false, false, false);
-        egui::Window::new(tr(if is_pan { "Pan" } else { "Gain" })).collapsible(false).resizable(false).show(ctx, |ui| {
+        egui::Window::new(tr(if is_pan { "Pan" } else { "Volume" })).collapsible(false).resizable(false).show(ctx, |ui| {
+            let out = egui::TextEdit::singleline(&mut *text).desired_width(60.0).show(ui);
+            // SliderDialog::TransferDataToWindow: the text box has focus with all text selected.
+            if ui.memory(|m| m.focused().is_none()) {
+                out.response.request_focus();
+            }
+            let done_id = out.response.id.with("select_all_done");
+            if out.response.has_focus() && !ui.data(|d| d.get_temp::<bool>(done_id).unwrap_or(false)) {
+                ui.data_mut(|d| d.insert_temp(done_id, true));
+                let mut st = out.state.clone();
+                let n = text.chars().count();
+                st.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(n))));
+                st.store(ui.ctx(), out.response.id);
+            }
+            if out.response.changed() {
+                if is_pan {
+                    if let Ok(n) = (*text).trim().parse::<f32>() {
+                        *value = (n / 100.0).clamp(-1.0, 1.0);
+                        changed = true;
+                    }
+                } else if let Ok(n) = (*text).trim().parse::<f32>() {
+                    *value = n.clamp(-36.0, 36.0);
+                    changed = true;
+                }
+            }
             let slider = if is_pan {
-                egui::Slider::new(value, -1.0..=1.0).step_by(0.1).text(tr("Pan"))
+                egui::Slider::new(value, -1.0..=1.0).text(tr("Pan"))
             } else {
-                egui::Slider::new(value, -36.0..=36.0).step_by(0.1).text("dB")
+                egui::Slider::new(value, -36.0..=36.0)
             };
-            changed = ui.add(slider).changed();
+            if ui.add(slider).changed() {
+                changed = true;
+                *text = fmt(*value);
+            }
             ui.horizontal(|ui| {
                 commit = ui.button(tr("OK")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter));
                 cancel = ui.button(tr("Cancel")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape));
             });
+            if commit || cancel {
+                ui.data_mut(|d| d.remove::<bool>(done_id)); // next open selects the text again
+            }
         });
         if track >= self.track_mix.len() {
             return;

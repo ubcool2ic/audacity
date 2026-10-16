@@ -243,7 +243,9 @@ def main():
         data = w.readframes(n)
         if sw == 2: vals = [v / 32768 for v in struct.unpack(f"<{len(data)//2}h", data)]
         else: vals = [int.from_bytes(data[i:i+sw], "little", signed=True) / 2 ** (8 * sw - 1) for i in range(0, len(data), sw)]
-        return rate, round(max(abs(v) for v in vals[: rate]), 3), round(max(abs(v) for v in vals[rate * 3: rate * 4]), 3)
+        # 2 decimals: the sources differ (our Tone vs Audacity's Chirp, 16-bit dither); the exact
+        # sample-by-sample SetEnvelope check on identical audio is in compare_extra2_close.py.
+        return rate, round(max(abs(v) for v in vals[: rate]), 2), round(max(abs(v) for v in vals[rate * 3: rate * 4]), 2)
     for name, cmds in (
         ("SetEnvelope Time+Value", ["SetEnvelope: Time=2 Value=0.5"]),
         ("SetEnvelope 2 points", ["SetEnvelope: Time=0 Value=0.2", "SetEnvelope: Time=4 Value=1.5"]),

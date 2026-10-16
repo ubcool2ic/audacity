@@ -302,6 +302,7 @@ fn command_definition(host: &dyn ScriptHost, command: &str) -> String {
             ("Mute", "Bool"),
             ("Solo", "Bool"),
             ("Gain", "Number"),
+            ("Volume", "Number"),
             ("Pan", "Number"),
         ],
         "Import2" => &[("Filename", "String")],
@@ -646,8 +647,13 @@ fn execute_set_track(
             track.gain = gain.max(0.0);
             changed = true;
         }
+        // SetTrackAudioCommand (3.7.3): Volume in dB (-36..36), Pan in percent (-100..100).
+        if let Some(db) = param(params, "Volume").and_then(|value| value.parse::<f32>().ok()) {
+            track.gain = 10f32.powf(db.clamp(-36.0, 36.0) / 20.0);
+            changed = true;
+        }
         if let Some(pan) = param(params, "Pan").and_then(|value| value.parse::<f32>().ok()) {
-            track.pan = pan.clamp(-1.0, 1.0);
+            track.pan = (pan / 100.0).clamp(-1.0, 1.0);
             changed = true;
         }
     }

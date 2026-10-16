@@ -161,7 +161,8 @@ pub fn compare_audio(
         for frame in start..end {
             let x = channel_a.get(frame).copied().unwrap_or(0.0);
             let y = channel_b.get(frame).copied().unwrap_or(0.0);
-            if (x - y).abs() > threshold {
+            // CompareSample: fabs on doubles, compared with the float threshold promoted to double.
+            if (f64::from(x) - f64::from(y)).abs() > f64::from(threshold) {
                 count += 1;
             }
         }

@@ -11,6 +11,7 @@ pub mod selected_region;
 pub mod notes;
 pub mod tags;
 pub mod timeline;
+pub mod track_ops;
 
 /// A single audio sample.
 pub type Sample = f32;
@@ -1057,10 +1058,11 @@ mod tests {
         editor.split_clip(0, 2).unwrap();
         editor.move_clip(0, 1, 5).unwrap();
         assert_eq!(editor.state().tracks[0].render().channels[0], vec![1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0]);
-        editor.add_envelope_point(0, 0.0, 0.0).unwrap();
+        editor.add_envelope_point(0, 0.0, 0.1).unwrap();
         editor.add_envelope_point(0, 0.6, 0.6).unwrap();
         let out = editor.state().tracks[0].render().channels[0].clone();
-        assert!((out[0] - 0.0).abs() < 1e-6 && (out[1] - 0.1).abs() < 1e-6);
+        // Exponential: 0.1 * 6^(t/0.6).
+        assert!((out[0] - 0.1).abs() < 1e-6 && (out[1] - 0.1 * 6f32.powf(1.0 / 6.0)).abs() < 1e-6);
         assert!((out[6] - 0.6).abs() < 1e-6);
     }
 
