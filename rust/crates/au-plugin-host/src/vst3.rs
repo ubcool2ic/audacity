@@ -13,9 +13,9 @@ use vst3::Steinberg::Vst::{
     SpeakerArr::{kMono, kStereo}, SymbolicSampleSizes_::*,
 };
 use vst3::Steinberg::IBStream_::IStreamSeekMode_::*;
-use vst3::{
-    Class, ComPtr, ComWrapper, Interface, Steinberg::*, Steinberg::Linux::*, Steinberg::Vst::*,
-};
+use vst3::{Class, ComPtr, ComWrapper, Interface, Steinberg::*, Steinberg::Vst::*};
+#[cfg(target_os = "linux")]
+use vst3::Steinberg::Linux::*;
 
 const AUDIO_MODULE_CLASS: &str = "Audio Module Class";
 
