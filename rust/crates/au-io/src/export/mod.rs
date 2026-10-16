@@ -39,6 +39,21 @@ impl ExportFormat {
     }
 }
 
+impl ExportFormat {
+    /// Format Audacity's Export2 picks for a file extension, with default options.
+    /// WAV and FLAC are left to the caller's own exporters.
+    pub fn from_extension(ext: &str) -> Option<ExportFormat> {
+        Some(match ext.to_ascii_lowercase().as_str() {
+            "aif" | "aiff" => Self::Pcm(intfmt::PcmOptions { header: intfmt::SF_FORMAT_AIFF, ..Default::default() }),
+            "wv" => Self::WavPack(Default::default()),
+            "mp3" => Self::Mp3(Default::default()),
+            "ogg" => Self::Vorbis(Default::default()),
+            "opus" => Self::Opus(Default::default()),
+            _ => return None,
+        })
+    }
+}
+
 /// Progress callback for long imports/exports: `(frames_done, frames_total) -> keep_going`.
 /// Returning `false` aborts with [`crate::IoError::Cancelled`]. `frames_total` is 0 when unknown.
 pub type ProgressFn<'a> = &'a mut dyn FnMut(u64, u64) -> bool;

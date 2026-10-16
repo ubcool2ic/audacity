@@ -1230,7 +1230,27 @@ fn execute_app_command(&mut self, line: &str) -> Option<(String, bool)> {
                     .and_then(|extension| extension.to_str())
                     .map(|extension| extension.eq_ignore_ascii_case("flac"))
                     .unwrap_or(false);
-                let result = if is_flac {
+                let ext = path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                let other = au_io::export::ExportFormat::from_extension(&ext);
+                let ffmpeg = au_io::ffmpeg::ExportFormat::all()
+                    .into_iter()
+                    .find(|f| f.extension() == ext);
+                let result = if let Some(format) = other {
+                    au_io::export::export_any(
+                        &path,
+                        &buffer.channels,
+                        buffer.sample_rate,
+                        &format,
+                        &au_core::tags::Tags::default(),
+                    )
+                } else if let Some(format) = ffmpeg {
+                    au_io::ffmpeg::get()
+                        .and_then(|f| f.export(&path, &buffer, format, format.default_bit_rate()))
+                } else if is_flac {
                     let bits = if self.export_bits == 24 {
                         usize::from(self.export_bits.min(24))
                     } else {
