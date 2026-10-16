@@ -452,5 +452,6 @@ Every setting is checked against Audacity 3.7.3 sources. Where the pipe allows i
 - [ ] Always scrub unpinned: there is no scrubbing gesture yet (see Stage 3).
 - [ ] RTL workaround = off: egui cannot mirror layouts, so we always behave as with the default (on).
 - [ ] Automated input level adjustment: `EXPERIMENTAL_AUTOMATED_INPUT_LEVEL_ADJUSTMENT` is commented out in 3.7.3's Experimental.cmake, so Audacity ignores the key too. Matches.
-- [ ] Extra menu commands: 85 of the 115 items (Transport play-around-selection, tools, mixer volume, Seek, Device, Selection/Cursor/Focus/Track navigation, ExportMp3…) are not pipe commands yet. Clicking one reports "not recognized", and their default shortcuts do nothing either.
-- [ ] Envelope is still drawn on our linear 0–2 scale, not GetWaveYPos (dB) like Audacity.
+- [x] Extra menu commands 1-45 of docs/SPLIT_extra.md (ubcool2ic): play-around-selection, cut preview, keyboard scrub, tools (F1/F2/F3/F6/A/D), mixer volume, play-at-speed, device dialogs, Delete key, clip left/right, Snap-To, SelStart/SelEnd/SelExtLeft/SelExtRight/SelSetExtLeft. tools/compare_extra.py: 17/18 match Audacity 3.7.3. The one failure is ClipLeft past time 0, because our clips cannot start before 0.
+- [ ] Extra menu commands 46-89 (BizyBot).
+- [x] Envelope drawn and edited with GetWaveYPos/ValueOfPixel when the track is in dB view (linear view keeps the 0-2 scale).

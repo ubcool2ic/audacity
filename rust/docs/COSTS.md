@@ -324,3 +324,21 @@ Hand glue (not Luna):
 - Default and key fixes, and the edit_behaviors.rs test fixture.
 
 **Running total (ubcool2ic): $2.0531**
+
+
+## ubcool2ic: Extra-menu commands 1-45 (SPLIT_extra.md) and dB envelope (2026-10-15)
+
+| File | Model | USD |
+|---|---|---|
+| au-app/src/extra_cmds.rs (extracmds) | openai/gpt-6-luna | 0.0060 |
+
+Luna 1 call, $0.0060. Sol: none. **Batch total: $0.0060**.
+
+Hand glue (not Luna):
+- gui/extra_glue.rs: command dispatch, playback/scrub/dialog glue, AudacityApp fields, Multi tool.
+- extra_cmds.rs: two test fixes, the `offset_time_by_pixels` port (ZoomInfo::TimeToPosition rounding) and its test, a precedence fix.
+- gui.rs: envelope_y/envelope_value (GetWaveYPos/ValueOfPixel in dB view), ZoomNormal, GetSelection test hook, DeleteKey collapsing the selection.
+- shortcuts.rs: F1/F2/F3/F6 standard, A/D/U/I full-set defaults.
+- tools/compare_extra.py: pipe comparison against Audacity 3.7.3.
+
+**Running total (ubcool2ic): $2.0591**
