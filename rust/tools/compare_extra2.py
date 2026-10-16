@@ -14,19 +14,16 @@ import signal
 
 
 class SafeAud(C.Aud):
-    """C.Aud that kills its own Audacity if startup fails (a failed __enter__ otherwise leaves an
-    orphan that holds the per-uid pipe and blocks every later run on the box)."""
+    """C.Aud with retries. C.Aud.__enter__ now kills its own Audacity and releases the lock itself
+    when startup fails, so a retry starts clean."""
     def __enter__(self):
         for attempt in range(3):
             try:
                 return super().__enter__()
-            except (FileNotFoundError, TimeoutError):
-                try: os.killpg(self.proc.pid, signal.SIGTERM)
-                except Exception: pass
+            except (OSError, TimeoutError, RuntimeError):
                 time.sleep(5)
-                import fcntl
-                fcntl.flock(self.lock, fcntl.LOCK_UN); self.lock.close()
         raise RuntimeError("Audacity did not start")
+
 
 R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

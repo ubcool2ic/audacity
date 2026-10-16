@@ -163,11 +163,21 @@ class Aud:
         s = re.sub(r"DefaultProjectSampleFormatChoice=.*", "DefaultProjectSampleFormatChoice=Format32BitFloat", s)
         open(cfg, "w").write(s)
         self.proc = subprocess.Popen("cd /tmp && exec xvfb-run -a -s '-screen 0 1280x1024x24' audacity >/tmp/aud.log 2>&1", shell=True, start_new_session=True)
-        for _ in range(90):
-            if os.path.exists(PIPE_TO): break
-            time.sleep(1)
-        time.sleep(3)
-        self.to = open(PIPE_TO, "w"); self.fr = os.open(PIPE_FROM, os.O_RDONLY); self.buf = b""; return self
+        try:
+            import stat
+            for _ in range(90):
+                if self.proc.poll() is not None: raise RuntimeError(f"Audacity exited with {self.proc.returncode} (see /tmp/aud.log)")
+                if all(os.path.exists(p) and stat.S_ISFIFO(os.stat(p).st_mode) for p in (PIPE_TO, PIPE_FROM)): break
+                time.sleep(1)
+            else:
+                raise TimeoutError("Audacity's script pipe did not appear within 90 s")
+            time.sleep(3)
+            self.to = open(PIPE_TO, "w"); self.fr = os.open(PIPE_FROM, os.O_RDONLY); self.buf = b""; return self
+        except BaseException:
+            # Failed start: kill our own Audacity (process group) and release the lock, else the
+            # orphan keeps the per-uid pipe and blocks every later run on the box.
+            self.__exit__(None, None, None)
+            raise
     def __call__(self, c, timeout=120):
         import select
         self.to.write(c + "\n"); self.to.flush()
