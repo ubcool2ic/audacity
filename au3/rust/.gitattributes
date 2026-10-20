@@ -1,0 +1,2 @@
+# Reference fixtures are raw little-endian binary; the repo-wide text/eol rule would corrupt them.
+tests/data/*.bin binary
