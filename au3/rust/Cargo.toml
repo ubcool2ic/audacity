@@ -1,0 +1,16 @@
+[package]
+name = "au3-rs"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "au3_rs"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+
+# staticlib releases abort on panic; the dev/test profile keeps unwinding so
+# that `cargo test` still works.
+[profile.release]
+panic = "abort"

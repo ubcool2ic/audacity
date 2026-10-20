@@ -35,6 +35,7 @@ PUBLIC
 PRIVATE
    au3-components
    au3-preferences
+   au3-rs
    au3-strings
    soxr
    wxBase

@@ -144,6 +144,9 @@ set(AU3_ALL_LIBRARIES ${LIBRARIES} CACHE INTERNAL "List of all AU3 libraries")
 include(${CMAKE_CURRENT_LIST_DIR}/../au3defs.cmake)
 
 # Add subdirectories for all libraries
+# Rust ports of au3 C++ modules (static library au3-rs, see au3/rust)
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../rust ${CMAKE_BINARY_DIR}/au3-rs)
+
 foreach( LIBRARY ${LIBRARIES} )
    add_subdirectory( "${LIBRARY}" )
 endforeach()

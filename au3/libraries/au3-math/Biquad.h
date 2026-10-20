@@ -71,7 +71,6 @@ struct MATH_API Biquad
     static bool BilinTransform(double fSX, double fSY, double* pfZX, double* pfZY);
     static float Calc2D_DistSqr(double fX1, double fY1, double fX2, double fY2);
 
-    static const double s_fChebyCoeffs[MAX_Order][MAX_Order + 1];
     static double ChebyPoly(int Order, double NormFreq);
 };
 
